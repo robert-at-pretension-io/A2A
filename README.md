@@ -51,6 +51,17 @@ This repository contains testing tools for the Agent-to-Agent (A2A) protocol, an
 
 This repository provides tools to test A2A protocol implementations, ensuring compatibility across different agent systems. By ensuring your agents conform to the A2A standard, you'll be positioning them to participate in the emerging ecosystem of collaborative AI.
 
+### Test Suite Components
+
+- **Validator**: Validate A2A messages against the JSON schema
+- **Property Tests**: Generate and test random A2A messages
+- **Mock Server**: A reference implementation for testing clients
+- **Fuzzer**: Test robustness against malformed inputs
+
+### Comprehensive Testing Strategy
+
+For a detailed approach to testing A2A server implementations, see our [Testing Plan](testing_plan.md), which outlines a comprehensive framework for validating protocol compliance, performance, and security.
+
 ---
 
 The A2A protocol represents a crucial step toward mature, enterprise-ready AI that can truly transform businesses and everyday experiences. By standardizing how agents communicate, A2A will unlock collaboration patterns that are currently impossible, moving us from isolated AI capabilities to truly interconnected agent networks.
