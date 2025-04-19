@@ -20,6 +20,7 @@ For the complete protocol specification, see the [A2A Schema Overview](../docs/s
 - Artifact management
 - State transition history tracking and analysis
 - Task batching for multi-task operations
+- Agent skills discovery and invocation
 
 ## Usage Examples
 
@@ -174,6 +175,56 @@ let cancel_status = client.cancel_batch(&batch.id).await?;
 println!("After cancellation: {:?}", cancel_status.overall_status);
 ```
 
+### Agent Skills
+
+```rust
+// List all available skills
+let skills = client.list_skills(None).await?;
+println!("Agent offers {} skills:", skills.skills.len());
+for skill in &skills.skills {
+    println!("- {} ({})", skill.name, skill.id);
+}
+
+// Filter skills by tag
+let analysis_skills = client.list_skills(Some(vec!["analysis".to_string()])).await?;
+println!("Found {} analysis skills", analysis_skills.skills.len());
+
+// Get detailed information about a specific skill
+let skill_details = client.get_skill_details("summarize-skill").await?;
+println!("Skill: {} ({})", skill_details.skill.name, skill_details.skill.id);
+println!("Description: {}", skill_details.skill.description.unwrap_or_default());
+
+// Display examples if available
+if let Some(examples) = &skill_details.skill.examples {
+    println!("Examples:");
+    for example in examples {
+        println!("- {}", example);
+    }
+}
+
+// Invoke a skill
+let task = client.invoke_skill(
+    "summarize-skill",
+    "Please summarize this long article: [article text here]",
+    Some("text/plain".to_string()),  // Input mode
+    None                             // Use default output mode
+).await?;
+
+// Skill results are available as task artifacts
+if let Some(artifacts) = &task.artifacts {
+    for artifact in artifacts {
+        // Process skill results
+        println!("Skill result: {}", artifact.name.as_deref().unwrap_or("Result"));
+        // Extract text content
+        for part in &artifact.parts {
+            if let Part::TextPart(text_part) = part {
+                println!("{}", text_part.text);
+            }
+        }
+    }
+}
+```
+
 ## More Information
 
 - [Mock Server Implementation](../mock_server.rs): Reference implementation for A2A server endpoints.
@@ -193,5 +244,8 @@ The client uses strongly-typed structures following the A2A protocol. Key types 
 - `PushNotificationConfig` - Configuration for webhook notifications
 - `TaskBatch` - A group of related tasks managed together
 - `BatchStatus` - Overall status of a task batch (Completed, Working, etc)
+- `AgentSkill` - Description of a skill offered by an agent
+- `SkillListResponse` - Response containing available skills
+- `SkillDetailsResponse` - Detailed information about a specific skill
 
 See [types.rs](../types.rs) for complete type definitions.

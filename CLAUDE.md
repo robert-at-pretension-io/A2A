@@ -53,6 +53,9 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
   - Get batch: `cargo run --quiet -- client get-batch --url [url] --id [batch_id]`
   - Get batch status: `cargo run --quiet -- client get-batch-status --url [url] --id [batch_id]`
   - Cancel batch: `cargo run --quiet -- client cancel-batch --url [url] --id [batch_id]`
+  - List skills: `cargo run --quiet -- client list-skills --url [url] --tags [optional_tags]`
+  - Get skill details: `cargo run --quiet -- client get-skill-details --url [url] --id [skill_id]`
+  - Invoke skill: `cargo run --quiet -- client invoke-skill --url [url] --id [skill_id] --message [text] --input-mode [optional_mode] --output-mode [optional_mode]`
 - Run integration tests: `./start_server_and_test_client.sh`
 - **REQUIRED VERIFICATION**: Always run `RUSTFLAGS="-A warnings" cargo test && cargo build` before finalizing changes
 
@@ -82,6 +85,7 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
   - **src/client/artifacts.rs**: Artifact management and processing
   - **src/client/state_history.rs**: State transition history tracking and analysis
   - **src/client/task_batch.rs**: Batch operations for managing multiple tasks
+  - **src/client/agent_skills.rs**: Agent skills discovery and invocation
   - **src/client/tests/**: Client unit tests
 - **src/client_tests.rs**: Client integration tests
 - **start_server_and_test_client.sh**: Script for running integration tests

@@ -1,6 +1,6 @@
 use crate::client::A2aClient;
 use crate::mock_server::start_mock_server;
-use crate::types::TaskState;
+use crate::types::{TaskState, AgentSkill};
 use std::error::Error;
 use std::thread;
 use tempfile::tempdir;
@@ -267,6 +267,101 @@ async fn test_task_batch_operations() -> Result<(), Box<dyn Error>> {
     assert!(cancel_status.overall_status == BatchStatus::Canceled || 
            cancel_status.overall_status == BatchStatus::PartlyCanceled,
            "Batch should be fully or partly canceled");
+    
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_agent_skills_operations() -> Result<(), Box<dyn Error>> {
+    // Start mock server in a separate thread
+    let port = 8091;
+    thread::spawn(move || {
+        start_mock_server(port);
+    });
+    
+    // Wait for server to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    
+    // Create client
+    let mut client = A2aClient::new(&format!("http://localhost:{}", port));
+    
+    println!("Testing agent skills operations...");
+    
+    // List all available skills
+    let skills_response = client.list_skills(None).await?;
+    println!("Found {} skills", skills_response.skills.len());
+    
+    // Verify we have at least one skill
+    assert!(!skills_response.skills.is_empty(), "Should have at least one skill");
+    
+    // Grab the first skill ID for later tests
+    let first_skill_id = skills_response.skills[0].id.clone();
+    
+    // Test filtering skills by tags
+    let text_skills = client.list_skills(Some(vec!["text".to_string()])).await?;
+    println!("Found {} skills with 'text' tag", text_skills.skills.len());
+    
+    // Verify that filtered skills all have the requested tag
+    for skill in &text_skills.skills {
+        if let Some(tags) = &skill.tags {
+            assert!(tags.contains(&"text".to_string()), 
+                   "Filtered skill should have 'text' tag");
+        }
+    }
+    
+    // Get details for a specific skill
+    let skill_details = client.get_skill_details(&first_skill_id).await?;
+    println!("Got details for skill: {} ({})", skill_details.skill.name, skill_details.skill.id);
+    
+    // Verify skill details
+    assert_eq!(skill_details.skill.id, first_skill_id, "Skill ID should match");
+    assert!(!skill_details.skill.name.is_empty(), "Skill should have a name");
+    
+    // Invoke a skill
+    println!("Invoking skill: {}", first_skill_id);
+    let task = client.invoke_skill(
+        &first_skill_id,
+        "Test skill invocation message",
+        None,
+        None
+    ).await?;
+    
+    println!("Skill invocation created task: {}", task.id);
+    
+    // Verify that task has artifacts
+    if let Some(artifacts) = &task.artifacts {
+        println!("Skill returned {} artifacts", artifacts.len());
+        assert!(!artifacts.is_empty(), "Skill should return at least one artifact");
+        
+        // Check if the artifact has the expected content
+        for artifact in artifacts {
+            if let Some(name) = &artifact.name {
+                println!("Artifact name: {}", name);
+                assert!(name.contains(&first_skill_id), "Artifact name should contain skill ID");
+            }
+            
+            // Extract text content if available
+            for part in &artifact.parts {
+                if let crate::types::Part::TextPart(text_part) = part {
+                    println!("Artifact content: {}", text_part.text);
+                }
+            }
+        }
+    } else {
+        assert!(false, "Skill invocation should return artifacts");
+    }
+    
+    // Test the agent card to verify skills integration
+    let agent_card = client.get_agent_card().await?;
+    println!("Agent card lists {} skills", agent_card.skills.len());
+    
+    // Verify that the agent card contains the skills
+    assert!(!agent_card.skills.is_empty(), "Agent card should list skills");
+    
+    // Verify our test skill is in the agent card
+    let has_test_skill = agent_card.skills.iter()
+        .any(|skill| skill.id == first_skill_id);
+    assert!(has_test_skill, "Agent card should contain our test skill");
     
     Ok(())
 }

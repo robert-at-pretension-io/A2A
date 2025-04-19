@@ -159,11 +159,69 @@ impl MockBatch {
     }
 }
 
+// File representation for the mock server
+#[derive(Debug, Clone)]
+struct MockFile {
+    id: String,
+    name: String,
+    mime_type: String,
+    content: String,  // base64 encoded
+    size: usize,
+    uploaded_at: DateTime<Utc>,
+    task_id: Option<String>,
+    metadata: Option<Map<String, Value>>,
+}
+
+impl MockFile {
+    fn new(id: &str, name: &str, mime_type: &str, content: &str, task_id: Option<&str>, metadata: Option<Map<String, Value>>) -> Self {
+        // Calculate approximate size from base64 content
+        // Base64 increases size by ~33%, so we estimate original size
+        let size = (content.len() * 3) / 4;
+        
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            mime_type: mime_type.to_string(),
+            content: content.to_string(),
+            size,
+            uploaded_at: Utc::now(),
+            task_id: task_id.map(|id| id.to_string()),
+            metadata,
+        }
+    }
+    
+    // Convert to JSON response for upload/list response
+    fn to_upload_json(&self) -> Value {
+        json!({
+            "file_id": self.id,
+            "uri": format!("files/{}", self.id),
+            "name": self.name,
+            "mime_type": self.mime_type,
+            "size": self.size,
+            "uploaded_at": self.uploaded_at,
+        })
+    }
+    
+    // Convert to JSON response for download response
+    fn to_download_json(&self) -> Value {
+        json!({
+            "file_id": self.id,
+            "name": self.name,
+            "mime_type": self.mime_type,
+            "bytes": self.content,
+            "size": self.size,
+        })
+    }
+}
+
 // Global task storage
 type TaskStorage = Arc<Mutex<HashMap<String, MockTask>>>;
 
 // Global batch storage
 type BatchStorage = Arc<Mutex<HashMap<String, MockBatch>>>;
+
+// Global file storage
+type FileStorage = Arc<Mutex<HashMap<String, MockFile>>>;
 
 // Create a new task storage
 fn create_task_storage() -> TaskStorage {
@@ -175,8 +233,13 @@ fn create_batch_storage() -> BatchStorage {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+// Create a new file storage
+fn create_file_storage() -> FileStorage {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
 // Mock handlers for A2A endpoints
-async fn handle_a2a_request(task_storage: TaskStorage, batch_storage: BatchStorage, req: Request<Body>) -> Result<Response<Body>, Infallible> {
+async fn handle_a2a_request(task_storage: TaskStorage, batch_storage: BatchStorage, file_storage: FileStorage, req: Request<Body>) -> Result<Response<Body>, Infallible> {
     // Check if this is a request for agent card
     // Check for Accept header to see if client wants SSE
     let accept_header = req.headers().get("Accept")
@@ -1099,6 +1162,441 @@ async fn handle_a2a_request(task_storage: TaskStorage, batch_storage: BatchStora
                 let json = serde_json::to_string(&batch_response).unwrap();
                 return Ok(Response::new(Body::from(json)));
             },
+            // Skills operations
+            "skills/list" => {
+                // Get optional filter tags
+                let tags_opt = request.get("params")
+                    .and_then(|p| p.get("tags"))
+                    .and_then(|t| t.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .map(String::from)
+                            .collect::<Vec<String>>()
+                    });
+                
+                // Create mock skills list
+                let mut skills = vec![
+                    AgentSkill {
+                        id: "test-skill-1".to_string(),
+                        name: "Echo".to_string(),
+                        description: Some("Echoes back any message sent".to_string()),
+                        tags: Some(vec!["basic".to_string(), "text".to_string()]),
+                        examples: Some(vec!["Echo this message".to_string()]),
+                        input_modes: Some(vec!["text/plain".to_string()]),
+                        output_modes: Some(vec!["text/plain".to_string()]),
+                    },
+                    AgentSkill {
+                        id: "test-skill-2".to_string(),
+                        name: "Summarize".to_string(),
+                        description: Some("Summarizes long text content".to_string()),
+                        tags: Some(vec!["text".to_string(), "analysis".to_string()]),
+                        examples: Some(vec!["Summarize this article".to_string()]),
+                        input_modes: Some(vec!["text/plain".to_string(), "text/html".to_string()]),
+                        output_modes: Some(vec!["text/plain".to_string()]),
+                    },
+                    AgentSkill {
+                        id: "test-skill-3".to_string(),
+                        name: "Image Generation".to_string(),
+                        description: Some("Creates images from text descriptions".to_string()),
+                        tags: Some(vec!["image".to_string(), "creative".to_string()]),
+                        examples: Some(vec!["Generate an image of a sunset over mountains".to_string()]),
+                        input_modes: Some(vec!["text/plain".to_string()]),
+                        output_modes: Some(vec!["image/png".to_string(), "image/jpeg".to_string()]),
+                    }
+                ];
+                
+                // Filter skills if tags provided
+                if let Some(tags) = tags_opt {
+                    skills = skills.into_iter()
+                        .filter(|skill| {
+                            if let Some(skill_tags) = &skill.tags {
+                                // Check if any of the skill's tags match the filter tags
+                                skill_tags.iter().any(|tag| tags.contains(tag))
+                            } else {
+                                // If the skill has no tags and we're filtering by tags, exclude it
+                                false
+                            }
+                        })
+                        .collect();
+                }
+                
+                // Create the response
+                let response = json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "skills": skills,
+                        "metadata": {
+                            "total_count": skills.len()
+                        }
+                    }
+                });
+                
+                let json = serde_json::to_string(&response).unwrap();
+                return Ok(Response::new(Body::from(json)));
+            },
+            "skills/get" => {
+                // Extract skill ID from request params
+                let skill_id_opt = request.get("params").and_then(|p| p.get("id")).and_then(|id| id.as_str());
+                let skill_id = match skill_id_opt {
+                    Some(id) => id.to_string(),
+                    None => {
+                        let error = json!({
+                            "jsonrpc": "2.0",
+                            "id": request.get("id"),
+                            "error": {
+                                "code": -32602,
+                                "message": "Invalid parameters: missing skill id"
+                            }
+                        });
+                        let json = serde_json::to_string(&error).unwrap();
+                        return Ok(Response::new(Body::from(json)));
+                    }
+                };
+                
+                // Return the appropriate skill based on ID
+                let skill = match skill_id.as_str() {
+                    "test-skill-1" => AgentSkill {
+                        id: "test-skill-1".to_string(),
+                        name: "Echo".to_string(),
+                        description: Some("Echoes back any message sent".to_string()),
+                        tags: Some(vec!["basic".to_string(), "text".to_string()]),
+                        examples: Some(vec!["Echo this message".to_string()]),
+                        input_modes: Some(vec!["text/plain".to_string()]),
+                        output_modes: Some(vec!["text/plain".to_string()]),
+                    },
+                    "test-skill-2" => AgentSkill {
+                        id: "test-skill-2".to_string(),
+                        name: "Summarize".to_string(),
+                        description: Some("Summarizes long text content".to_string()),
+                        tags: Some(vec!["text".to_string(), "analysis".to_string()]),
+                        examples: Some(vec!["Summarize this article".to_string()]),
+                        input_modes: Some(vec!["text/plain".to_string(), "text/html".to_string()]),
+                        output_modes: Some(vec!["text/plain".to_string()]),
+                    },
+                    "test-skill-3" => AgentSkill {
+                        id: "test-skill-3".to_string(),
+                        name: "Image Generation".to_string(),
+                        description: Some("Creates images from text descriptions".to_string()),
+                        tags: Some(vec!["image".to_string(), "creative".to_string()]),
+                        examples: Some(vec!["Generate an image of a sunset over mountains".to_string()]),
+                        input_modes: Some(vec!["text/plain".to_string()]),
+                        output_modes: Some(vec!["image/png".to_string(), "image/jpeg".to_string()]),
+                    },
+                    _ => {
+                        // For unknown skill IDs, create a generic skill
+                        AgentSkill {
+                            id: skill_id.clone(),
+                            name: format!("Unknown Skill ({})", skill_id),
+                            description: Some("This skill is not recognized".to_string()),
+                            tags: None,
+                            examples: None,
+                            input_modes: None,
+                            output_modes: None,
+                        }
+                    }
+                };
+                
+                // Create the response
+                let response = json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "skill": skill,
+                        "metadata": {
+                            "timestamp": Utc::now().to_rfc3339()
+                        }
+                    }
+                });
+                
+                let json = serde_json::to_string(&response).unwrap();
+                return Ok(Response::new(Body::from(json)));
+            },
+            "skills/invoke" => {
+                // Extract skill ID and message from request params
+                let skill_id_opt = request.get("params").and_then(|p| p.get("id")).and_then(|id| id.as_str());
+                let skill_id = match skill_id_opt {
+                    Some(id) => id.to_string(),
+                    None => {
+                        let error = json!({
+                            "jsonrpc": "2.0",
+                            "id": request.get("id"),
+                            "error": {
+                                "code": -32602,
+                                "message": "Invalid parameters: missing skill id"
+                            }
+                        });
+                        let json = serde_json::to_string(&error).unwrap();
+                        return Ok(Response::new(Body::from(json)));
+                    }
+                };
+                
+                // Make sure message exists
+                if !request.get("params").and_then(|p| p.get("message")).is_some() {
+                    let error = json!({
+                        "jsonrpc": "2.0",
+                        "id": request.get("id"),
+                        "error": {
+                            "code": -32602,
+                            "message": "Invalid parameters: missing message"
+                        }
+                    });
+                    let json = serde_json::to_string(&error).unwrap();
+                    return Ok(Response::new(Body::from(json)));
+                }
+                
+                // Create a new task ID
+                let task_id = format!("skill-task-{}", chrono::Utc::now().timestamp_millis());
+                
+                // Get session ID if provided, otherwise generate one
+                let session_id = request.get("params")
+                    .and_then(|p| p.get("session_id"))
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("skill-session-{}", chrono::Utc::now().timestamp_millis()));
+                
+                // Create a new task with the skill execution
+                let mut task = MockTask::new(&task_id, &session_id);
+                
+                // Update with working state
+                task.update_status(TaskState::Working, None);
+                
+                // Create response based on skill ID
+                let response_text = match skill_id.as_str() {
+                    "test-skill-1" => {
+                        // Echo skill - echo back the message content
+                        let user_message = request.get("params")
+                            .and_then(|p| p.get("message"))
+                            .and_then(|m| m.get("parts"))
+                            .and_then(|p| p.as_array())
+                            .and_then(|parts| parts.first())
+                            .and_then(|part| part.get("text"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("Empty message");
+                        
+                        format!("Echo skill response: {}", user_message)
+                    },
+                    "test-skill-2" => {
+                        // Summarize skill - return a mock summary
+                        "Summary: This is a simulated summary of the content provided. The mock summarization skill extracts key points and condenses them into a concise format for easier comprehension.".to_string()
+                    },
+                    "test-skill-3" => {
+                        // Image generation skill - describe the image that would be generated
+                        "Image Generation: A vivid image has been created based on your description. In a real implementation, this would return an actual image file.".to_string()
+                    },
+                    _ => {
+                        format!("Unknown skill '{}' - this is a simulated response for demonstration purposes.", skill_id)
+                    }
+                };
+                
+                // Create an artifact with the response
+                let text_part = TextPart {
+                    type_: "text".to_string(),
+                    text: response_text.to_string(),
+                    metadata: None,
+                };
+                
+                let artifact = Artifact {
+                    parts: vec![Part::TextPart(text_part)],
+                    index: 0,
+                    name: Some(format!("{}_response", skill_id)),
+                    description: Some(format!("Response from skill: {}", skill_id)),
+                    append: None,
+                    last_chunk: None,
+                    metadata: None,
+                };
+                
+                // Add the artifact to the task
+                task.add_artifact(artifact);
+                
+                // Update to completed state
+                let completed_message = Message {
+                    role: Role::Agent,
+                    parts: vec![Part::TextPart(TextPart {
+                        type_: "text".to_string(),
+                        text: format!("Skill '{}' executed successfully", skill_id),
+                        metadata: None,
+                    })],
+                    metadata: None,
+                };
+                task.update_status(TaskState::Completed, Some(completed_message));
+                
+                // Store the task
+                {
+                    let mut storage = task_storage.lock().unwrap();
+                    storage.insert(task_id.clone(), task.clone());
+                }
+                
+                // Return the task
+                let response = json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": task.to_json(false)
+                });
+                
+                let json = serde_json::to_string(&response).unwrap();
+                return Ok(Response::new(Body::from(json)));
+            },
+            // File Operations
+            "files/upload" => {
+                // Extract file data from request
+                let file_data = match request.get("params").and_then(|p| p.get("file")) {
+                    Some(data) => data,
+                    None => {
+                        // Return invalid parameters error
+                        let error_response = json!({
+                            "jsonrpc": "2.0",
+                            "id": request.get("id"),
+                            "error": {
+                                "code": -32602,
+                                "message": "Invalid parameters: missing file data",
+                            }
+                        });
+                        
+                        let json = serde_json::to_string(&error_response).unwrap();
+                        return Ok(Response::new(Body::from(json)));
+                    }
+                };
+                
+                // Extract file details
+                let name = file_data.get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("unnamed.file")
+                    .to_string();
+                    
+                let mime_type = file_data.get("mimeType")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("application/octet-stream")
+                    .to_string();
+                    
+                let content = file_data.get("bytes")
+                    .and_then(|b| b.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                    
+                // Extract optional metadata
+                let metadata = request.get("params")
+                    .and_then(|p| p.get("metadata"))
+                    .and_then(|m| m.as_object().cloned());
+                    
+                // Extract optional task ID from metadata
+                let task_id = metadata.as_ref()
+                    .and_then(|m| m.get("taskId"))
+                    .and_then(|t| t.as_str());
+                    
+                // Generate a file ID
+                let file_id = format!("file-{}", uuid::Uuid::new_v4());
+                
+                // Create new file record
+                let file = MockFile::new(
+                    &file_id,
+                    &name,
+                    &mime_type,
+                    &content,
+                    task_id,
+                    metadata.clone()
+                );
+                
+                // Add file to storage
+                let mut files = file_storage.lock().unwrap();
+                files.insert(file_id.clone(), file.clone());
+                
+                // Create response
+                let upload_response = json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": file.to_upload_json()
+                });
+                
+                let json = serde_json::to_string(&upload_response).unwrap();
+                return Ok(Response::new(Body::from(json)));
+            },
+            "files/download" => {
+                // Extract file ID from request
+                let file_id = match request.get("params").and_then(|p| p.get("fileId")).and_then(|id| id.as_str()) {
+                    Some(id) => id,
+                    None => {
+                        // Return invalid parameters error
+                        let error_response = json!({
+                            "jsonrpc": "2.0",
+                            "id": request.get("id"),
+                            "error": {
+                                "code": -32602,
+                                "message": "Invalid parameters: missing fileId",
+                            }
+                        });
+                        
+                        let json = serde_json::to_string(&error_response).unwrap();
+                        return Ok(Response::new(Body::from(json)));
+                    }
+                };
+                
+                // Retrieve file from storage
+                let files = file_storage.lock().unwrap();
+                
+                // Look up the file
+                let file = match files.get(file_id) {
+                    Some(f) => f.clone(),
+                    None => {
+                        // Return file not found error
+                        let error_response = json!({
+                            "jsonrpc": "2.0",
+                            "id": request.get("id"),
+                            "error": {
+                                "code": -32001,
+                                "message": "File not found",
+                            }
+                        });
+                        
+                        let json = serde_json::to_string(&error_response).unwrap();
+                        return Ok(Response::new(Body::from(json)));
+                    }
+                };
+                
+                // Create response
+                let download_response = json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": file.to_download_json()
+                });
+                
+                let json = serde_json::to_string(&download_response).unwrap();
+                return Ok(Response::new(Body::from(json)));
+            },
+            "files/list" => {
+                // Extract optional task ID from request
+                let task_id = request.get("params")
+                    .and_then(|p| p.get("taskId"))
+                    .and_then(|id| id.as_str());
+                    
+                // Get files from storage
+                let files = file_storage.lock().unwrap();
+                
+                // Filter files by task ID if provided
+                let filtered_files: Vec<Value> = files.values()
+                    .filter(|file| {
+                        if let Some(tid) = task_id {
+                            file.task_id.as_ref().map_or(false, |id| id == tid)
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|file| file.to_upload_json())
+                    .collect();
+                    
+                // Create response
+                let list_response = json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "files": filtered_files
+                    }
+                });
+                
+                let json = serde_json::to_string(&list_response).unwrap();
+                return Ok(Response::new(Body::from(json)));
+            },
             // Fallback for unhandled methods
             _ => {
                 // Return method not found error
@@ -1232,21 +1730,27 @@ pub fn start_mock_server(port: u16) {
         // Create shared batch storage
         let batch_storage = create_batch_storage();
         
+        // Create shared file storage
+        let file_storage = create_file_storage();
+        
         // Clone storages for the make_service closure
         let ts = task_storage.clone();
         let bs = batch_storage.clone();
+        let fs = file_storage.clone();
         
         let make_svc = make_service_fn(move |_conn| {
             // Clone storages for each service function
             let ts_clone = ts.clone();
             let bs_clone = bs.clone();
+            let fs_clone = fs.clone();
             
             async move {
                 Ok::<_, Infallible>(service_fn(move |req| {
                     // Clone storages for each request
                     let ts_req = ts_clone.clone();
                     let bs_req = bs_clone.clone();
-                    handle_a2a_request(ts_req, bs_req, req)
+                    let fs_req = fs_clone.clone();
+                    handle_a2a_request(ts_req, bs_req, fs_req, req)
                 }))
             }
         });

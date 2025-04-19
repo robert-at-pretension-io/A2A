@@ -87,6 +87,9 @@ Our client supports rich interactions beyond basic text messaging:
 * **Streaming**: Receive incremental updates via Server-Sent Events
 * **Artifacts**: Retrieve, save, and process various artifact types from task results
 * **Push Notifications**: Configure webhooks for asynchronous task updates
+* **Task Batching**: Create and manage groups of related tasks
+* **State History**: Track and analyze task state transitions
+* **Agent Skills**: Discover, query, and invoke agent skills
 
 For detailed documentation and examples of these advanced features, see [Client README](src/client/README.md).
 
@@ -98,7 +101,7 @@ Run the full integration test suite:
 
 ### Comprehensive Testing Strategy
 
-For a detailed approach to testing A2A server implementations, see our [Testing Plan](testing_plan.md), which outlines a comprehensive framework for validating protocol compliance, performance, and security.
+For a detailed approach to testing A2A server implementations, see our [Testing Plan](docs/testing_plan.md), which outlines a comprehensive framework for validating protocol compliance, performance, and security.
 
 ---
 
