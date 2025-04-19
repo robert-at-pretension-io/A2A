@@ -14,6 +14,11 @@ mod tests;
 mod cancel_task;
 pub mod streaming;
 mod push_notifications;
+mod file_operations;
+mod data_operations;
+mod artifacts;
+mod state_history;
+pub mod task_batch;
 
 /// A2A Client for interacting with A2A-compatible servers
 pub struct A2aClient {

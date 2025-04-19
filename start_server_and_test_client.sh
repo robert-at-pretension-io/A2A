@@ -57,6 +57,30 @@ cargo run -- client set-push-notification --url "http://localhost:8080" --id "$T
 # Get push notification config
 cargo run -- client get-push-notification --url "http://localhost:8080" --id "$TASK_ID"
 
+echo "==============================="
+echo "Testing Task State History"
+echo "==============================="
+cargo run -- client get-state-history --url "http://localhost:8080" --id "$TASK_ID"
+cargo run -- client get-state-metrics --url "http://localhost:8080" --id "$TASK_ID"
+
+echo "==============================="
+echo "Testing Task Batching"
+echo "==============================="
+# Note: These commands require implementation in main.rs
+# Create a batch
+BATCH_ID=$(cargo run -- client create-batch --url "http://localhost:8080" --tasks "Task 1,Task 2,Task 3" --name "Test Batch" | grep -o '"id": "[^"]*"' | head -1 | cut -d'"' -f4)
+
+if [ ! -z "$BATCH_ID" ]; then
+  # Get batch info
+  cargo run -- client get-batch --url "http://localhost:8080" --id "$BATCH_ID"
+  
+  # Get batch status
+  cargo run -- client get-batch-status --url "http://localhost:8080" --id "$BATCH_ID"
+  
+  # Cancel batch
+  cargo run -- client cancel-batch --url "http://localhost:8080" --id "$BATCH_ID"
+fi
+
 # Kill the server when done
 kill $SERVER_PID
 echo "Server stopped."

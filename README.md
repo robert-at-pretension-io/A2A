@@ -78,6 +78,18 @@ cargo run -- client get-task --url "http://localhost:8080" --id "task-123"
 cargo run -- client cancel-task --url "http://localhost:8080" --id "task-123"
 ```
 
+#### Advanced Features
+
+Our client supports rich interactions beyond basic text messaging:
+
+* **File Operations**: Send tasks with file attachments either by path or bytes
+* **Structured Data**: Transmit JSON data structures alongside text
+* **Streaming**: Receive incremental updates via Server-Sent Events
+* **Artifacts**: Retrieve, save, and process various artifact types from task results
+* **Push Notifications**: Configure webhooks for asynchronous task updates
+
+For detailed documentation and examples of these advanced features, see [Client README](src/client/README.md).
+
 Run the full integration test suite:
 
 ```bash
