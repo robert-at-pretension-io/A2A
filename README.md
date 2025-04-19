@@ -56,7 +56,33 @@ This repository provides tools to test A2A protocol implementations, ensuring co
 - **Validator**: Validate A2A messages against the JSON schema
 - **Property Tests**: Generate and test random A2A messages
 - **Mock Server**: A reference implementation for testing clients
+- **Client Implementation**: A complete A2A client for interacting with servers
 - **Fuzzer**: Test robustness against malformed inputs
+- **Integration Tests**: End-to-end testing of client-server interactions
+
+### Client Usage
+
+The A2A client implementation can be used to interact with any A2A-compatible server:
+
+```bash
+# Get an agent's card (capabilities, skills, etc.)
+cargo run -- client get-agent-card --url "http://localhost:8080"
+
+# Send a task to an agent
+cargo run -- client send-task --url "http://localhost:8080" --message "Hello, agent!"
+
+# Retrieve a task's status
+cargo run -- client get-task --url "http://localhost:8080" --id "task-123"
+
+# Cancel a task
+cargo run -- client cancel-task --url "http://localhost:8080" --id "task-123"
+```
+
+Run the full integration test suite:
+
+```bash
+./start_server_and_test_client.sh
+```
 
 ### Comprehensive Testing Strategy
 

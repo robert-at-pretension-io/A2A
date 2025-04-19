@@ -28,5 +28,15 @@ libfuzzer-sys = { version = "0.4", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2.3", features = ["serde"] }
 
+# For client implementation
+reqwest = { version = "0.11", features = ["json", "stream"] }
+mockito = "1.2"
+futures = "0.3"
+futures-util = "0.3"
+bytes = "1.4"
+uuid = { version = "1.4", features = ["v4", "serde"] }
+eventsource-stream = "0.2"
+tokio-stream = "0.1"
+
 [features]
 fuzzing = ["libfuzzer-sys"]
