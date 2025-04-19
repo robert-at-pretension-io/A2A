@@ -1,0 +1,32 @@
+[package]
+name = "a2a-test-suite"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+lazy_static = "1.4.0"
+
+# For JSON Schema validation
+jsonschema = "0.17.0"
+
+# For property testing
+proptest = "1.0"
+
+# For mock server
+hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+
+# For fuzzing
+arbitrary = { version = "1.1", features = ["derive"] }
+libfuzzer-sys = { version = "0.4", optional = true }
+
+# A2A-specific dependencies
+chrono = { version = "0.4", features = ["serde"] }
+url = { version = "2.3", features = ["serde"] }
+
+[features]
+fuzzing = ["libfuzzer-sys"]
