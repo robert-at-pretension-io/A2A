@@ -45,12 +45,18 @@ jobs:
           
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }}
+      
+      # Add this step to verify the file exists before uploading
+      - name: List target directory
+        run: ls -la target/${{ matrix.target }}/release/
+        shell: bash
           
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.asset_name }}
           path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          if-no-files-found: error  # This will fail the workflow if the file isn't found
           retention-days: 1
           
   # Simple workflow to test building only (without release)
@@ -110,16 +116,16 @@ jobs:
       matrix:
         include:
           - asset_name: a2a-test-suite-linux-amd64
-            asset_path: a2a-test-suite
+            asset_content_type: application/octet-stream
             
           - asset_name: a2a-test-suite-macos-intel
-            asset_path: a2a-test-suite
+            asset_content_type: application/octet-stream
             
           - asset_name: a2a-test-suite-macos-arm64
-            asset_path: a2a-test-suite
+            asset_content_type: application/octet-stream
             
           - asset_name: a2a-test-suite-windows-amd64.exe
-            asset_path: a2a-test-suite.exe
+            asset_content_type: application/octet-stream
     
     steps:
       - name: Download artifact
@@ -127,10 +133,14 @@ jobs:
         with:
           name: ${{ matrix.asset_name }}
           
+      - name: List downloaded files
+        run: ls -la
+        shell: bash
+          
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: ${{ matrix.asset_path }}
+          files: ${{ matrix.asset_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
