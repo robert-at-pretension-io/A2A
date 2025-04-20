@@ -234,9 +234,9 @@ impl A2aClient {
                                 if let Some(artifact) = result.get("artifact") {
                                     match serde_json::from_value::<Artifact>(artifact.clone()) {
                                         Ok(artifact_obj) => Ok(StreamingResponse::Artifact(artifact_obj)),
-                                        Err(e) => Err(format!("Failed to parse artifact: {}", e).into())
+                                        Err(e) => Err(ClientError::JsonError(format!("Failed to parse artifact: {}", e))) // Corrected error type
                                     }
-                                } 
+                                }
                                 // Check if this has a final flag
                                 else if let Some(is_final) = result.get("final").and_then(|f| f.as_bool()) {
                                     if is_final {
