@@ -33,7 +33,7 @@ run_test() {
 
   # Check if this is an unofficial test and if we should run it
   if [ "$is_unofficial" = "true" ] && [ "$RUN_UNOFFICIAL_TESTS" = "false" ]; then
-    echo -e "${BLUE}⏭️ [Test ${test_num}] Skipping unofficial test: ${description} (Use --run-unofficial to include)${RESET}"
+    echo -e "${BLUE}⏭️ Skipping test: ${description} (Use --run-unofficial to include)${RESET}"
     # Don't increment success/failure counts for skipped tests
     return 0 # Return success to not fail the script
   fi
@@ -83,12 +83,6 @@ if [ -z "$1" ]; then
 
   echo -e "${GREEN}✅ Local mock server started (PID $SERVER_PID). Testing against $TARGET_URL${RESET}"
 else
-  # URL provided, use it directly
-  TARGET_URL="$1"
-  echo -e "${BLUE}${BOLD}======================================================${RESET}"
-  echo -e "${BLUE}${BOLD}🔗 Testing against provided server URL: $TARGET_URL${RESET}"
-  echo -e "${BLUE}${BOLD}======================================================${RESET}"
-  # URL provided, use it directly
   TARGET_URL="$1"
   # Shift arguments to check for --run-unofficial
   shift
