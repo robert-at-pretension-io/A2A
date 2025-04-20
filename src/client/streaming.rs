@@ -24,8 +24,8 @@ pub enum StreamingResponse {
     Final(Task),
 }
 
-/// Type alias for a streaming response stream
-pub type StreamingResponseStream = Pin<Box<dyn Stream<Item = Result<StreamingResponse, Box<dyn Error>>> + Send>>;
+/// Type alias for a streaming response stream (using ClientError)
+pub type StreamingResponseStream = Pin<Box<dyn Stream<Item = Result<StreamingResponse, ClientError>> + Send>>;
 
 impl A2aClient {
     /// Send a task with streaming response enabled via SSE (typed error version)
@@ -324,10 +324,10 @@ mod tests {
             .with_body(sse_response)
             .create_async().await;
             
-        // Create client and call streaming method
+        // Create client and call streaming method using _typed version
         let mut client = A2aClient::new(&server.url());
-        let mut stream = client.send_task_subscribe("Test streaming request").await.unwrap();
-        
+        let mut stream = client.send_task_subscribe_typed("Test streaming request").await.unwrap();
+
         // Collect the results from the stream
         let mut responses = vec![];
         while let Some(response) = stream.next().await {
@@ -405,10 +405,10 @@ mod tests {
             .with_body(sse_response)
             .create_async().await;
             
-        // Create client and call resubscribe method
+        // Create client and call resubscribe method using _typed version
         let mut client = A2aClient::new(&server.url());
-        let mut stream = client.resubscribe_task(task_id).await.unwrap();
-        
+        let mut stream = client.resubscribe_task_typed(task_id).await.unwrap();
+
         // Collect results
         let mut responses = vec![];
         while let Some(response) = stream.next().await {

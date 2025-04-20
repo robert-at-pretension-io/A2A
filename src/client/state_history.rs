@@ -51,10 +51,10 @@ impl A2aClient {
         })
     }
 
-    /// Get a task's complete state transition history (backward compatible)
-    pub async fn get_task_state_history(&mut self, task_id: &str) -> Result<TaskStateHistory, Box<dyn Error>> {
-        self.get_task_state_history_typed(task_id).await.into_box_error()
-    }
+    // Remove backward compatible version
+    // pub async fn get_task_state_history(&mut self, task_id: &str) -> Result<TaskStateHistory, Box<dyn Error>> {
+    //     self.get_task_state_history_typed(task_id).await.into_box_error()
+    // }
 
     /// Extract state transitions from a task
     /// This processes both the current status and any message history present
@@ -240,10 +240,10 @@ impl A2aClient {
         Ok(metrics)
     }
 
-    /// Calculate metrics about a task's state transitions (backward compatible)
-    pub async fn get_state_transition_metrics(&mut self, task_id: &str) -> Result<TaskMetrics, Box<dyn Error>> {
-        self.get_state_transition_metrics_typed(task_id).await.into_box_error()
-    }
+    // Remove backward compatible version
+    // pub async fn get_state_transition_metrics(&mut self, task_id: &str) -> Result<TaskMetrics, Box<dyn Error>> {
+    //     self.get_state_transition_metrics_typed(task_id).await.into_box_error()
+    // }
 }
 
 /// Metrics about a task's state transitions
@@ -404,10 +404,10 @@ mod tests {
             .with_body(task_response.to_string())
             .create_async().await;
         
-        // Create client and get history
+        // Create client and get history using _typed version
         let mut client = A2aClient::new(&server.url());
-        let history = client.get_task_state_history(task_id).await.unwrap();
-        
+        let history = client.get_task_state_history_typed(task_id).await.unwrap();
+
         // Verify history
         assert_eq!(history.task_id, task_id);
         assert_eq!(history.transitions.len(), 3);
@@ -512,10 +512,10 @@ mod tests {
             .with_body(task_response.to_string())
             .create_async().await;
         
-        // Create client and get metrics
+        // Create client and get metrics using _typed version
         let mut client = A2aClient::new(&server.url());
-        let metrics = client.get_state_transition_metrics(task_id).await.unwrap();
-        
+        let metrics = client.get_state_transition_metrics_typed(task_id).await.unwrap();
+
         // Verify metrics
         assert_eq!(metrics.task_id, task_id);
         // Start time should be present for any task

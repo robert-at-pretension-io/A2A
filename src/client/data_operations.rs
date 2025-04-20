@@ -214,8 +214,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let result = client.send_task_with_data(text, &data).await.unwrap();
-        
+        // Call the _typed version
+        let result = client.send_task_with_data_typed(text, &data).await.unwrap();
+
         // Assert
         assert_eq!(result.id, "task-with-data-123");
         

@@ -804,7 +804,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
                 let data_value: serde_json::Value = serde_json::from_str(test_data_content).unwrap();
-                client_guard.send_task_with_data("Task with structured data", &data_value).await
+                // Use the _typed version
+                client_guard.send_task_with_data_typed("Task with structured data", &data_value).await
             }
         };
          match tokio::time::timeout(config.default_timeout, send_data_closure()).await {

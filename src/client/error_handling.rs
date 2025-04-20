@@ -119,8 +119,7 @@ impl A2aClient {
     }
 }
 
-// Utility function to convert ClientError to the existing Box<dyn Error> format
-// for backward compatibility during transition
-pub fn convert_client_error(err: ClientError) -> Box<dyn Error> {
-    Box::new(err)
-}
+// Remove utility function as it's no longer needed
+// pub fn convert_client_error(err: ClientError) -> Box<dyn Error> {
+//     Box::new(err)
+// }

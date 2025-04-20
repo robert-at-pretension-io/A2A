@@ -188,10 +188,10 @@ async fn test_state_transition_history() -> Result<(), Box<dyn Error>> {
     let task_to_cancel = client.send_task("This task will be canceled").await?;
     println!("\nCreated task for cancellation: {}", task_to_cancel.id);
     
-    // Immediately cancel the task
-    let cancel_result = client.cancel_task(&task_to_cancel.id).await?;
-    
-    // Get state history for canceled task
+    // Immediately cancel the task using _typed version
+    let cancel_result = client.cancel_task_typed(&task_to_cancel.id).await?;
+
+    // Get state history for canceled task using _typed version
     let cancel_history = client.get_task_state_history(&task_to_cancel.id).await?;
     
     println!("State transitions for canceled task {}:", cancel_history.task_id);
@@ -237,33 +237,33 @@ async fn test_task_batch_operations() -> Result<(), Box<dyn Error>> {
         metadata: None,
     };
     
-    // Create the batch
-    let batch = client.create_task_batch(batch_params).await?;
+    // Create the batch using _typed version
+    let batch = client.create_task_batch_typed(batch_params).await?;
     println!("Created batch ID: {} with {} tasks", batch.id, batch.task_ids.len());
-    
+
     // Check that the batch has the correct number of tasks
     assert_eq!(batch.task_ids.len(), 3, "Batch should contain 3 tasks");
     assert_eq!(batch.id, "test-batch-1", "Batch ID should match");
     assert_eq!(batch.name, Some("Test Batch".to_string()), "Batch name should match");
-    
-    // Get the batch status
-    let status = client.get_batch_status(&batch.id).await?;
+
+    // Get the batch status using _typed version
+    let status = client.get_batch_status_typed(&batch.id).await?;
     println!("Batch status: {:?}", status.overall_status);
-    
+
     // Check status metrics
     assert_eq!(status.total_tasks, 3, "Status should report 3 tasks");
-    
-    // Get all tasks in the batch
-    let tasks = client.get_batch_tasks(&batch.id).await?;
+
+    // Get all tasks in the batch using _typed version
+    let tasks = client.get_batch_tasks_typed(&batch.id).await?;
     println!("Retrieved {} tasks", tasks.len());
-    
+
     // Check tasks
     assert_eq!(tasks.len(), 3, "Should retrieve 3 tasks");
-    
-    // Test canceling a batch
-    let cancel_status = client.cancel_batch(&batch.id).await?;
+
+    // Test canceling a batch using _typed version
+    let cancel_status = client.cancel_batch_typed(&batch.id).await?;
     println!("After cancellation status: {:?}", cancel_status.overall_status);
-    
+
     // Verify at least some tasks are canceled
     assert!(cancel_status.overall_status == BatchStatus::Canceled || 
            cancel_status.overall_status == BatchStatus::PartlyCanceled,
@@ -285,23 +285,23 @@ async fn test_agent_skills_operations() -> Result<(), Box<dyn Error>> {
     
     // Create client
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-    
+
     println!("Testing agent skills operations...");
-    
-    // List all available skills
-    let skills_response = client.list_skills(None).await?;
+
+    // List all available skills using _typed version
+    let skills_response = client.list_skills_typed(None).await?;
     println!("Found {} skills", skills_response.skills.len());
-    
+
     // Verify we have at least one skill
     assert!(!skills_response.skills.is_empty(), "Should have at least one skill");
     
     // Grab the first skill ID for later tests
     let first_skill_id = skills_response.skills[0].id.clone();
-    
-    // Test filtering skills by tags
-    let text_skills = client.list_skills(Some(vec!["text".to_string()])).await?;
+
+    // Test filtering skills by tags using _typed version
+    let text_skills = client.list_skills_typed(Some(vec!["text".to_string()])).await?;
     println!("Found {} skills with 'text' tag", text_skills.skills.len());
-    
+
     // Verify that filtered skills all have the requested tag
     for skill in &text_skills.skills {
         if let Some(tags) = &skill.tags {
@@ -317,10 +317,10 @@ async fn test_agent_skills_operations() -> Result<(), Box<dyn Error>> {
     // Verify skill details
     assert_eq!(skill_details.skill.id, first_skill_id, "Skill ID should match");
     assert!(!skill_details.skill.name.is_empty(), "Skill should have a name");
-    
-    // Invoke a skill
+
+    // Invoke a skill using _typed version
     println!("Invoking skill: {}", first_skill_id);
-    let task = client.invoke_skill(
+    let task = client.invoke_skill_typed(
         &first_skill_id,
         "Test skill invocation message",
         None,
@@ -404,11 +404,11 @@ async fn test_auth_integration_flow() -> Result<(), Box<dyn Error>> {
     let auth_value = "Bearer test-token-123";
     let mut client_with_bearer = A2aClient::new(&base_url)
         .with_auth(auth_header, auth_value);
-    
-    // Validate auth works
-    let is_valid = client_with_bearer.validate_auth().await?;
+
+    // Validate auth works using _typed version
+    let is_valid = client_with_bearer.validate_auth_typed().await?;
     assert!(is_valid, "Auth validation should succeed with valid Bearer token");
-    
+
     // Perform operations with auth
     let task = client_with_bearer.send_task("Task with auth").await?;
     println!("Successfully created task with auth: {}", task.id);
@@ -422,11 +422,11 @@ async fn test_auth_integration_flow() -> Result<(), Box<dyn Error>> {
     let api_key_value = "test-api-key-123";
     let mut client_with_apikey = A2aClient::new(&base_url)
         .with_auth(api_key_header, api_key_value);
-    
-    // Validate API Key auth works
-    let is_valid = client_with_apikey.validate_auth().await?;
+
+    // Validate API Key auth works using _typed version
+    let is_valid = client_with_apikey.validate_auth_typed().await?;
     assert!(is_valid, "Auth validation should succeed with valid API Key");
-    
+
     // Perform operations with API Key auth
     let task = client_with_apikey.send_task("Task with API Key auth").await?;
     println!("Successfully created task with API Key auth: {}", task.id);
@@ -463,12 +463,12 @@ async fn test_auth_integration_flow() -> Result<(), Box<dyn Error>> {
     let status = client_with_bearer.get_batch_status(&batch.id).await?;
     println!("Successfully retrieved batch status with auth: {:?}", 
              status.overall_status);
-    
-    // Test 7: Streaming with auth
+
+    // Test 7: Streaming with auth using _typed version
     println!("Testing streaming with auth...");
     let mut stream = client_with_bearer
-        .send_task_subscribe("Test streaming with authentication").await?;
-    
+        .send_task_subscribe_typed("Test streaming with authentication").await?;
+
     println!("Stream created with auth, waiting for updates...");
     use futures_util::StreamExt;
     use crate::client::streaming::StreamingResponse;

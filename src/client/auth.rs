@@ -21,10 +21,10 @@ impl A2aClient {
         }
     }
 
-    /// Validate authentication credentials with the server (backward compatible)
-    pub async fn validate_auth(&mut self) -> Result<bool, Box<dyn Error>> {
-        self.validate_auth_typed().await.into_box_error()
-    }
+    // Remove backward compatible version
+    // pub async fn validate_auth(&mut self) -> Result<bool, Box<dyn Error>> {
+    //     self.validate_auth_typed().await.into_box_error()
+    // }
 }
 
 #[cfg(test)]
@@ -53,13 +53,13 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(response.to_string())
             .create_async().await;
-        
+
         // Act
         let mut client = A2aClient::new(&server.url())
             .with_auth(auth_header, auth_value);
-        
-        let result = client.validate_auth().await.unwrap();
-        
+        // Call the _typed version
+        let result = client.validate_auth_typed().await.unwrap();
+
         // Assert
         assert!(result);
         mock.assert_async().await;
@@ -89,9 +89,9 @@ mod tests {
         // Act
         let mut client = A2aClient::new(&server.url());
         // Notably, we don't add auth here
-        
-        let result = client.validate_auth().await;
-        
+        // Call the _typed version
+        let result = client.validate_auth_typed().await;
+
         // Assert
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
@@ -167,13 +167,13 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(response.to_string())
             .create_async().await;
-        
+
         // Act
         let mut client = A2aClient::new(&server.url())
             .with_auth(auth_header, auth_value);
-        
-        let result = client.validate_auth().await.unwrap();
-        
+        // Call the _typed version
+        let result = client.validate_auth_typed().await.unwrap();
+
         // Assert
         assert!(result);
         mock.assert_async().await;
@@ -201,13 +201,13 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(response.to_string())
             .create_async().await;
-        
+
         // Act
         let mut client = A2aClient::new(&server.url())
             .with_auth(auth_header, auth_value);
-        
-        let result = client.validate_auth().await.unwrap();
-        
+        // Call the _typed version
+        let result = client.validate_auth_typed().await.unwrap();
+
         // Assert
         assert!(result);
         mock.assert_async().await;
@@ -240,9 +240,9 @@ mod tests {
         // Act
         let mut client = A2aClient::new(&server.url())
             .with_auth(auth_header, auth_value);
-        
-        let result = client.validate_auth().await;
-        
+        // Call the _typed version
+        let result = client.validate_auth_typed().await;
+
         // Assert
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
@@ -278,9 +278,9 @@ mod tests {
         // Act
         let mut client = A2aClient::new(&server.url())
             .with_auth(auth_header, auth_value);
-        
-        let result = client.validate_auth().await;
-        
+        // Call the _typed version
+        let result = client.validate_auth_typed().await;
+
         // Assert
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();

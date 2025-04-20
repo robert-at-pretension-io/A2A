@@ -162,7 +162,10 @@ mod tests {
     use crate::mock_server::{self, start_mock_server_with_auth};
     use std::thread;
     
-    #[tokio::test]
+    use mockito::Server; // Add mockito import
+    use tokio::test; // Add tokio import
+
+    #[test]
     async fn test_list_skills() -> Result<(), Box<dyn Error>> {
         // Start mock server in a separate thread (without authentication)
         let port = 8081;
@@ -172,10 +175,10 @@ mod tests {
         
         // Create client
         let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-        
-        // List skills
-        let response = client.list_skills(None).await?;
-        
+
+        // List skills using _typed version
+        let response = client.list_skills_typed(None).await?;
+
         // Verify that we got at least one skill
         assert!(!response.skills.is_empty());
         
@@ -197,10 +200,10 @@ mod tests {
         
         // Create client
         let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-        
-        // Get skill details
-        let response = client.get_skill_details("test-skill-1").await?;
-        
+
+        // Get skill details using _typed version
+        let response = client.get_skill_details_typed("test-skill-1").await?;
+
         // Verify the skill id matches
         assert_eq!(response.skill.id, "test-skill-1");
         
@@ -220,11 +223,11 @@ mod tests {
         
         // Create client
         let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-        
-        // Invoke skill
-        let task = client.invoke_skill(
-            "test-skill-1", 
-            "Test skill invocation", 
+
+        // Invoke skill using _typed version
+        let task = client.invoke_skill_typed(
+            "test-skill-1",
+            "Test skill invocation",
             Some("text/plain".to_string()),
             Some("text/plain".to_string())
         ).await?;

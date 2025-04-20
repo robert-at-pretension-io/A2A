@@ -3,7 +3,8 @@ use serde_json::{json, Value};
 
 use crate::client::A2aClient;
 use crate::client::errors::ClientError; // Add ClientError import
-use crate::client::error_handling::ErrorCompatibility; // Keep for now if needed by Box<dyn Error> versions
+// Remove ErrorCompatibility import
+// use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{PushNotificationConfig, AuthenticationInfo, TaskPushNotificationConfig, TaskIdParams};
 
 impl A2aClient {
@@ -14,7 +15,7 @@ impl A2aClient {
         webhook_url: &str,
         auth_scheme: Option<&str>,
         token: Option<&str>
-    ) -> Result<String, Box<dyn Error>> {
+    ) -> Result<String, ClientError> { // Changed return type
         // Create the push notification config using the proper types
         let mut auth_info: Option<AuthenticationInfo> = None;
         if let Some(scheme) = auth_scheme {
@@ -62,7 +63,7 @@ impl A2aClient {
     pub async fn get_task_push_notification_typed(
         &mut self,
         task_id: &str
-    ) -> Result<PushNotificationConfig, Box<dyn Error>> {
+    ) -> Result<PushNotificationConfig, ClientError> { // Changed return type
         // Create request parameters using the proper TaskIdParams type
         let params = TaskIdParams {
             id: task_id.to_string(),
@@ -84,13 +85,13 @@ impl A2aClient {
         }
     }
 
-    /// Get push notification configuration for a task (backward compatible)
-    pub async fn get_task_push_notification(
-        &mut self,
-        task_id: &str
-    ) -> Result<PushNotificationConfig, Box<dyn Error>> {
-        self.get_task_push_notification_typed(task_id).await.into_box_error()
-    }
+    // Remove backward compatible version
+    // pub async fn get_task_push_notification(
+    //     &mut self,
+    //     task_id: &str
+    // ) -> Result<PushNotificationConfig, Box<dyn Error>> {
+    //     self.get_task_push_notification_typed(task_id).await.into_box_error()
+    // }
 }
 
 #[cfg(test)]
@@ -133,8 +134,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let result = client.set_task_push_notification(task_id, webhook_url, None, None).await.unwrap();
-        
+        // Call the _typed version
+        let result = client.set_task_push_notification_typed(task_id, webhook_url, None, None).await.unwrap();
+
         // Assert
         assert_eq!(result, task_id);
         
@@ -181,10 +183,11 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let result = client.set_task_push_notification(
+        // Call the _typed version
+        let result = client.set_task_push_notification_typed(
             task_id, webhook_url, Some(auth_scheme), Some(token)
         ).await.unwrap();
-        
+
         // Assert
         assert_eq!(result, task_id);
         
@@ -225,8 +228,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let config = client.get_task_push_notification(task_id).await.unwrap();
-        
+        // Call the _typed version
+        let config = client.get_task_push_notification_typed(task_id).await.unwrap();
+
         // Assert
         assert_eq!(config.url, webhook_url);
         
@@ -273,8 +277,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let config = client.get_task_push_notification(task_id).await.unwrap();
-        
+        // Call the _typed version
+        let config = client.get_task_push_notification_typed(task_id).await.unwrap();
+
         // Assert
         assert_eq!(config.url, webhook_url);
         assert_eq!(config.authentication.as_ref().unwrap().schemes[0], auth_scheme);
@@ -308,8 +313,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let result = client.set_task_push_notification(task_id, webhook_url, None, None).await;
-        
+        // Call the _typed version
+        let result = client.set_task_push_notification_typed(task_id, webhook_url, None, None).await;
+
         // Assert
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();

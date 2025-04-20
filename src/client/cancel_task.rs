@@ -67,10 +67,11 @@ mod tests {
             })))
             .with_body(mock_response.to_string())
             .create_async().await;
-            
+
         let mut client = A2aClient::new(&server.url());
-        let result = client.cancel_task(task_id).await.unwrap();
-        
+        // Call the _typed version
+        let result = client.cancel_task_typed(task_id).await.unwrap();
+
         assert_eq!(result, task_id);
         
         mock.assert_async().await;
@@ -94,10 +95,11 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(mock_response.to_string())
             .create_async().await;
-            
+
         let mut client = A2aClient::new(&server.url());
-        let result = client.cancel_task(task_id).await;
-        
+        // Call the _typed version
+        let result = client.cancel_task_typed(task_id).await;
+
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
         assert!(error.contains("Task not found"));

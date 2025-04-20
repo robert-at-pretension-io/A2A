@@ -16,6 +16,7 @@ use uuid::Uuid;
 mod error_handling_tests {
     use super::*;
     use tokio::time;
+    use crate::client::A2aClient; // Add A2aClient import
 
     /// Tests that we properly handle and report task not found errors
     #[tokio::test]

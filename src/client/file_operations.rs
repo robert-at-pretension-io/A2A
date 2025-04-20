@@ -425,8 +425,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let result = client.send_task_with_file_bytes(text, file_bytes, file_name, Some(mime_type)).await.unwrap();
-        
+        // Call the _typed version
+        let result = client.send_task_with_file_bytes_typed(text, file_bytes, file_name, Some(mime_type)).await.unwrap();
+
         // Assert
         assert_eq!(result.id, "task-with-file-123");
         
@@ -499,8 +500,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let result = client.upload_file_bytes(file_bytes, file_name, Some(mime_type), None).await.unwrap();
-        
+        // Call the _typed version
+        let result = client.upload_file_bytes_typed(file_bytes, file_name, Some(mime_type), None).await.unwrap();
+
         // Assert
         assert_eq!(result.file_id, "file-12345");
         assert_eq!(result.name, "test.txt");
@@ -545,8 +547,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let result = client.download_file(file_id).await.unwrap();
-        
+        // Call the _typed version
+        let result = client.download_file_typed(file_id).await.unwrap();
+
         // Assert
         assert_eq!(result.file_id, "file-12345");
         assert_eq!(result.name, "test.txt");
@@ -607,8 +610,9 @@ mod tests {
         
         // Act
         let mut client = A2aClient::new(&server.url());
-        let results = client.list_files(Some(task_id)).await.unwrap();
-        
+        // Call the _typed version
+        let results = client.list_files_typed(Some(task_id)).await.unwrap();
+
         // Assert
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].file_id, "file-1");
