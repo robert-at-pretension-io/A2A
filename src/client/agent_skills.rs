@@ -153,16 +153,6 @@ impl crate::client::A2aClient {
         self.send_jsonrpc::<Task>("skills/invoke", params_value).await
     }
 
-    // Remove old version if not needed
-    // pub async fn invoke_skill(
-    //     &mut self,
-    //     skill_id: &str,
-        text: &str,
-        input_mode: Option<String>,
-        output_mode: Option<String>
-    ) -> Result<Task, Box<dyn Error>> {
-        self.invoke_skill_typed(skill_id, text, input_mode, output_mode).await.into_box_error()
-    }
 }
 
 #[cfg(test)]

@@ -86,15 +86,6 @@ impl A2aClient {
         self.send_jsonrpc::<FileUploadResponse>("files/upload", params).await
     }
 
-    // Remove old version if not needed
-    // pub async fn upload_file(
-    //     &mut self,
-    //     file_path: &str,
-        metadata: Option<Map<String, Value>>
-    ) -> Result<FileUploadResponse, Box<dyn Error>> {
-        self.upload_file_typed(file_path, metadata).await.into_box_error()
-    }
-
     /// Uploads a file to the server using bytes rather than a file path
     pub async fn upload_file_bytes_typed(
         &mut self,
@@ -143,16 +134,6 @@ impl A2aClient {
         self.send_jsonrpc::<FileUploadResponse>("files/upload", params).await
     }
 
-    // Remove old version if not needed
-    // pub async fn upload_file_bytes(
-    //     &mut self,
-    //     file_bytes: &[u8],
-        file_name: &str,
-        mime_type: Option<&str>,
-        metadata: Option<Map<String, Value>>
-    ) -> Result<FileUploadResponse, Box<dyn Error>> {
-        self.upload_file_bytes_typed(file_bytes, file_name, mime_type, metadata).await.into_box_error()
-    }
 
     /// Downloads a file by its ID using the files/download endpoint
     pub async fn download_file_typed(&mut self, file_id: &str) -> Result<FileDownloadResponse, ClientError> {
@@ -193,14 +174,6 @@ impl A2aClient {
         // Send the request
         let response = self.send_jsonrpc::<ListFilesResponse>("files/list", params).await?;
         Ok(response.files)
-    }
-
-    // Remove old version if not needed
-    // pub async fn list_files(
-    //     &mut self,
-    //     task_id: Option<&str>
-    ) -> Result<Vec<FileUploadResponse>, Box<dyn Error>> {
-        self.list_files_typed(task_id).await.into_box_error()
     }
 
     /// Sends a task with a file attachment by path
@@ -260,16 +233,6 @@ impl A2aClient {
         self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
 
-    // Remove old version if not needed
-    // pub async fn send_task_with_file_bytes(
-    //     &mut self,
-    //     text: &str,
-    //     file_bytes: &[u8],
-    //     file_name: &str,
-    //     mime_type: Option<&str>
-    ) -> Result<Task, Box<dyn Error>> {
-        self.send_task_with_file_bytes_typed(text, file_bytes, file_name, mime_type).await.into_box_error()
-    }
 
     /// Creates a message with both text and file by path
     pub async fn create_text_and_file_message_typed(&self, text: &str, file_path: &str) -> Result<Message, ClientError> {
