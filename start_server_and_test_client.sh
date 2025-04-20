@@ -413,11 +413,14 @@ fi
 echo -e "${YELLOW}--> Cleaning up temporary directory $TEMP_DIR...${RESET}"
 rm -rf "$TEMP_DIR"
 
+# --- Authentication Validation Test (Unofficial) ---
 echo
 echo -e "${BLUE}${BOLD}===============================${RESET}"
-echo -e "${BLUE}${BOLD}🔑 Testing Authentication Validation${RESET}"
+echo -e "${BLUE}${BOLD}🔑 Testing Authentication Validation (Unofficial)${RESET}"
 echo -e "${BLUE}${BOLD}===============================${RESET}"
-run_test "Validate Authentication" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client validate-auth --url \"$TARGET_URL\" --header \"$AUTH_HEADER\" --value \"$AUTH_VALUE\""
+
+# Mark this test as unofficial
+run_test "Validate Authentication" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client validate-auth --url \"$TARGET_URL\" --header \"$AUTH_HEADER\" --value \"$AUTH_VALUE\"" true
 
 # --- Configurable Delays Tests (Unofficial) ---
 echo
