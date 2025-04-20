@@ -2,10 +2,11 @@ use crate::client::A2aClient;
 use std::error::Error;
 use crate::types::TaskIdParams;
 use crate::client::errors::ClientError;
-use crate::client::error_handling::ErrorCompatibility;
+// Remove ErrorCompatibility import
+// use crate::client::error_handling::ErrorCompatibility;
 
 impl A2aClient {
-    /// Cancel a task by ID using the new error handling
+    /// Cancel a task by ID
     pub async fn cancel_task_typed(&mut self, task_id: &str) -> Result<String, ClientError> {
         // Create request parameters using the proper TaskIdParams type
         let params = TaskIdParams {
@@ -25,12 +26,13 @@ impl A2aClient {
             None => Err(ClientError::Other("Invalid response: missing task ID".to_string())),
         }
     }
-    
-    /// Cancel a task by ID (legacy version with Box<dyn Error>)
-    pub async fn cancel_task(&mut self, task_id: &str) -> Result<String, Box<dyn Error>> {
-        // Use the new typed version and convert the result
-        self.cancel_task_typed(task_id).await.into_box_error()
-    }
+
+    // Remove the old cancel_task method if no longer needed elsewhere,
+    // or keep it and call cancel_task_typed internally.
+    // For now, let's remove it as the runner uses _typed.
+    // pub async fn cancel_task(&mut self, task_id: &str) -> Result<String, Box<dyn Error>> {
+    //     self.cancel_task_typed(task_id).await.into_box_error()
+    // }
 }
 
 #[cfg(test)]

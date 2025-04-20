@@ -4,11 +4,12 @@ use serde::Serialize;
 
 use crate::client::A2aClient;
 use crate::client::errors::ClientError;
-use crate::client::error_handling::ErrorCompatibility;
+// Remove ErrorCompatibility import
+// use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{Message, Role, Part, DataPart, TaskSendParams, Task};
 
 impl A2aClient {
-    /// Sends a task with structured data (typed error version)
+    /// Sends a task with structured data
     pub async fn send_task_with_data_typed<T: Serialize>(&mut self, text: &str, data: &T) -> Result<Task, ClientError> {
         // Create a message with structured data
         let message = self.create_text_and_data_message_typed(text, data)?;
@@ -29,13 +30,13 @@ impl A2aClient {
             
         self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
-    
-    /// Sends a task with structured data (backward compatible version)
-    pub async fn send_task_with_data<T: Serialize>(&mut self, text: &str, data: &T) -> Result<Task, Box<dyn Error>> {
-        self.send_task_with_data_typed(text, data).await.into_box_error()
-    }
-    
-    /// Creates a message with both text and structured data (typed error version)
+
+    // Remove old version if not needed
+    // pub async fn send_task_with_data<T: Serialize>(&mut self, text: &str, data: &T) -> Result<Task, Box<dyn Error>> {
+    //     self.send_task_with_data_typed(text, data).await.into_box_error()
+    // }
+
+    /// Creates a message with both text and structured data
     pub fn create_text_and_data_message_typed<T: Serialize>(&self, text: &str, data: &T) -> Result<Message, ClientError> {
         // Create text part
         let text_part = crate::types::TextPart {
@@ -67,13 +68,13 @@ impl A2aClient {
             metadata: None,
         })
     }
-    
-    /// Creates a message with both text and structured data (backward compatible version)
-    pub fn create_text_and_data_message<T: Serialize>(&self, text: &str, data: &T) -> Result<Message, Box<dyn Error>> {
-        self.create_text_and_data_message_typed(text, data).into_box_error()
-    }
-    
-    /// Creates a message with just structured data (typed error version)
+
+    // Remove old version if not needed
+    // pub fn create_text_and_data_message<T: Serialize>(&self, text: &str, data: &T) -> Result<Message, Box<dyn Error>> {
+    //     self.create_text_and_data_message_typed(text, data).into_box_error()
+    // }
+
+    /// Creates a message with just structured data
     pub fn create_data_only_message_typed<T: Serialize>(&self, data: &T) -> Result<Message, ClientError> {
         // Convert data to JSON Map
         let data_value = serde_json::to_value(data)
@@ -98,12 +99,12 @@ impl A2aClient {
             metadata: None,
         })
     }
-    
-    /// Creates a message with just structured data (backward compatible version)
-    pub fn create_data_only_message<T: Serialize>(&self, data: &T) -> Result<Message, Box<dyn Error>> {
-        self.create_data_only_message_typed(data).into_box_error()
-    }
-    
+
+    // Remove old version if not needed
+    // pub fn create_data_only_message<T: Serialize>(&self, data: &T) -> Result<Message, Box<dyn Error>> {
+    //     self.create_data_only_message_typed(data).into_box_error()
+    // }
+
     /// Extract data parts from a message
     pub fn extract_data_parts(message: &Message) -> Vec<&Map<String, Value>> {
         message.parts.iter()

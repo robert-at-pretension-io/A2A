@@ -3,7 +3,8 @@ use serde_json::{Value, json, Map};
 use std::error::Error;
 use crate::types::{AgentSkill, Task, Message, TextPart, Part, Role};
 use crate::client::errors::ClientError;
-use crate::client::error_handling::ErrorCompatibility;
+// Remove ErrorCompatibility import
+// use crate::client::error_handling::ErrorCompatibility;
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -80,7 +81,7 @@ pub struct SkillDetailsResponse {
 
 /// Extension methods for the A2A client related to skills
 impl crate::client::A2aClient {
-    /// List all available skills from an agent (typed version)
+    /// List all available skills from an agent
     pub async fn list_skills_typed(&mut self, tags: Option<Vec<String>>) -> Result<SkillListResponse, ClientError> {
         let params = SkillListParams {
             tags,
@@ -92,13 +93,13 @@ impl crate::client::A2aClient {
             
         self.send_jsonrpc::<SkillListResponse>("skills/list", params_value).await
     }
-    
-    /// List all available skills from an agent (backward compatible version)
-    pub async fn list_skills(&mut self, tags: Option<Vec<String>>) -> Result<SkillListResponse, Box<dyn Error>> {
-        self.list_skills_typed(tags).await.into_box_error()
-    }
-    
-    /// Get detailed information about a specific skill (typed version)
+
+    // Remove old version if not needed
+    // pub async fn list_skills(&mut self, tags: Option<Vec<String>>) -> Result<SkillListResponse, Box<dyn Error>> {
+    //     self.list_skills_typed(tags).await.into_box_error()
+    // }
+
+    /// Get detailed information about a specific skill
     pub async fn get_skill_details_typed(&mut self, skill_id: &str) -> Result<SkillDetailsResponse, ClientError> {
         let params = SkillDetailsParams {
             id: skill_id.to_string(),
@@ -110,13 +111,13 @@ impl crate::client::A2aClient {
             
         self.send_jsonrpc::<SkillDetailsResponse>("skills/get", params_value).await
     }
-    
-    /// Get detailed information about a specific skill (backward compatible version)
-    pub async fn get_skill_details(&mut self, skill_id: &str) -> Result<SkillDetailsResponse, Box<dyn Error>> {
-        self.get_skill_details_typed(skill_id).await.into_box_error()
-    }
-    
-    /// Invoke a skill with the given parameters (typed version)
+
+    // Remove old version if not needed
+    // pub async fn get_skill_details(&mut self, skill_id: &str) -> Result<SkillDetailsResponse, Box<dyn Error>> {
+    //     self.get_skill_details_typed(skill_id).await.into_box_error()
+    // }
+
+    /// Invoke a skill with the given parameters
     pub async fn invoke_skill_typed(
         &mut self,
         skill_id: &str,
@@ -151,11 +152,11 @@ impl crate::client::A2aClient {
             
         self.send_jsonrpc::<Task>("skills/invoke", params_value).await
     }
-    
-    /// Invoke a skill with the given parameters (backward compatible version)
-    pub async fn invoke_skill(
-        &mut self,
-        skill_id: &str,
+
+    // Remove old version if not needed
+    // pub async fn invoke_skill(
+    //     &mut self,
+    //     skill_id: &str,
         text: &str,
         input_mode: Option<String>,
         output_mode: Option<String>

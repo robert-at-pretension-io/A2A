@@ -25,13 +25,18 @@ pub enum StreamingResponse {
 pub type StreamingResponseStream = Pin<Box<dyn Stream<Item = Result<StreamingResponse, Box<dyn Error>>> + Send>>;
 
 impl A2aClient {
-    /// Send a task with streaming response enabled via SSE
-    pub async fn send_task_subscribe(&mut self, text: &str) -> Result<StreamingResponseStream, Box<dyn Error>> {
+    /// Send a task with streaming response enabled via SSE (typed error version)
+    pub async fn send_task_subscribe_typed(&mut self, text: &str) -> Result<StreamingResponseStream, ClientError> {
         // Call with empty metadata
-        self.send_task_subscribe_with_metadata(text, &json!({})).await
+        self.send_task_subscribe_with_metadata_typed(text, &json!({})).await
     }
-    
-    /// Send a task with streaming response enabled via SSE and optional metadata as JSON string
+
+    /// Send a task with streaming response enabled via SSE (backward compatible)
+    pub async fn send_task_subscribe(&mut self, text: &str) -> Result<StreamingResponseStream, Box<dyn Error>> {
+        self.send_task_subscribe_typed(text).await.into_box_error()
+    }
+
+    /// Send a task with streaming response enabled via SSE and optional metadata as JSON string (backward compatible)
     /// 
     /// This method is kept for backward compatibility.
     /// 
@@ -58,10 +63,10 @@ impl A2aClient {
             json!({})
         };
         
-        self.send_task_subscribe_with_metadata(text, &metadata).await
+        self.send_task_subscribe_with_metadata(text, &metadata).await.into_box_error()
     }
-    
-    /// Send a task with streaming response enabled via SSE and metadata
+
+    /// Send a task with streaming response enabled via SSE and metadata (typed error version)
     /// 
     /// Metadata can include testing parameters like:
     /// - `_mock_delay_ms`: Simulates initial request delay
@@ -77,7 +82,7 @@ impl A2aClient {
     /// # Examples
     /// ```
     /// // Stream with dynamic content configuration
-    /// let stream = client.send_task_subscribe_with_metadata(
+    /// let stream = client.send_task_subscribe_with_metadata_typed(
     ///     "Stream with dynamic configuration",
     ///     &json!({
     ///         "_mock_stream_text_chunks": 3,
@@ -86,7 +91,7 @@ impl A2aClient {
     ///     })
     /// ).await?;
     /// ```
-    pub async fn send_task_subscribe_with_metadata(&mut self, text: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
+    pub async fn send_task_subscribe_with_metadata_typed(&mut self, text: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, ClientError> {
         // Create the message with the text content
         let message = self.create_text_message(text);
         
@@ -113,16 +118,26 @@ impl A2aClient {
         };
         
         // Build the SSE request
-        self.send_streaming_request("tasks/sendSubscribe", serde_json::to_value(params)?).await
+        self.send_streaming_request_typed("tasks/sendSubscribe", serde_json::to_value(params)?).await
     }
-    
-    /// Resubscribe to an existing task's streaming updates
-    pub async fn resubscribe_task(&mut self, task_id: &str) -> Result<StreamingResponseStream, Box<dyn Error>> {
+
+    /// Send a task with streaming response enabled via SSE and metadata (backward compatible)
+    pub async fn send_task_subscribe_with_metadata(&mut self, text: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
+        self.send_task_subscribe_with_metadata_typed(text, metadata).await.into_box_error()
+    }
+
+    /// Resubscribe to an existing task's streaming updates (typed error version)
+    pub async fn resubscribe_task_typed(&mut self, task_id: &str) -> Result<StreamingResponseStream, ClientError> {
         // Call with no metadata
-        self.resubscribe_task_with_metadata(task_id, &json!({})).await
+        self.resubscribe_task_with_metadata_typed(task_id, &json!({})).await
     }
-    
-    /// Resubscribe to a task's streaming updates with metadata
+
+    /// Resubscribe to an existing task's streaming updates (backward compatible)
+    pub async fn resubscribe_task(&mut self, task_id: &str) -> Result<StreamingResponseStream, Box<dyn Error>> {
+        self.resubscribe_task_typed(task_id).await.into_box_error()
+    }
+
+    /// Resubscribe to a task's streaming updates with metadata (typed error version)
     /// 
     /// Metadata can include testing parameters like:
     /// - `_mock_stream_text_chunks`: Number of text chunks to generate
@@ -133,7 +148,7 @@ impl A2aClient {
     /// # Arguments
     /// * `task_id` - The ID of the task to resubscribe to
     /// * `metadata` - JSON value containing metadata
-    pub async fn resubscribe_task_with_metadata(&mut self, task_id: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
+    pub async fn resubscribe_task_with_metadata_typed(&mut self, task_id: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, ClientError> {
         // Create request parameters using the proper TaskQueryParams type
         // Convert Value to Map if needed
         let metadata_map = match metadata {
@@ -151,13 +166,18 @@ impl A2aClient {
             history_length: None,
             metadata: metadata_map
         };
-        
+
         // Build the SSE request
-        self.send_streaming_request("tasks/resubscribe", serde_json::to_value(params)?).await
+        self.send_streaming_request_typed("tasks/resubscribe", serde_json::to_value(params)?).await
     }
-    
-    /// Send a streaming request and return a stream of responses
-    async fn send_streaming_request(&mut self, method: &str, params: Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
+
+    /// Resubscribe to a task's streaming updates with metadata (backward compatible)
+    pub async fn resubscribe_task_with_metadata(&mut self, task_id: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
+        self.resubscribe_task_with_metadata_typed(task_id, metadata).await.into_box_error()
+    }
+
+    /// Send a streaming request and return a stream of responses (typed error version)
+    async fn send_streaming_request_typed(&mut self, method: &str, params: Value) -> Result<StreamingResponseStream, ClientError> {
         let request = json!({
             "jsonrpc": "2.0",
             "id": self.next_request_id(),
@@ -176,19 +196,19 @@ impl A2aClient {
         
         // Send the request and get a streaming response
         let response = http_request.send().await?;
-        
+
         if !response.status().is_success() {
-            return Err(format!("Request failed with status: {}", response.status()).into());
+            return Err(ClientError::HttpError(format!("Request failed with status: {}", response.status())));
         }
-        
+
         // Get the response as a byte stream
         let byte_stream = response.bytes_stream();
         
         // Convert to an SSE stream
         let event_stream = byte_stream
             .eventsource()
-            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>);
-            
+            .map_err(|e| ClientError::Other(format!("SSE stream error: {}", e))); // Convert SSE error to ClientError
+
         // Transform the SSE events to StreamingResponse objects
         let streaming_response = event_stream.map(|event_result| {
             match event_result {
@@ -200,9 +220,11 @@ impl A2aClient {
                             if let Some(error) = json_data.get("error") {
                                 let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
                                 let message = error.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
-                                return Err(format!("JSON-RPC error: {} (code: {})", message, code).into());
+                                let data = error.get("data").cloned();
+                                // Return ClientError::A2aError
+                                return Err(ClientError::A2aError(A2aError::new(code, message, data)));
                             }
-                            
+
                             // Get the result field
                             if let Some(result) = json_data.get("result") {
                                 // Check if this is an artifact update
@@ -217,13 +239,13 @@ impl A2aClient {
                                     if is_final {
                                         match serde_json::from_value::<Task>(result.clone()) {
                                             Ok(task) => Ok(StreamingResponse::Final(task)),
-                                            Err(e) => Err(format!("Failed to parse final task: {}", e).into())
+                                            Err(e) => Err(ClientError::JsonError(format!("Failed to parse final task: {}", e)))
                                         }
                                     } else {
                                         // This is a regular status update
                                         match serde_json::from_value::<Task>(result.clone()) {
                                             Ok(task) => Ok(StreamingResponse::Status(task)),
-                                            Err(e) => Err(format!("Failed to parse task: {}", e).into())
+                                            Err(e) => Err(ClientError::JsonError(format!("Failed to parse task: {}", e)))
                                         }
                                     }
                                 } 
@@ -231,20 +253,20 @@ impl A2aClient {
                                 else {
                                     match serde_json::from_value::<Task>(result.clone()) {
                                         Ok(task) => Ok(StreamingResponse::Status(task)),
-                                        Err(e) => Err(format!("Failed to parse task: {}", e).into())
+                                        Err(e) => Err(ClientError::JsonError(format!("Failed to parse task: {}", e)))
                                     }
                                 }
                             } else {
-                                Err("Invalid JSON-RPC response: missing 'result' field".into())
+                                Err(ClientError::Other("Invalid JSON-RPC response: missing 'result' field".to_string()))
                             }
                         },
-                        Err(e) => Err(format!("Failed to parse event data as JSON: {}", e).into()),
+                        Err(e) => Err(ClientError::JsonError(format!("Failed to parse event data as JSON: {}", e))),
                     }
                 },
-                Err(e) => Err(format!("SSE stream error: {}", e).into()),
+                Err(e) => Err(e), // Propagate the ClientError from map_err
             }
         });
-        
+
         // Return the boxed stream
         Ok(Box::pin(streaming_response) as StreamingResponseStream)
     }

@@ -7,7 +7,8 @@ use uuid::Uuid;
 
 use crate::client::A2aClient;
 use crate::client::errors::ClientError;
-use crate::client::error_handling::ErrorCompatibility;
+// Remove ErrorCompatibility import
+// use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{TaskStatus, TaskState, Message, Task, Part, TextPart, Role};
 
 /// Represents a batch of tasks
@@ -88,7 +89,7 @@ pub struct BatchQueryParams {
 }
 
 impl A2aClient {
-    /// Create a new batch of tasks (typed version)
+    /// Create a new batch of tasks
     pub async fn create_task_batch_typed(&mut self, params: BatchCreateParams) -> Result<TaskBatch, ClientError> {
         // Generate task IDs
         let mut task_ids = Vec::with_capacity(params.tasks.len());
@@ -115,13 +116,13 @@ impl A2aClient {
         
         self.send_jsonrpc::<TaskBatch>("batches/create", batch_params).await
     }
-    
-    /// Create a new batch of tasks (backward compatible version)
-    pub async fn create_task_batch(&mut self, params: BatchCreateParams) -> Result<TaskBatch, Box<dyn Error>> {
-        self.create_task_batch_typed(params).await.into_box_error()
-    }
-    
-    /// Get a batch by ID (typed version)
+
+    // Remove old version if not needed
+    // pub async fn create_task_batch(&mut self, params: BatchCreateParams) -> Result<TaskBatch, Box<dyn Error>> {
+    //     self.create_task_batch_typed(params).await.into_box_error()
+    // }
+
+    /// Get a batch by ID
     pub async fn get_batch_typed(&mut self, batch_id: &str, include_tasks: bool) -> Result<TaskBatch, ClientError> {
         let params = BatchQueryParams {
             id: batch_id.to_string(),
@@ -134,17 +135,17 @@ impl A2aClient {
             
         self.send_jsonrpc::<TaskBatch>("batches/get", params_value).await
     }
-    
-    /// Get a batch by ID (backward compatible version)
-    pub async fn get_batch(&mut self, batch_id: &str, include_tasks: bool) -> Result<TaskBatch, Box<dyn Error>> {
-        self.get_batch_typed(batch_id, include_tasks).await.into_box_error()
-    }
-    
-    /// Get batch status summary
-    pub async fn get_batch_status(&mut self, batch_id: &str) -> Result<BatchStatusSummary, Box<dyn Error>> {
-        // First get the batch
-        let batch = self.get_batch(batch_id, false).await?;
-        
+
+    // Remove old version if not needed
+    // pub async fn get_batch(&mut self, batch_id: &str, include_tasks: bool) -> Result<TaskBatch, Box<dyn Error>> {
+    //     self.get_batch_typed(batch_id, include_tasks).await.into_box_error()
+    // }
+
+    /// Get batch status summary (typed error version)
+    pub async fn get_batch_status_typed(&mut self, batch_id: &str) -> Result<BatchStatusSummary, ClientError> {
+        // First get the batch using the typed version
+        let batch = self.get_batch_typed(batch_id, false).await?;
+
         // Create a status summary
         let mut summary = BatchStatusSummary {
             batch_id: batch_id.to_string(),
@@ -166,12 +167,12 @@ impl A2aClient {
         ] {
             summary.state_counts.insert(state, 0);
         }
-        
-        // Fetch all tasks in the batch
+
+        // Fetch all tasks in the batch using the typed version
         for task_id in &batch.task_ids {
-            let task = self.get_task(task_id).await?;
+            let task = self.get_task(task_id).await?; // get_task already returns ClientError
             let state = task.status.state;
-            
+
             // Increment the appropriate counter
             if let Some(count) = summary.state_counts.get_mut(&state) {
                 *count += 1;
@@ -183,13 +184,18 @@ impl A2aClient {
         
         Ok(summary)
     }
-    
-    /// Cancel all tasks in a batch
-    pub async fn cancel_batch(&mut self, batch_id: &str) -> Result<BatchStatusSummary, Box<dyn Error>> {
-        // First get the batch
-        let batch = self.get_batch(batch_id, false).await?;
-        
-        // Cancel each task
+
+    /// Get batch status summary (backward compatible)
+    pub async fn get_batch_status(&mut self, batch_id: &str) -> Result<BatchStatusSummary, Box<dyn Error>> {
+        self.get_batch_status_typed(batch_id).await.into_box_error()
+    }
+
+    /// Cancel all tasks in a batch (typed error version)
+    pub async fn cancel_batch_typed(&mut self, batch_id: &str) -> Result<BatchStatusSummary, ClientError> {
+        // First get the batch using the typed version
+        let batch = self.get_batch_typed(batch_id, false).await?;
+
+        // Cancel each task using the typed version
         for task_id in &batch.task_ids {
             // Ignore errors for individual cancellations, as some tasks might already be completed
             let _ = self.cancel_task(task_id).await;
@@ -204,14 +210,19 @@ impl A2aClient {
         // First get the batch
         let batch = self.get_batch(batch_id, false).await?;
         
-        // Fetch all tasks
+        // Fetch all tasks using the typed version
         let mut tasks = Vec::with_capacity(batch.task_ids.len());
         for task_id in &batch.task_ids {
-            let task = self.get_task(task_id).await?;
+            let task = self.get_task(task_id).await?; // get_task already returns ClientError
             tasks.push(task);
         }
-        
+
         Ok(tasks)
+    }
+
+    /// Get all tasks in a batch (backward compatible)
+    pub async fn get_batch_tasks(&mut self, batch_id: &str) -> Result<Vec<Task>, Box<dyn Error>> {
+        self.get_batch_tasks_typed(batch_id).await.into_box_error()
     }
 }
 

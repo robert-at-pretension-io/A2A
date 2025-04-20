@@ -6,18 +6,21 @@ use crate::client::A2aClient;
 
 // Extend A2aClient with auth-related helper methods if needed
 impl A2aClient {
-    // Add any auth-specific methods here if needed
-    // For example, a method to validate if the client has the correct auth for a server
-    pub async fn validate_auth(&mut self) -> Result<bool, Box<dyn Error>> {
-        // This method would make a request to a protected endpoint and check if auth works
-        // Could be a simple "ping"-like endpoint
+    /// Validate authentication credentials with the server (typed error version)
+    pub async fn validate_auth_typed(&mut self) -> Result<bool, ClientError> {
+        // This method makes a request to a specific endpoint designed for auth validation
         let response: Value = self.send_jsonrpc("auth/validate", json!({})).await?;
         
         // Extract the result from the response
         match response.get("valid").and_then(|v| v.as_bool()) {
             Some(valid) => Ok(valid),
-            None => Err("Invalid response: missing validation result".into()),
+            None => Err(ClientError::Other("Invalid response: missing validation result".to_string())),
         }
+    }
+
+    /// Validate authentication credentials with the server (backward compatible)
+    pub async fn validate_auth(&mut self) -> Result<bool, Box<dyn Error>> {
+        self.validate_auth_typed().await.into_box_error()
     }
 }
 

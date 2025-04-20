@@ -3,25 +3,19 @@ use crate::client::errors::{ClientError, A2aError, error_codes};
 use std::error::Error;
 use serde_json::json;
 
-// Helper function to convert a ClientError to a Box<dyn Error>
-pub fn to_box_error(err: ClientError) -> Box<dyn Error> {
-    let error_string = format!("{}", err);
-    Box::<dyn Error>::from(error_string)
-}
-
-// For backward compatibility: Create functions that convert from ClientError to Box<dyn Error>
-pub trait ErrorCompatibility<T> {
-    fn into_box_error(self) -> Result<T, Box<dyn Error>>;
-}
-
-impl<T> ErrorCompatibility<T> for Result<T, ClientError> {
-    fn into_box_error(self) -> Result<T, Box<dyn Error>> {
-        match self {
-            Ok(value) => Ok(value),
-            Err(err) => Err(Box::new(err) as Box<dyn Error>),
-        }
-    }
-}
+// Remove the ErrorCompatibility trait and its implementation as it's no longer needed
+// pub trait ErrorCompatibility<T> {
+//     fn into_box_error(self) -> Result<T, Box<dyn Error>>;
+// }
+//
+// impl<T> ErrorCompatibility<T> for Result<T, ClientError> {
+//     fn into_box_error(self) -> Result<T, Box<dyn Error>> {
+//         match self {
+//             Ok(value) => Ok(value),
+//             Err(err) => Err(Box::new(err) as Box<dyn Error>),
+//         }
+//     }
+// }
 
 impl A2aClient {
     /// Get a task by ID with improved error handling

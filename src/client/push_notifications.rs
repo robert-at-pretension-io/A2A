@@ -2,11 +2,13 @@ use std::error::Error;
 use serde_json::{json, Value};
 
 use crate::client::A2aClient;
+use crate::client::errors::ClientError; // Add ClientError import
+use crate::client::error_handling::ErrorCompatibility; // Keep for now if needed by Box<dyn Error> versions
 use crate::types::{PushNotificationConfig, AuthenticationInfo, TaskPushNotificationConfig, TaskIdParams};
 
 impl A2aClient {
-    /// Set a push notification webhook for a task
-    pub async fn set_task_push_notification(
+    /// Set a push notification webhook for a task (typed error version)
+    pub async fn set_task_push_notification_typed(
         &mut self,
         task_id: &str,
         webhook_url: &str,
@@ -41,12 +43,23 @@ impl A2aClient {
         // Extract the task ID from the response
         match response.get("id").and_then(|id| id.as_str()) {
             Some(id) => Ok(id.to_string()),
-            None => Err("Invalid response: missing task ID".into()),
+            None => Err(ClientError::Other("Invalid response: missing task ID".to_string())),
         }
     }
-    
-    /// Get push notification configuration for a task
-    pub async fn get_task_push_notification(
+
+    /// Set a push notification webhook for a task (backward compatible)
+    pub async fn set_task_push_notification(
+        &mut self,
+        task_id: &str,
+        webhook_url: &str,
+        auth_scheme: Option<&str>,
+        token: Option<&str>
+    ) -> Result<String, Box<dyn Error>> {
+        self.set_task_push_notification_typed(task_id, webhook_url, auth_scheme, token).await.into_box_error()
+    }
+
+    /// Get push notification configuration for a task (typed error version)
+    pub async fn get_task_push_notification_typed(
         &mut self,
         task_id: &str
     ) -> Result<PushNotificationConfig, Box<dyn Error>> {
@@ -64,11 +77,19 @@ impl A2aClient {
             Some(config) => {
                 match serde_json::from_value::<PushNotificationConfig>(config.clone()) {
                     Ok(config) => Ok(config),
-                    Err(e) => Err(format!("Failed to parse push notification config: {}", e).into())
+                    Err(e) => Err(ClientError::JsonError(format!("Failed to parse push notification config: {}", e)))
                 }
             },
-            None => Err("Invalid response: missing push notification config".into()),
+            None => Err(ClientError::Other("Invalid response: missing push notification config".to_string())),
         }
+    }
+
+    /// Get push notification configuration for a task (backward compatible)
+    pub async fn get_task_push_notification(
+        &mut self,
+        task_id: &str
+    ) -> Result<PushNotificationConfig, Box<dyn Error>> {
+        self.get_task_push_notification_typed(task_id).await.into_box_error()
     }
 }
 

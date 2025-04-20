@@ -25,18 +25,20 @@ pub struct TaskStateHistory {
 }
 
 impl A2aClient {
-    /// Get a task's complete state transition history
-    pub async fn get_task_state_history(&mut self, task_id: &str) -> Result<TaskStateHistory, Box<dyn Error>> {
+    /// Get a task's complete state transition history (typed error version)
+    pub async fn get_task_state_history_typed(&mut self, task_id: &str) -> Result<TaskStateHistory, ClientError> {
         // Create request parameters using the proper TaskQueryParams type with full history
         let params = TaskQueryParams {
             id: task_id.to_string(),
             history_length: None, // None means get all available history
             metadata: None,
         };
-        
+
         // Send request to get the full task with history
-        let task: Task = self.send_jsonrpc("tasks/get", serde_json::to_value(params)?).await?;
-        
+        let params_value = serde_json::to_value(params)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize params: {}", e)))?;
+        let task: Task = self.send_jsonrpc("tasks/get", params_value).await?;
+
         // Extract transitions from the task
         let transitions = self.extract_state_transitions(&task);
         
@@ -45,7 +47,12 @@ impl A2aClient {
             transitions,
         })
     }
-    
+
+    /// Get a task's complete state transition history (backward compatible)
+    pub async fn get_task_state_history(&mut self, task_id: &str) -> Result<TaskStateHistory, Box<dyn Error>> {
+        self.get_task_state_history_typed(task_id).await.into_box_error()
+    }
+
     /// Extract state transitions from a task
     /// This processes both the current status and any message history present
     /// Since the Task.history field contains Message objects rather than TaskStatus objects,
@@ -185,11 +192,12 @@ impl A2aClient {
         
         Ok(report)
     }
-    
-    /// Calculate metrics about a task's state transitions
-    pub async fn get_state_transition_metrics(&mut self, task_id: &str) -> Result<TaskMetrics, Box<dyn Error>> {
-        let history = self.get_task_state_history(task_id).await?;
-        
+
+    /// Calculate metrics about a task's state transitions (typed error version)
+    pub async fn get_state_transition_metrics_typed(&mut self, task_id: &str) -> Result<TaskMetrics, ClientError> {
+        // Use the typed version of get_task_state_history
+        let history = self.get_task_state_history_typed(task_id).await?;
+
         let mut metrics = TaskMetrics::new(task_id);
         
         if history.transitions.is_empty() {
@@ -225,8 +233,13 @@ impl A2aClient {
                 TaskState::Unknown => metrics.unknown_count += 1,
             }
         }
-        
+
         Ok(metrics)
+    }
+
+    /// Calculate metrics about a task's state transitions (backward compatible)
+    pub async fn get_state_transition_metrics(&mut self, task_id: &str) -> Result<TaskMetrics, Box<dyn Error>> {
+        self.get_state_transition_metrics_typed(task_id).await.into_box_error()
     }
 }
 

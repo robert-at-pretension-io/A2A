@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::process::Child;
 use colored::*; // For colored output
+use futures_util::StreamExt; // Add StreamExt for .next()
 
 /// Configuration for the test runner
 #[derive(Debug, Clone)]
@@ -51,35 +52,52 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         state_transition_history: false,
     };
 
-    let agent_card_result = run_test(
-        &results,
-        "Get Agent Card",
-        false, // Not unofficial
-        &config,
-        || {
+    // Manually handle agent card fetching outside run_test to get the value
+    {
+        let test_num;
+        {
+            let mut results_guard = results.lock().unwrap();
+            results_guard.test_counter += 1;
+            test_num = results_guard.test_counter;
+        }
+        println!("{}", format!("--> [Test {}] Running: Get Agent Card...", test_num).yellow());
+
+        let get_card_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.get_agent_card().await
+                client_guard.get_agent_card().await // This returns Result<AgentCard, ClientError>
             }
-        },
-    ).await;
+        };
 
-    // If successful, store the card and parse capabilities
-    if let Ok(card) = agent_card_result {
-        agent_card_opt = Some(card.clone());
-        if let Some(caps) = agent_card_opt.as_ref().map(|c| &c.capabilities) {
-            capabilities = caps.clone();
-            println!("    Agent Capabilities: Streaming={}, Push={}, History={}",
-                     capabilities.streaming.unwrap_or(false),
-                     capabilities.push_notifications.unwrap_or(false),
-                     capabilities.state_transition_history.unwrap_or(false));
-        } else {
-             println!("    Agent Capabilities: Not specified in Agent Card.");
+        match tokio::time::timeout(config.default_timeout, get_card_closure()).await {
+            Ok(Ok(card)) => {
+                println!("    {}", format!("✅ [Test {}] Success: Get Agent Card", test_num).green());
+                results.lock().unwrap().success_count += 1;
+                agent_card_opt = Some(card.clone()); // Store the card
+                // Parse capabilities
+                if let Some(caps) = agent_card_opt.as_ref().map(|c| &c.capabilities) {
+                    capabilities = caps.clone();
+                    println!("    Agent Capabilities: Streaming={}, Push={}, History={}",
+                             capabilities.streaming, // Access bool directly
+                             capabilities.push_notifications, // Access bool directly
+                             capabilities.state_transition_history); // Access bool directly
+                } else {
+                    println!("    Agent Capabilities: Not specified in Agent Card.");
+                }
+            }
+            Ok(Err(e)) => {
+                println!("    {}", format!("⚠️ [Test {}] Unsupported or not working (Error: {}): Get Agent Card", test_num, e).yellow());
+                results.lock().unwrap().failure_count += 1;
+                println!("{}", "⚠️ Could not retrieve Agent Card. Assuming default capabilities (false).".yellow());
+            }
+            Err(_) => {
+                println!("    {}", format!("⚠️ [Test {}] Unsupported or not working (Timeout): Get Agent Card", test_num).yellow());
+                results.lock().unwrap().failure_count += 1;
+                println!("{}", "⚠️ Could not retrieve Agent Card. Assuming default capabilities (false).".yellow());
+            }
         }
-    } else {
-        println!("{}", "⚠️ Could not retrieve Agent Card. Assuming default capabilities (false).".yellow());
-    }
+    } // Mutex guard dropped
 
     // --- Basic Task Operations ---
     println!("{}", "\n--- Basic Task Operations ---".cyan());
@@ -143,7 +161,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         ).await.ok(); // Ignore result for now, run_test handles logging/counting
 
         // State History Tests (Conditional)
-        if capabilities.state_transition_history.unwrap_or(false) {
+        if capabilities.state_transition_history { // Access bool directly
              let task_id_clone_hist = id.clone();
              run_test(
                  &results,
@@ -155,7 +173,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                      let id_c = task_id_clone_hist.clone();
                      async move {
                          let mut client_guard = client_clone.lock().unwrap();
-                         client_guard.get_task_state_history(&id_c).await?;
+                         // Use the _typed version returning ClientError
+                         client_guard.get_task_state_history_typed(&id_c).await?;
                          Ok(())
                      }
                  },
@@ -172,7 +191,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                      let id_c = task_id_clone_metrics.clone();
                      async move {
                          let mut client_guard = client_clone.lock().unwrap();
-                         client_guard.get_state_transition_metrics(&id_c).await?;
+                         // Use the _typed version returning ClientError
+                         client_guard.get_state_transition_metrics_typed(&id_c).await?;
                          Ok(())
                      }
                  },
@@ -194,7 +214,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let id_c = task_id_clone_cancel.clone();
                 async move {
                     let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.cancel_task(&id_c).await?;
+                    // Use the _typed version returning ClientError
+                    client_guard.cancel_task_typed(&id_c).await?;
                     Ok(())
                 }
             },
@@ -223,7 +244,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
 
     // --- Streaming Tests (Conditional) ---
     println!("{}", "\n--- Streaming Tests ---".cyan());
-    if capabilities.streaming.unwrap_or(false) {
+    if capabilities.streaming { // Access bool directly
         // Test starting a streaming task
         // Note: Replicating the exact shell script behavior (background process + kill)
         // is complex. This test just checks if the subscribe call succeeds initially.
@@ -237,9 +258,10 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 async move {
                     let mut client_guard = client_clone.lock().unwrap();
                     // Attempt to subscribe, we don't need to consume the whole stream here
-                    let mut stream = client_guard.send_task_subscribe("This is a streaming test").await?;
+                    // Use the _typed version returning ClientError
+                    let mut stream = client_guard.send_task_subscribe_typed("This is a streaming test").await?;
                     // Optionally, try receiving one item to confirm connection
-                    let _ = stream.next().await;
+                    let _ = stream.next().await; // Requires StreamExt trait
                     Ok(())
                 }
             },
@@ -251,7 +273,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
 
     // --- Push Notification Tests (Conditional) ---
     println!("{}", "\n--- Push Notification Tests ---".cyan());
-    if capabilities.push_notifications.unwrap_or(false) {
+    if capabilities.push_notifications { // Access bool directly
         if let Some(ref id) = task_id {
             let task_id_clone_set = id.clone();
             run_test(
@@ -264,7 +286,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     let id_c = task_id_clone_set.clone();
                     async move {
                         let mut client_guard = client_clone.lock().unwrap();
-                        client_guard.set_task_push_notification(
+                        // Use the _typed version returning ClientError
+                        client_guard.set_task_push_notification_typed(
                             &id_c,
                             "https://example.com/webhook", // Mock webhook URL
                             Some("Bearer"),
@@ -286,7 +309,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     let id_c = task_id_clone_get.clone();
                     async move {
                         let mut client_guard = client_clone.lock().unwrap();
-                        client_guard.get_task_push_notification(&id_c).await?;
+                        // Use the _typed version returning ClientError
+                        client_guard.get_task_push_notification_typed(&id_c).await?;
                         Ok(())
                     }
                 },
@@ -324,7 +348,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     ],
                     metadata: None,
                 };
-                client_guard.create_task_batch(params).await
+                // Use the _typed version returning ClientError
+                client_guard.create_task_batch_typed(params).await
             }
         };
 
@@ -357,7 +382,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let id_c = batch_id_clone_get.clone();
                 async move {
                     let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.get_batch(&id_c, false).await?;
+                    // Use the _typed version returning ClientError
+                    client_guard.get_batch_typed(&id_c, false).await?;
                     Ok(())
                 }
             },
@@ -374,7 +400,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let id_c = batch_id_clone_status.clone();
                 async move {
                     let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.get_batch_status(&id_c).await?;
+                    // Use the _typed version returning ClientError
+                    client_guard.get_batch_status_typed(&id_c).await?;
                     Ok(())
                 }
             },
@@ -391,7 +418,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let id_c = batch_id_clone_cancel.clone();
                 async move {
                     let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.cancel_batch(&id_c).await?;
+                    // Use the _typed version returning ClientError
+                    client_guard.cancel_batch_typed(&id_c).await?;
                     Ok(())
                 }
             },
@@ -412,7 +440,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.list_skills(None).await?;
+                // Use the _typed version returning ClientError
+                client_guard.list_skills_typed(None).await?;
                 Ok(())
             }
         },
@@ -427,7 +456,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.list_skills(Some(vec!["text".to_string()])).await?;
+                // Use the _typed version returning ClientError
+                client_guard.list_skills_typed(Some(vec!["text".to_string()])).await?;
                 Ok(())
             }
         },
@@ -442,7 +472,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.get_skill_details(skill_id_to_test).await?;
+                // Use the _typed version returning ClientError
+                client_guard.get_skill_details_typed(skill_id_to_test).await?;
                 Ok(())
             }
         },
@@ -457,7 +488,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.invoke_skill(skill_id_to_test, "This is a test skill invocation", None, None).await?;
+                // Use the _typed version returning ClientError
+                client_guard.invoke_skill_typed(skill_id_to_test, "This is a test skill invocation", None, None).await?;
                 Ok(())
             }
         },
@@ -472,7 +504,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.invoke_skill(
+                // Use the _typed version returning ClientError
+                client_guard.invoke_skill_typed(
                     skill_id_to_test,
                     "This is a test with specific modes",
                     Some("text/plain".to_string()),
@@ -533,7 +566,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let id_c = non_existent_skill_id.clone();
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.get_skill_details(&id_c).await?; // Expect this to fail
+                // Use the _typed version returning ClientError
+                client_guard.get_skill_details_typed(&id_c).await?; // Expect this to fail
                 Ok(()) // Should not reach here
             }
         },
@@ -564,7 +598,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let id_c = non_existent_batch_id.clone();
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.get_batch(&id_c, false).await?; // Expect this to fail
+                // Use the _typed version returning ClientError
+                client_guard.get_batch_typed(&id_c, false).await?; // Expect this to fail
                 Ok(()) // Should not reach here
             }
         },
@@ -647,7 +682,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                      // Create metadata with task ID
                      let mut metadata = serde_json::Map::new();
                      metadata.insert("taskId".to_string(), serde_json::Value::String(task_id_c));
-                     client_guard.upload_file(path_c.to_str().unwrap(), Some(metadata)).await
+                     // Use the _typed version returning ClientError
+                     client_guard.upload_file_typed(path_c.to_str().unwrap(), Some(metadata)).await
                  }
              };
              match tokio::time::timeout(config.default_timeout, upload_closure()).await {
@@ -679,7 +715,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let id_c = ftid_clone_list.clone();
                 async move {
                     let mut client_guard = client_clone.lock().unwrap();
-                    let files = client_guard.list_files(Some(&id_c)).await?;
+                    // Use the _typed version returning ClientError
+                    let files = client_guard.list_files_typed(Some(&id_c)).await?;
                     // Basic check: ensure we got at least one file back if upload succeeded
                     if uploaded_file_id.is_some() {
                         if files.is_empty() {
@@ -706,7 +743,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     let path_c = download_path.clone(); // Clone path for closure
                     async move {
                         let mut client_guard = client_clone.lock().unwrap();
-                        let download_resp = client_guard.download_file(&id_c).await?;
+                        // Use the _typed version returning ClientError
+                        let download_resp = client_guard.download_file_typed(&id_c).await?;
                         // Decode and write to file
                         let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &download_resp.bytes)
                             .map_err(|e| ClientError::Other(format!("Base64 decode failed: {}", e)))?;
@@ -739,7 +777,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let path_c = test_file_path_clone.clone();
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
-                client_guard.send_task_with_file("Task with file attachment", path_c.to_str().unwrap()).await?;
+                // Use the _typed version returning ClientError
+                client_guard.send_task_with_file_typed("Task with file attachment", path_c.to_str().unwrap()).await?;
                 Ok(())
             }
         },
@@ -820,7 +859,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
                 // Assuming default test auth is set if needed by server
-                client_guard.validate_auth().await?;
+                // Use the _typed version returning ClientError
+                client_guard.validate_auth_typed().await?;
                 Ok(())
             }
         },
@@ -887,9 +927,10 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             async move {
                 let mut client_guard = client_clone.lock().unwrap();
                 let metadata = serde_json::json!({"_mock_chunk_delay_ms": 1000});
-                let mut stream = client_guard.send_task_subscribe_with_metadata("Streaming task with slow chunks", &metadata).await?;
+                // Use the _typed version returning ClientError
+                let mut stream = client_guard.send_task_subscribe_with_metadata_typed("Streaming task with slow chunks", &metadata).await?;
                 // Consume one item to check connection
-                let _ = stream.next().await;
+                let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
             }
         },
@@ -950,8 +991,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     "_mock_stream_text_chunks": 3,
                     "_mock_stream_chunk_delay_ms": 100 // Short delay for test speed
                 });
-                let mut stream = client_guard.send_task_subscribe_with_metadata("Streaming task with 3 text chunks", &metadata).await?;
-                let _ = stream.next().await; // Consume one item
+                // Use the _typed version returning ClientError
+                let mut stream = client_guard.send_task_subscribe_with_metadata_typed("Streaming task with 3 text chunks", &metadata).await?;
+                let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
             }
         },
@@ -971,8 +1013,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     "_mock_stream_artifact_types": ["data"],
                     "_mock_stream_chunk_delay_ms": 100
                 });
-                let mut stream = client_guard.send_task_subscribe_with_metadata("Streaming task with only data artifacts", &metadata).await?;
-                let _ = stream.next().await;
+                // Use the _typed version returning ClientError
+                let mut stream = client_guard.send_task_subscribe_with_metadata_typed("Streaming task with only data artifacts", &metadata).await?;
+                let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
             }
         },
@@ -992,8 +1035,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     "_mock_stream_final_state": "failed",
                     "_mock_stream_chunk_delay_ms": 100
                 });
-                let mut stream = client_guard.send_task_subscribe_with_metadata("Streaming task with failed final state", &metadata).await?;
-                let _ = stream.next().await;
+                // Use the _typed version returning ClientError
+                let mut stream = client_guard.send_task_subscribe_with_metadata_typed("Streaming task with failed final state", &metadata).await?;
+                let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
             }
         },
@@ -1016,8 +1060,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                          "_mock_stream_text_chunks": 2,
                          "_mock_stream_artifact_types": ["text", "data"]
                      });
-                     let mut stream = client_guard.resubscribe_task_with_metadata(&id_c, &metadata).await?;
-                     let _ = stream.next().await;
+                     // Use the _typed version returning ClientError
+                     let mut stream = client_guard.resubscribe_task_with_metadata_typed(&id_c, &metadata).await?;
+                     let _ = stream.next().await; // Requires StreamExt trait
                      Ok(())
                  }
              },
