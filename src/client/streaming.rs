@@ -27,15 +27,87 @@ pub type StreamingResponseStream = Pin<Box<dyn Stream<Item = Result<StreamingRes
 impl A2aClient {
     /// Send a task with streaming response enabled via SSE
     pub async fn send_task_subscribe(&mut self, text: &str) -> Result<StreamingResponseStream, Box<dyn Error>> {
+        // Call with empty metadata
+        self.send_task_subscribe_with_metadata(text, &json!({})).await
+    }
+    
+    /// Send a task with streaming response enabled via SSE and optional metadata as JSON string
+    /// 
+    /// This method is kept for backward compatibility.
+    /// 
+    /// # Arguments
+    /// * `text` - The message text to send 
+    /// * `metadata_json` - Optional JSON string containing metadata
+    ///
+    /// # Examples
+    /// ```
+    /// // Stream with 1-second delay between chunks
+    /// let stream = client.send_task_subscribe_with_metadata_str(
+    ///     "Stream with slow delivery",
+    ///     Some(r#"{"_mock_chunk_delay_ms": 1000}"#)
+    /// ).await?;
+    /// ```
+    pub async fn send_task_subscribe_with_metadata_str(&mut self, text: &str, metadata_json: Option<&str>) -> Result<StreamingResponseStream, Box<dyn Error>> {
+        // Parse metadata if provided
+        let metadata = if let Some(meta_str) = metadata_json {
+            match serde_json::from_str(meta_str) {
+                Ok(parsed) => parsed,
+                Err(e) => return Err(format!("Failed to parse metadata JSON: {}", e).into())
+            }
+        } else {
+            json!({})
+        };
+        
+        self.send_task_subscribe_with_metadata(text, &metadata).await
+    }
+    
+    /// Send a task with streaming response enabled via SSE and metadata
+    /// 
+    /// Metadata can include testing parameters like:
+    /// - `_mock_delay_ms`: Simulates initial request delay
+    /// - `_mock_chunk_delay_ms`: Controls delay between streamed chunks
+    /// - `_mock_stream_text_chunks`: Number of text chunks to generate
+    /// - `_mock_stream_artifact_types`: Types of artifacts to generate (text, data, file)
+    /// - `_mock_stream_final_state`: Final state of the stream (completed, failed)
+    /// 
+    /// # Arguments
+    /// * `text` - The message text to send 
+    /// * `metadata` - JSON Value containing metadata
+    ///
+    /// # Examples
+    /// ```
+    /// // Stream with dynamic content configuration
+    /// let stream = client.send_task_subscribe_with_metadata(
+    ///     "Stream with dynamic configuration",
+    ///     &json!({
+    ///         "_mock_stream_text_chunks": 3,
+    ///         "_mock_stream_artifact_types": ["text", "data"],
+    ///         "_mock_stream_final_state": "completed"
+    ///     })
+    /// ).await?;
+    /// ```
+    pub async fn send_task_subscribe_with_metadata(&mut self, text: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
         // Create the message with the text content
         let message = self.create_text_message(text);
+        
+        // Use the provided metadata
+        // Convert Value to Map if needed
+        let metadata_map = match metadata {
+            serde_json::Value::Object(map) => Some(map.clone()),
+            _ => {
+                // Convert other Value types to a Map with a "_data" key
+                let mut map = serde_json::Map::new();
+                map.insert("_data".to_string(), metadata.clone());
+                Some(map)
+            }
+        };
         
         // Create request parameters using the proper TaskSendParams type
         let params = TaskSendParams {
             id: uuid::Uuid::new_v4().to_string(),
             message: message,
             history_length: None,
-            metadata: None,
+            metadata: metadata_map,
             push_notification: None,
             session_id: None,
         };
@@ -46,11 +118,38 @@ impl A2aClient {
     
     /// Resubscribe to an existing task's streaming updates
     pub async fn resubscribe_task(&mut self, task_id: &str) -> Result<StreamingResponseStream, Box<dyn Error>> {
+        // Call with no metadata
+        self.resubscribe_task_with_metadata(task_id, &json!({})).await
+    }
+    
+    /// Resubscribe to a task's streaming updates with metadata
+    /// 
+    /// Metadata can include testing parameters like:
+    /// - `_mock_stream_text_chunks`: Number of text chunks to generate
+    /// - `_mock_stream_artifact_types`: Types of artifacts to generate (text, data, file)
+    /// - `_mock_stream_chunk_delay_ms`: Delay between chunks in milliseconds
+    /// - `_mock_stream_final_state`: Final state of the stream (completed, failed)
+    ///
+    /// # Arguments
+    /// * `task_id` - The ID of the task to resubscribe to
+    /// * `metadata` - JSON value containing metadata
+    pub async fn resubscribe_task_with_metadata(&mut self, task_id: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
         // Create request parameters using the proper TaskQueryParams type
+        // Convert Value to Map if needed
+        let metadata_map = match metadata {
+            serde_json::Value::Object(map) => Some(map.clone()),
+            _ => {
+                // Convert other Value types to a Map with a "_data" key
+                let mut map = serde_json::Map::new();
+                map.insert("_data".to_string(), metadata.clone());
+                Some(map)
+            }
+        };
+        
         let params = TaskQueryParams {
             id: task_id.to_string(),
             history_length: None,
-            metadata: None
+            metadata: metadata_map
         };
         
         // Build the SSE request

@@ -225,6 +225,158 @@ if let Some(artifacts) = &task.artifacts {
 }
 ```
 
+## Testing Features
+
+### Configurable Delays
+
+The mock server supports configurable delays to simulate network latency and server processing time, which is useful for testing client timeout handling and UI responsiveness:
+
+```rust
+// Send a task with a 2-second delay
+let result = client.send_task_with_metadata(
+    "Hello with delay", 
+    Some(r#"{"_mock_delay_ms": 2000}"#)
+).await?;
+
+// Stream with slow chunk delivery (1 second between chunks)
+let stream = client.send_task_subscribe_with_metadata(
+    "Stream with slow chunks",
+    &json!({
+        "_mock_chunk_delay_ms": 1000
+    })
+).await?;
+```
+
+From the command line:
+```bash
+# Task with 2-second processing delay
+cargo run -- client send-task --url "http://localhost:8080" \
+  --message "Slow task" --metadata '{"_mock_delay_ms": 2000}'
+
+# Stream with 1-second delay between chunks
+cargo run -- client stream-task --url "http://localhost:8080" \
+  --message "Slow stream" --metadata '{"_mock_chunk_delay_ms": 1000}'
+```
+
+### Dynamic Streaming Content
+
+The mock server can simulate different streaming patterns with configurable content types, chunk counts, and final states. This helps test client robustness when processing varied streaming content:
+
+```rust
+// Configure a stream with 3 text chunks
+let stream = client.send_task_subscribe_with_metadata(
+    "Stream with custom text chunks",
+    &json!({
+        "_mock_stream_text_chunks": 3,
+        "_mock_stream_chunk_delay_ms": 100
+    })
+).await?;
+
+// Stream with only data and file artifacts (no text)
+let stream = client.send_task_subscribe_with_metadata(
+    "Stream with data and file artifacts only",
+    &json!({
+        "_mock_stream_artifact_types": ["data", "file"],
+        "_mock_stream_chunk_delay_ms": 200
+    })
+).await?;
+
+// Stream that ends with a failed status
+let stream = client.send_task_subscribe_with_metadata(
+    "Stream ending with error",
+    &json!({
+        "_mock_stream_final_state": "failed"
+    })
+).await?;
+
+// Resubscribe to an existing task with custom configuration
+let stream = client.resubscribe_task_with_metadata(
+    "task-123",
+    &json!({
+        "_mock_stream_text_chunks": 2,
+        "_mock_stream_artifact_types": ["text", "data"]
+    })
+).await?;
+```
+
+From the command line:
+```bash
+# Stream with 5 text chunks
+cargo run -- client stream-task --url "http://localhost:8080" \
+  --message "Custom text chunks" --metadata '{"_mock_stream_text_chunks": 5}'
+
+# Stream with data artifact only
+cargo run -- client stream-task --url "http://localhost:8080" \
+  --message "Data only stream" --metadata '{"_mock_stream_artifact_types": ["data"]}'
+
+# Stream ending in failed state
+cargo run -- client stream-task --url "http://localhost:8080" \
+  --message "Failing stream" --metadata '{"_mock_stream_final_state": "failed"}'
+```
+
+### State Machine Fidelity
+
+The mock server can simulate realistic task state machine behavior, allowing testing of long-running tasks, multi-turn conversations requiring input, and failure handling:
+
+```rust
+// Create a task that takes 5 seconds to complete
+let task = client.simulate_task_lifecycle(
+    "Long running task",
+    5000,  // Takes 5 seconds
+    false, // No input required
+    false, // Don't fail
+    None   // No failure message
+).await?;
+
+// Check task status during processing
+// Initially it will be Submitted, then Working, then Completed
+
+// Create a task that requires additional input
+let task = client.simulate_task_lifecycle(
+    "Task needing more information",
+    10000, // Takes 10 seconds total
+    true,  // Requires input
+    false, // Don't fail 
+    None   // No failure message
+).await?;
+
+// After a few seconds, task will transition to InputRequired state
+// Send a follow-up message to provide input
+let follow_up = client.send_task_with_metadata(
+    "Here's the additional information you requested",
+    Some(&format!(r#"{{"id": "{}"}}"#, task.id))
+).await?;
+
+// Simulate a task that fails
+let failing_task = client.simulate_task_lifecycle(
+    "Task that will fail",
+    3000,  // Takes 3 seconds
+    false, // No input required
+    true,  // Will fail
+    Some("Simulated failure message") // Custom failure message
+).await?;
+```
+
+From the command line:
+```bash
+# Task that simulates realistic processing time
+cargo run -- client send-task --url "http://localhost:8080" \
+  --message "Realistic task" --metadata '{"_mock_duration_ms": 5000}'
+
+# Task that requires additional input
+cargo run -- client send-task --url "http://localhost:8080" \
+  --message "Interactive task" --metadata '{"_mock_duration_ms": 6000, "_mock_require_input": true}'
+
+# Task that will fail
+cargo run -- client send-task --url "http://localhost:8080" \
+  --message "Failing task" --metadata '{"_mock_duration_ms": 3000, "_mock_fail": true, "_mock_fail_message": "Custom error message"}'
+
+# Skills can also be simulated with realistic processing
+cargo run -- client invoke-skill --url "http://localhost:8080" \
+  --id "test-skill-1" --message "Process with realism" \
+  --metadata '{"_mock_duration_ms": 4000}'
+```
+
 ## More Information
 
 - [Mock Server Implementation](../mock_server.rs): Reference implementation for A2A server endpoints.

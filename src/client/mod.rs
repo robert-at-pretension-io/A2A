@@ -146,6 +146,38 @@ impl A2aClient {
     
     /// Send a task to the A2A server
     pub async fn send_task(&mut self, text: &str) -> Result<Task, ClientError> {
+        // Call send_task_with_metadata with no metadata
+        self.send_task_with_metadata(text, None).await
+    }
+    
+    /// Send a task to the A2A server with optional metadata
+    /// 
+    /// Metadata can include testing parameters like:
+    /// - "_mock_delay_ms": For simulating network latency 
+    /// - "_mock_duration_ms": For task lifecycle simulation (duration of processing)
+    /// - "_mock_require_input": For simulating tasks that require additional input
+    /// - "_mock_fail": For simulating task failures
+    /// - "_mock_fail_message": For custom failure messages
+    /// 
+    /// # Arguments
+    /// * `text` - The message text to send 
+    /// * `metadata_json` - Optional JSON string containing metadata
+    ///
+    /// # Examples
+    /// ```
+    /// // Send task with a 2-second simulated delay
+    /// let task = client.send_task_with_metadata(
+    ///     "Hello, server!", 
+    ///     Some(r#"{"_mock_delay_ms": 2000}"#)
+    /// ).await?;
+    /// 
+    /// // Send task with state machine simulation
+    /// let task = client.send_task_with_metadata(
+    ///     "Task with realistic state transitions",
+    ///     Some(r#"{"_mock_duration_ms": 5000, "_mock_require_input": true}"#)
+    /// ).await?;
+    /// ```
+    pub async fn send_task_with_metadata(&mut self, text: &str, metadata_json: Option<&str>) -> Result<Task, ClientError> {
         // Create a simple text message
         let text_part = TextPart {
             type_: "text".to_string(),
@@ -159,12 +191,22 @@ impl A2aClient {
             metadata: None,
         };
         
+        // Parse metadata if provided
+        let metadata = if let Some(meta_str) = metadata_json {
+            match serde_json::from_str(meta_str) {
+                Ok(parsed) => Some(parsed),
+                Err(e) => return Err(ClientError::JsonError(format!("Failed to parse metadata JSON: {}", e)))
+            }
+        } else {
+            None
+        };
+        
         // Create request parameters using the proper TaskSendParams type
         let params = TaskSendParams {
             id: uuid::Uuid::new_v4().to_string(),
             message: message,
             history_length: None,
-            metadata: None,
+            metadata: metadata,
             push_notification: None,
             session_id: None,
         };
@@ -193,5 +235,86 @@ impl A2aClient {
         };
         
         self.send_jsonrpc::<Task>("tasks/get", params_value).await
+    }
+    
+    /// Send a task with state machine simulation
+    /// 
+    /// This is a convenience method for testing with simulated task lifecycles
+    /// 
+    /// # Arguments
+    /// * `text` - The message text to send
+    /// * `task_id` - Optional custom task ID to use (generated if None)
+    /// * `duration_ms` - Duration in milliseconds for the task to complete
+    /// * `require_input` - Whether the task requires additional input
+    /// * `should_fail` - Whether the task should fail instead of completing
+    /// * `fail_message` - Custom failure message (if should_fail is true)
+    /// 
+    /// # Examples
+    /// ```
+    /// // Simulated task that takes 5 seconds and requires input
+    /// let task = client.simulate_task_lifecycle(
+    ///     "Simulate a conversation requiring input",
+    ///     None,    // Generate random ID
+    ///     5000,    // 5 seconds
+    ///     true,    // require input
+    ///     false,   // don't fail
+    ///     None     // no fail message
+    /// ).await?;
+    /// ```
+    pub async fn simulate_task_lifecycle(
+        &mut self, 
+        text: &str,
+        task_id: Option<&str>,
+        duration_ms: u64,
+        require_input: bool,
+        should_fail: bool,
+        fail_message: Option<&str>
+    ) -> Result<Task, ClientError> {
+        // Build the metadata JSON
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("_mock_duration_ms".to_string(), serde_json::Value::Number(serde_json::Number::from(duration_ms)));
+        metadata.insert("_mock_require_input".to_string(), serde_json::Value::Bool(require_input));
+        metadata.insert("_mock_fail".to_string(), serde_json::Value::Bool(should_fail));
+        
+        if let Some(message) = fail_message {
+            metadata.insert("_mock_fail_message".to_string(), serde_json::Value::String(message.to_string()));
+        }
+        
+        let metadata_json = serde_json::Value::Object(metadata).to_string();
+        
+        // Create a simple text message
+        let text_part = TextPart {
+            type_: "text".to_string(),
+            text: text.to_string(),
+            metadata: None,
+        };
+        
+        let message = Message {
+            role: Role::User,
+            parts: vec![Part::TextPart(text_part)],
+            metadata: None,
+        };
+        
+        // Parse metadata if provided
+        let metadata_value = serde_json::from_str(&metadata_json)
+            .map_err(|e| ClientError::JsonError(format!("Failed to parse metadata JSON: {}", e)))?;
+        
+        // Create request parameters with explicit ID if provided
+        let params = TaskSendParams {
+            id: task_id.map(|id| id.to_string()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            message: message,
+            history_length: None,
+            metadata: Some(metadata_value),
+            push_notification: None,
+            session_id: None,
+        };
+        
+        // Send request and return result
+        let params_value = match serde_json::to_value(params) {
+            Ok(v) => v,
+            Err(e) => return Err(ClientError::JsonError(format!("Failed to serialize params: {}", e)))
+        };
+        
+        self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
 }

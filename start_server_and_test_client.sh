@@ -232,6 +232,41 @@ echo "Testing auth validation..."
 RUSTFLAGS="-A warnings" cargo run --quiet -- client validate-auth --url "http://localhost:8080" --header "Authorization" --value "Bearer test-token-123"
 
 echo "===============================" 
+echo "Testing Configurable Delays"
+echo "==============================="
+
+# Test with a defined delay in metadata
+echo "Testing task send with 2-second delay..."
+START_TIME=$(date +%s)
+DELAYED_TASK_ID=$(RUSTFLAGS="-A warnings" cargo run --quiet -- client send-task --url "http://localhost:8080" \
+  --message "Task with configurable delay" \
+  --metadata '{"_mock_delay_ms": 2000}' \
+  --header "$AUTH_HEADER" --value "$AUTH_VALUE" | grep -o '"id": "[^"]*"' | head -1 | cut -d'"' -f4)
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+echo "Task created with ID: $DELAYED_TASK_ID in approximately $DURATION seconds"
+if [ "$DURATION" -lt "2" ]; then
+  echo "⚠️ Warning: Delay doesn't seem to be working correctly. Expected minimum 2 seconds, got $DURATION seconds."
+else
+  echo "✅ Delay worked correctly! Expected minimum 2 seconds, got $DURATION seconds."
+fi
+
+# Test streaming with configurable chunk delay
+echo "Testing streaming with configurable chunk delay (1 second)..."
+echo "This will show chunks with 1 second delay between them..."
+RUSTFLAGS="-A warnings" cargo run --quiet -- client stream-task --url "http://localhost:8080" \
+  --message "This is a streaming task with slow chunks" \
+  --metadata '{"_mock_chunk_delay_ms": 1000}' &
+STREAM_PID=$!
+
+# Let it run for a bit longer
+sleep 5
+
+# Kill the streaming client
+kill $STREAM_PID 2>/dev/null || true
+
+echo "===============================" 
 echo "All Tests Completed Successfully"
 echo "=============================="
 

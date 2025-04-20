@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6f4bc1acaa3e48410a71b56c62339042a65b4c3430bd7f0ae5caa4d06938017d # shrinks to part = FilePart(FilePart { file: FileContent { bytes: None, mime_type: Some("text/plain"), name: Some("example.txt"), uri: None }, metadata: Some({"test": String("value")}), type_: "file" })
+cc 3b33be963769b5e65b3e8a668d72f1e26e7967b7fb69f45be861d6dc0a65dde9 # shrinks to status = TaskStatus { message: None, state: InputRequired, timestamp: Some(2025-04-20T12:12:49.575770691Z) }

@@ -22,7 +22,6 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 - **README.md**: Overview of A2A protocol and test suite components
 - **docs/schema_overview.md**: Detailed A2A protocol schema documentation
 - **src/client/README.md**: Comprehensive client feature documentation and examples
-- **testing_plan.md**: Comprehensive plan for testing A2A server implementations
 - **src/client/tests/integration_test.rs**: Example code demonstrating client features
 
 ## Build & Test Commands
@@ -37,15 +36,17 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 - Fuzzing: `cargo run --quiet -- fuzz --target [target] --time [seconds]`
 - Client commands:
   - Get agent card: `cargo run --quiet -- client get-agent-card --url [url]`
-  - Send task: `cargo run --quiet -- client send-task --url [url] --message [text] [--header "header_name"] [--value "auth_value"]`
+  - Send task: `cargo run --quiet -- client send-task --url [url] --message [text] [--metadata '{"_mock_delay_ms": 2000}'] [--header "header_name"] [--value "auth_value"]`
+  - Send task with simulated state machine: `cargo run --quiet -- client send-task --url [url] --message [text] --metadata '{"_mock_duration_ms": 5000, "_mock_require_input": true}'`
   - Send task with file: `cargo run --quiet -- client send-task-with-file --url [url] --message [text] --file-path [path]`
   - Send task with data: `cargo run --quiet -- client send-task-with-data --url [url] --message [text] --data [json]`
   - Get task: `cargo run --quiet -- client get-task --url [url] --id [task_id] [--header "header_name"] [--value "auth_value"]`
   - Get artifacts: `cargo run --quiet -- client get-artifacts --url [url] --id [task_id] --output-dir [dir]`
   - Cancel task: `cargo run --quiet -- client cancel-task --url [url] --id [task_id] [--header "header_name"] [--value "auth_value"]`
   - Validate auth: `cargo run --quiet -- client validate-auth --url [url] --header "header_name" --value "auth_value"`
-  - Stream task: `cargo run --quiet -- client stream-task --url [url] --message [text]` 
-  - Resubscribe: `cargo run --quiet -- client resubscribe-task --url [url] --id [task_id]`
+  - Stream task: `cargo run --quiet -- client stream-task --url [url] --message [text] [--metadata '{"_mock_chunk_delay_ms": 1000}']` 
+  - Stream with dynamic content: `cargo run --quiet -- client stream-task --url [url] --message [text] --metadata '{"_mock_stream_text_chunks": 5, "_mock_stream_artifact_types": ["text", "data"]}'`
+  - Resubscribe: `cargo run --quiet -- client resubscribe-task --url [url] --id [task_id] [--metadata '{"_mock_stream_final_state": "failed"}']`
   - Set push notification: `cargo run --quiet -- client set-push-notification --url [url] --id [task_id] --webhook [url] --auth-scheme [scheme] --token [token]`
   - Get push notification: `cargo run --quiet -- client get-push-notification --url [url] --id [task_id]`
   - Get state history: `cargo run --quiet -- client get-state-history --url [url] --id [task_id]`
@@ -56,7 +57,7 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
   - Cancel batch: `cargo run --quiet -- client cancel-batch --url [url] --id [batch_id]`
   - List skills: `cargo run --quiet -- client list-skills --url [url] --tags [optional_tags]`
   - Get skill details: `cargo run --quiet -- client get-skill-details --url [url] --id [skill_id]`
-  - Invoke skill: `cargo run --quiet -- client invoke-skill --url [url] --id [skill_id] --message [text] --input-mode [optional_mode] --output-mode [optional_mode]`
+  - Invoke skill: `cargo run --quiet -- client invoke-skill --url [url] --id [skill_id] --message [text] --input-mode [optional_mode] --output-mode [optional_mode] [--metadata '{"_mock_duration_ms": 3000}']`
 - Run integration tests: `./start_server_and_test_client.sh`
 - **REQUIRED VERIFICATION**: Always run `RUSTFLAGS="-A warnings" cargo test && cargo build` before finalizing changes
 
@@ -73,7 +74,7 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 ## Project Structure
 - **src/validator.rs**: A2A message JSON schema validation
 - **src/property_tests.rs**: Property-based testing using proptest
-- **src/mock_server.rs**: Reference A2A server implementation 
+- **src/mock_server.rs**: Reference A2A server implementation with configurable network delay simulation, state machine fidelity, and dynamic streaming content
 - **src/fuzzer.rs**: Fuzzing tools for A2A message handlers
 - **src/types.rs**: A2A protocol type definitions
 - **src/client/**: A2A client implementation

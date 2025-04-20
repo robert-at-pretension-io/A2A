@@ -143,6 +143,7 @@ The test suite now includes:
      - Message parsing fuzzing
    - Comprehensive test script for all features
    - Mock server with configurable authentication
+   - Configurable network delay simulation for testing client behavior under various latency conditions
 
 ## Future Possibilities
 
@@ -153,10 +154,6 @@ The test suite now includes:
 * **Cross-Organization Collaboration**: Secure agent networks that span organizational boundaries for supply chain, customer service, and partnership workflows.
 
 * **Personal Agent Ecosystems**: Individual users with personalized networks of agents that know their preferences and can delegate tasks appropriately.
-
-## Comprehensive Testing Strategy
-
-For a detailed approach to testing A2A server implementations, see our [Testing Plan](testing_plan.md), which outlines a comprehensive framework for validating protocol compliance, performance, and security.
 
 ---
 

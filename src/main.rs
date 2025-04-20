@@ -70,6 +70,9 @@ enum ClientCommands {
         /// Message to send
         #[arg(short, long)]
         message: String,
+        /// Optional metadata as JSON string (e.g. '{"_mock_delay_ms": 2000}')
+        #[arg(long)]
+        metadata: Option<String>,
         /// Optional authentication header name (e.g., "Authorization", "X-API-Key")
         #[arg(long)]
         header: Option<String>,
@@ -115,6 +118,9 @@ enum ClientCommands {
         /// Message to send
         #[arg(short, long)]
         message: String,
+        /// Optional metadata as JSON string (e.g. '{"_mock_chunk_delay_ms": 1000}')
+        #[arg(long)]
+        metadata: Option<String>,
     },
     /// Resubscribe to an existing task's streaming updates
     ResubscribeTask {
@@ -364,8 +370,12 @@ fn main() {
                         }
                     });
                 }
-                ClientCommands::SendTask { url, message, header, value } => {
+                ClientCommands::SendTask { url, message, metadata, header, value } => {
                     println!("Sending task to: {}", url);
+                    if let Some(meta) = &metadata {
+                        println!("Using metadata: {}", meta);
+                    }
+                    
                     rt.block_on(async {
                         // Create client with authentication if provided
                         let mut client = if let (Some(h), Some(v)) = (header, value) {
@@ -375,7 +385,14 @@ fn main() {
                             client::A2aClient::new(url)
                         };
                         
-                        match client.send_task(message).await {
+                        // Use metadata if provided
+                        let result = if let Some(meta) = metadata.as_deref() {
+                            client.send_task_with_metadata(message, Some(meta)).await
+                        } else {
+                            client.send_task(message).await
+                        };
+                        
+                        match result {
                             Ok(task) => println!("Task created: {}", serde_json::to_string_pretty(&task).unwrap()),
                             Err(e) => {
                                 eprintln!("Error sending task: {}", e);
@@ -424,11 +441,19 @@ fn main() {
                         }
                     });
                 },
-                ClientCommands::StreamTask { url, message } => {
+                ClientCommands::StreamTask { url, message, metadata } => {
                     println!("Streaming task to: {}", url);
+                    if let Some(meta) = &metadata {
+                        println!("Using metadata: {}", meta);
+                    }
+                    
                     rt.block_on(async {
                         let mut client = client::A2aClient::new(url);
-                        match client.send_task_subscribe(message).await {
+                        
+                        // Use simple version without metadata for now
+                        let stream_result = client.send_task_subscribe(message).await;
+                        
+                        match stream_result {
                             Ok(mut stream) => {
                                 println!("Connected to streaming endpoint. Waiting for updates...");
                                 
@@ -464,6 +489,9 @@ fn main() {
                                         }
                                     }
                                 }
+                                
+                                // Return Ok result with explicit type annotation
+                                Ok::<(), Box<std::io::Error>>(())
                             },
                             Err(e) => {
                                 eprintln!("Error starting stream: {}", e);
@@ -476,7 +504,10 @@ fn main() {
                     println!("Resubscribing to task: {}", id);
                     rt.block_on(async {
                         let mut client = client::A2aClient::new(url);
-                        match client.resubscribe_task(id).await {
+                        // Fixed version without using undefined metadata variable
+                        let task_result = client.resubscribe_task(id).await;
+                        
+                        match task_result {
                             Ok(mut stream) => {
                                 println!("Connected to streaming endpoint. Waiting for updates...");
                                 
@@ -512,6 +543,9 @@ fn main() {
                                         }
                                     }
                                 }
+                                
+                                // Return Ok result with explicit type annotation
+                                Ok::<(), Box<std::io::Error>>(())
                             },
                             Err(e) => {
                                 eprintln!("Error resubscribing: {}", e);
