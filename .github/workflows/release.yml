@@ -42,62 +42,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-          
-      # Check if types.rs exists
-      - name: Check for types.rs
-        id: check-files
-        run: |
-          if [ -e "src/types.rs" ]; then
-            echo "files=src/types.rs" >> $GITHUB_OUTPUT
-          fi
-        shell: bash # Bash is available on all runners
-      
-      # Create types.rs from template if it doesn't exist (Windows)
-      - name: Create types.rs from template (Windows)
-        if: runner.os == 'Windows' && !contains(steps.check-files.outputs.files, 'src/types.rs')
-        shell: pwsh
-        run: |
-          # Ensure src directory exists
-          if (-not (Test-Path src)) {
-            New-Item -ItemType Directory -Path src
-          }
-          
-          # Create a minimal placeholder file for compilation
-          Set-Content -Path src/types.rs -Value @"
-// Pre-generated type definitions for Windows builds
-// These will be replaced when properly generated on a Unix system
-// This is just a placeholder to allow compilation
-
-pub struct TaskResponse {
-    pub id: String,
-}
-
-pub struct AgentCard {
-    pub capabilities: AgentCapabilities,
-}
-
-pub struct AgentCapabilities {
-    pub streaming: bool,
-    pub push_notifications: bool,
-    pub state_transition_history: bool,
-}
-"@
-      
-      # For non-Windows, install cargo-typify and generate types if needed
-      - name: Install cargo-typify (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          if [ ! -f "src/types.rs" ]; then
-            cargo install cargo-typify
-          fi
-          
-      - name: Generate types (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          if [ ! -f "src/types.rs" ]; then
-            cargo run -- config generate-types
-          fi
-          
+                
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }}
           
