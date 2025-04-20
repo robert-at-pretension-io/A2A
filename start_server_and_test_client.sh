@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# --- Prerequisite Check ---
+if ! command -v rustc &> /dev/null || ! command -v cargo &> /dev/null; then
+    echo -e "\033[0;31mError: Rust and Cargo are required to run this script.\033[0m" >&2
+    echo "Please install Rust by following the instructions at: https://rustup.rs" >&2
+    exit 1
+fi
+
 # This script runs a series of client commands to test A2A functionality.
 # It can test against a local mock server (default) or a provided server URL.
 
