@@ -556,6 +556,9 @@ else
   echo -e "${YELLOW}⚠️ Skipping resubscribe test as task creation failed earlier.${RESET}"
 fi
 
+fi # End of unofficial block for Dynamic Streaming
+
+# --- Test Summary ---
 echo
 echo -e "${BLUE}${BOLD}======================================================${RESET}"
 echo -e "${BLUE}${BOLD}📊 Test Summary${RESET}"
