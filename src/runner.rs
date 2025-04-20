@@ -2,9 +2,10 @@ use crate::client::A2aClient;
 use crate::client::errors::ClientError;
 use crate::types::{AgentCard, AgentCapabilities};
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc; // Keep Arc
 use std::time::Duration;
 use tokio::process::Child;
+use tokio::sync::Mutex; // Use Tokio's Mutex for the client
 use colored::*; // For colored output
 use futures_util::StreamExt; // Add StreamExt for .next()
 
@@ -26,13 +27,18 @@ struct TestResults {
     test_counter: usize,
 }
 
+// Use std::sync::Mutex for TestResults as it's not held across awaits in the same problematic way
+// and avoids making the results struct itself async-aware unnecessarily.
+type SharedResults = Arc<std::sync::Mutex<TestResults>>;
+
+
 /// Main entry point for running the integration test suite
 pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<dyn Error>> {
     println!("{}", "======================================================".blue().bold());
     println!("{}", "🚀 Starting A2A Integration Test Suite (Rust Runner)".blue().bold());
     println!("{}", "======================================================".blue().bold());
 
-    let results = Arc::new(Mutex::new(TestResults::default()));
+    let results: SharedResults = Arc::new(std::sync::Mutex::new(TestResults::default()));
 
     // --- Server Management ---
     let (_server_guard, server_url) = start_mock_server_if_needed(&config).await?;
@@ -40,8 +46,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
 
     // --- Client Initialization ---
     // TODO: Handle authentication based on config or agent card if needed later
-    let mut client = A2aClient::new(&server_url);
-    let client_arc = Arc::new(Mutex::new(client)); // Use Arc<Mutex<>> for sharing client in async blocks
+    let client = A2aClient::new(&server_url); // client is not mut initially
+    let client_arc = Arc::new(Mutex::new(client)); // Use Arc<tokio::sync::Mutex<>>
 
     // --- Agent Card & Capabilities ---
     println!("{}", "\n--- Fetching Agent Card ---".cyan());
@@ -65,10 +71,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         let get_card_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                // Get the client and hold it across await
-                let mut client_guard = client_clone.lock().unwrap();
-                // Just await directly - simpler but less efficient
-                client_guard.get_agent_card().await
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                client_guard.get_agent_card().await // Await directly
             }
         };
 
@@ -99,7 +103,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 println!("{}", "⚠️ Could not retrieve Agent Card. Assuming default capabilities (false).".yellow());
             }
         }
-    } // Mutex guard dropped
+    } // Tokio MutexGuard dropped automatically
 
     // --- Basic Task Operations ---
     println!("{}", "\n--- Basic Task Operations ---".cyan());
@@ -118,10 +122,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         let send_task_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                // Get the client and hold it across await
-                let mut client_guard = client_clone.lock().unwrap();
-                // Just await directly - simpler but less efficient
-                client_guard.send_task("This is a test task from Rust runner").await
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                client_guard.send_task("This is a test task from Rust runner").await // Await directly
             }
         };
 
@@ -143,7 +145,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 results_guard.failure_count += 1;
             }
         }
-    } // Mutex guard for client_arc is dropped here if send_task_closure finished
+    } // Tokio MutexGuard dropped automatically
 
     // Dependent tests
     if let Some(ref id) = task_id {
@@ -157,11 +159,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = task_id_clone.clone(); // Clone again for async move
                 async move {
-                    let future = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        client_guard.get_task(&id_c) // Get the future
-                    }; // MutexGuard dropped here
-                    future.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    client_guard.get_task(&id_c).await?; // Await directly
                     Ok(()) // Return Ok(()) on success
                 }
             },
@@ -179,12 +178,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                      let client_clone = Arc::clone(&client_arc);
                      let id_c = task_id_clone_hist.clone();
                      async move {
-                         let future = { // Scope for MutexGuard
-                             let mut client_guard = client_clone.lock().unwrap();
-                             // Use the _typed version returning ClientError
-                             client_guard.get_task_state_history_typed(&id_c) // Get the future
-                         }; // MutexGuard dropped here
-                         future.await?; // Await the future outside the scope
+                         let mut client_guard = client_clone.lock().await; // Use async lock
+                         // Use the _typed version returning ClientError
+                         client_guard.get_task_state_history_typed(&id_c).await?; // Await directly
                          Ok(())
                      }
                  },
@@ -200,12 +196,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                      let client_clone = Arc::clone(&client_arc);
                      let id_c = task_id_clone_metrics.clone();
                      async move {
-                         let future = { // Scope for MutexGuard
-                             let mut client_guard = client_clone.lock().unwrap();
-                             // Use the _typed version returning ClientError
-                             client_guard.get_state_transition_metrics_typed(&id_c) // Get the future
-                         }; // MutexGuard dropped here
-                         future.await?; // Await the future outside the scope
+                         let mut client_guard = client_clone.lock().await; // Use async lock
+                         // Use the _typed version returning ClientError
+                         client_guard.get_state_transition_metrics_typed(&id_c).await?; // Await directly
                          Ok(())
                      }
                  },
@@ -226,12 +219,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = task_id_clone_cancel.clone();
                 async move {
-                    let future = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        // Use the _typed version returning ClientError
-                        client_guard.cancel_task_typed(&id_c) // Get the future
-                    }; // MutexGuard dropped here
-                    future.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    // Use the _typed version returning ClientError
+                    client_guard.cancel_task_typed(&id_c).await?; // Await directly
                     Ok(())
                 }
             },
@@ -247,11 +237,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = task_id_clone_after_cancel.clone();
                 async move {
-                    let future = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        client_guard.get_task(&id_c) // Get the future
-                    }; // MutexGuard dropped here
-                    future.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    client_guard.get_task(&id_c).await?; // Await directly
                     Ok(())
                 }
             },
@@ -275,11 +262,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             || {
                 let client_clone = Arc::clone(&client_arc);
                 async move {
-                    let mut stream = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        // Use the _typed version returning ClientError
-                        client_guard.send_task_subscribe_typed("This is a streaming test") // Get the future
-                    }.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    // Use the _typed version returning ClientError
+                    let mut stream = client_guard.send_task_subscribe_typed("This is a streaming test").await?; // Await directly
                     // Optionally, try receiving one item to confirm connection
                     let _ = stream.next().await; // Requires StreamExt trait
                     Ok(())
@@ -305,17 +290,14 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     let client_clone = Arc::clone(&client_arc);
                     let id_c = task_id_clone_set.clone();
                     async move {
-                        let future = { // Scope for MutexGuard
-                            let mut client_guard = client_clone.lock().unwrap();
-                            // Use the _typed version returning ClientError
-                            client_guard.set_task_push_notification_typed(
-                                &id_c,
-                                "https://example.com/webhook", // Mock webhook URL
-                                Some("Bearer"),
-                                Some("test-token")
-                            ) // Get the future
-                        }; // MutexGuard dropped here
-                        future.await?; // Await the future outside the scope
+                        let mut client_guard = client_clone.lock().await; // Use async lock
+                        // Use the _typed version returning ClientError
+                        client_guard.set_task_push_notification_typed(
+                            &id_c,
+                            "https://example.com/webhook", // Mock webhook URL
+                            Some("Bearer"),
+                            Some("test-token")
+                        ).await?; // Await directly
                         Ok(())
                     }
                 },
@@ -331,12 +313,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     let client_clone = Arc::clone(&client_arc);
                     let id_c = task_id_clone_get.clone();
                     async move {
-                        let future = { // Scope for MutexGuard
-                            let mut client_guard = client_clone.lock().unwrap();
-                            // Use the _typed version returning ClientError
-                            client_guard.get_task_push_notification_typed(&id_c) // Get the future
-                        }; // MutexGuard dropped here
-                        future.await?; // Await the future outside the scope
+                        let mut client_guard = client_clone.lock().await; // Use async lock
+                        // Use the _typed version returning ClientError
+                        client_guard.get_task_push_notification_typed(&id_c).await?; // Await directly
                         Ok(())
                     }
                 },
@@ -364,21 +343,18 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         let create_batch_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    let params = crate::client::task_batch::BatchCreateParams {
-                        id: None, // Auto-generate ID
-                        name: Some("Test Batch from Rust".to_string()),
-                        tasks: vec![
-                            "Batch Task 1".to_string(),
-                            "Batch Task 2".to_string(),
-                        ],
-                        metadata: None,
-                    };
-                    // Use the _typed version returning ClientError
-                    client_guard.create_task_batch_typed(params) // Get the future
-                }; // MutexGuard dropped here
-                future.await // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                let params = crate::client::task_batch::BatchCreateParams {
+                    id: None, // Auto-generate ID
+                    name: Some("Test Batch from Rust".to_string()),
+                    tasks: vec![
+                        "Batch Task 1".to_string(),
+                        "Batch Task 2".to_string(),
+                    ],
+                    metadata: None,
+                };
+                // Use the _typed version returning ClientError
+                client_guard.create_task_batch_typed(params).await // Await directly
             }
         };
 
@@ -397,7 +373,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 results.lock().unwrap().failure_count += 1;
             }
         }
-    } // Mutex guard dropped
+    } // Tokio MutexGuard dropped automatically
 
     if let Some(ref id) = batch_id {
         let batch_id_clone_get = id.clone();
@@ -410,12 +386,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = batch_id_clone_get.clone();
                 async move {
-                    let future = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        // Use the _typed version returning ClientError
-                        client_guard.get_batch_typed(&id_c, false) // Get the future
-                    }; // MutexGuard dropped here
-                    future.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    // Use the _typed version returning ClientError
+                    client_guard.get_batch_typed(&id_c, false).await?; // Await directly
                     Ok(())
                 }
             },
@@ -431,12 +404,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = batch_id_clone_status.clone();
                 async move {
-                    let future = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        // Use the _typed version returning ClientError
-                        client_guard.get_batch_status_typed(&id_c) // Get the future
-                    }; // MutexGuard dropped here
-                    future.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    // Use the _typed version returning ClientError
+                    client_guard.get_batch_status_typed(&id_c).await?; // Await directly
                     Ok(())
                 }
             },
@@ -452,12 +422,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = batch_id_clone_cancel.clone();
                 async move {
-                    let future = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        // Use the _typed version returning ClientError
-                        client_guard.cancel_batch_typed(&id_c) // Get the future
-                    }; // MutexGuard dropped here
-                    future.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    // Use the _typed version returning ClientError
+                    client_guard.cancel_batch_typed(&id_c).await?; // Await directly
                     Ok(())
                 }
             },
@@ -477,12 +444,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Use the _typed version returning ClientError
-                    client_guard.list_skills_typed(None) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Use the _typed version returning ClientError
+                client_guard.list_skills_typed(None).await?; // Await directly
                 Ok(())
             }
         },
@@ -496,12 +460,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Use the _typed version returning ClientError
-                    client_guard.list_skills_typed(Some(vec!["text".to_string()])) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Use the _typed version returning ClientError
+                client_guard.list_skills_typed(Some(vec!["text".to_string()])).await?; // Await directly
                 Ok(())
             }
         },
@@ -515,12 +476,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Use the _typed version returning ClientError
-                    client_guard.get_skill_details_typed(skill_id_to_test) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Use the _typed version returning ClientError
+                client_guard.get_skill_details_typed(skill_id_to_test).await?; // Await directly
                 Ok(())
             }
         },
@@ -534,12 +492,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Use the _typed version returning ClientError
-                    client_guard.invoke_skill_typed(skill_id_to_test, "This is a test skill invocation", None, None) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Use the _typed version returning ClientError
+                client_guard.invoke_skill_typed(skill_id_to_test, "This is a test skill invocation", None, None).await?; // Await directly
                 Ok(())
             }
         },
@@ -553,17 +508,14 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Use the _typed version returning ClientError
-                    client_guard.invoke_skill_typed(
-                        skill_id_to_test,
-                        "This is a test with specific modes",
-                        Some("text/plain".to_string()),
-                        Some("text/plain".to_string())
-                    ) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Use the _typed version returning ClientError
+                client_guard.invoke_skill_typed(
+                    skill_id_to_test,
+                    "This is a test with specific modes",
+                    Some("text/plain".to_string()),
+                    Some("text/plain".to_string())
+                ).await?; // Await directly
                 Ok(())
             }
         },
@@ -585,11 +537,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             let id_c = non_existent_task_id.clone();
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.get_task(&id_c) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Expect this to fail
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                client_guard.get_task(&id_c).await?; // Expect this to fail
                 Ok(()) // Should not reach here
             }
         },
@@ -621,12 +570,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             let id_c = non_existent_skill_id.clone();
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Use the _typed version returning ClientError
-                    client_guard.get_skill_details_typed(&id_c) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Expect this to fail
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Use the _typed version returning ClientError
+                client_guard.get_skill_details_typed(&id_c).await?; // Expect this to fail
                 Ok(()) // Should not reach here
             }
         },
@@ -656,12 +602,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             let id_c = non_existent_batch_id.clone();
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Use the _typed version returning ClientError
-                    client_guard.get_batch_typed(&id_c, false) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Expect this to fail
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Use the _typed version returning ClientError
+                client_guard.get_batch_typed(&id_c, false).await?; // Expect this to fail
                 Ok(()) // Should not reach here
             }
         },
@@ -704,11 +647,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         let send_task_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.send_task("Task for file operations") // Get the future
-                }; // MutexGuard dropped here
-                future.await // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                client_guard.send_task("Task for file operations").await // Await directly
             }
         };
         match tokio::time::timeout(config.default_timeout, send_task_closure()).await {
@@ -743,15 +683,12 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                  let path_c = test_file_path.clone();
                  let task_id_c = ftid.clone();
                  async move {
-                     let future = { // Scope for MutexGuard
-                         let mut client_guard = client_clone.lock().unwrap();
-                         // Create metadata with task ID
-                         let mut metadata = serde_json::Map::new();
-                         metadata.insert("taskId".to_string(), serde_json::Value::String(task_id_c));
-                         // Use the _typed version returning ClientError
-                         client_guard.upload_file_typed(path_c.to_str().unwrap(), Some(metadata)) // Get the future
-                     }; // MutexGuard dropped here
-                     future.await // Await the future outside the scope
+                     let mut client_guard = client_clone.lock().await; // Use async lock
+                     // Create metadata with task ID
+                     let mut metadata = serde_json::Map::new();
+                     metadata.insert("taskId".to_string(), serde_json::Value::String(task_id_c));
+                     // Use the _typed version returning ClientError
+                     client_guard.upload_file_typed(path_c.to_str().unwrap(), Some(metadata)).await // Await directly
                  }
              };
              match tokio::time::timeout(config.default_timeout, upload_closure()).await {
@@ -773,6 +710,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
 
         // List Files
         let ftid_clone_list = ftid.clone();
+        // Clone uploaded_file_id *before* the closure captures it
+        let uploaded_file_id_clone_for_list = uploaded_file_id.clone();
         run_test(
             &results,
             &format!("List files for task {}", ftid),
@@ -781,14 +720,14 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             || {
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = ftid_clone_list.clone();
+                // Move the cloned Option into the async block
+                let uploaded_file_id_check = uploaded_file_id_clone_for_list.clone();
                 async move {
-                    let files = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        // Use the _typed version returning ClientError
-                        client_guard.list_files_typed(Some(&id_c)) // Get the future
-                    }.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    // Use the _typed version returning ClientError
+                    let files = client_guard.list_files_typed(Some(&id_c)).await?; // Await directly
                     // Basic check: ensure we got at least one file back if upload succeeded
-                    if uploaded_file_id.is_some() {
+                    if uploaded_file_id_check.is_some() {
                         if files.is_empty() {
                             return Err(ClientError::Other("ListFiles returned empty after successful upload".to_string()));
                         }
@@ -812,11 +751,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     let id_c = ufid_clone_download.clone();
                     let path_c = download_path.clone(); // Clone path for closure
                     async move {
-                        let download_resp = { // Scope for MutexGuard
-                            let mut client_guard = client_clone.lock().unwrap();
-                            // Use the _typed version returning ClientError
-                            client_guard.download_file_typed(&id_c) // Get the future
-                        }.await?; // Await the future outside the scope
+                        let mut client_guard = client_clone.lock().await; // Use async lock
+                        // Use the _typed version returning ClientError
+                        let download_resp = client_guard.download_file_typed(&id_c).await?; // Await directly
                         // Decode and write to file
                         let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &download_resp.bytes)
                             .map_err(|e| ClientError::Other(format!("Base64 decode failed: {}", e)))?;
@@ -848,12 +785,9 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             let path_c = test_file_path_clone.clone();
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Use the _typed version returning ClientError
-                    client_guard.send_task_with_file_typed("Task with file attachment", path_c.to_str().unwrap()) // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Use the _typed version returning ClientError
+                client_guard.send_task_with_file_typed("Task with file attachment", path_c.to_str().unwrap()).await?; // Await directly
                 Ok(())
             }
         },
@@ -877,13 +811,10 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         let send_data_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    let data_value: serde_json::Value = serde_json::from_str(test_data_content).unwrap();
-                    // Use the _typed version
-                    client_guard.send_task_with_data_typed("Task with structured data", &data_value) // Get the future
-                }; // MutexGuard dropped here
-                future.await // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                let data_value: serde_json::Value = serde_json::from_str(test_data_content).unwrap();
+                // Use the _typed version
+                client_guard.send_task_with_data_typed("Task with structured data", &data_value).await // Await directly
             }
         };
          match tokio::time::timeout(config.default_timeout, send_data_closure()).await {
@@ -914,11 +845,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = dtid_clone_get.clone();
                 async move {
-                    let future = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        client_guard.get_task(&id_c) // Get the future
-                    }; // MutexGuard dropped here
-                    future.await?; // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    client_guard.get_task(&id_c).await?; // Await directly
                     Ok(())
                 }
             },
@@ -939,13 +867,10 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    // Assuming default test auth is set if needed by server
-                    // Use the _typed version returning ClientError
-                    client_guard.validate_auth_typed() // Get the future
-                }; // MutexGuard dropped here
-                future.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                // Assuming default test auth is set if needed by server
+                // Use the _typed version returning ClientError
+                client_guard.validate_auth_typed().await?; // Await directly
                 Ok(())
             }
         },
@@ -971,12 +896,11 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let send_delayed_closure = || {
                 let client_clone = Arc::clone(&client_arc);
                 async move {
-                    let future = { // Scope for MutexGuard
-                        let mut client_guard = client_clone.lock().unwrap();
-                        let metadata = serde_json::json!({"_mock_delay_ms": 2000});
-                        client_guard.send_task_with_metadata("Task with configurable delay", Some(&metadata.to_string())) // Get the future
-                    }; // MutexGuard dropped here
-                    future.await // Await the future outside the scope
+                    let mut client_guard = client_clone.lock().await; // Use async lock
+                    let metadata = serde_json::json!({"_mock_delay_ms": 2000});
+                    // Create a string that lives long enough
+                    let metadata_str = metadata.to_string();
+                    client_guard.send_task_with_metadata("Task with configurable delay", Some(&metadata_str)).await // Await directly
                 }
             };
             match tokio::time::timeout(config.default_timeout + Duration::from_secs(3), send_delayed_closure()).await { // Allow extra time for delay
@@ -1013,12 +937,10 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let mut stream = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    let metadata = serde_json::json!({"_mock_chunk_delay_ms": 1000});
-                    // Use the _typed version returning ClientError
-                    client_guard.send_task_subscribe_with_metadata_typed("Streaming task with slow chunks", &metadata) // Get the future
-                }.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                let metadata = serde_json::json!({"_mock_chunk_delay_ms": 1000});
+                // Use the _typed version returning ClientError
+                let mut stream = client_guard.send_task_subscribe_with_metadata_typed("Streaming task with slow chunks", &metadata).await?; // Await directly
                 // Consume one item to check connection
                 let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
@@ -1045,7 +967,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
              let create_resub_closure = || {
                  let client_clone = Arc::clone(&client_arc);
                  async move {
-                     let mut client_guard = client_clone.lock().unwrap();
+                     let mut client_guard = client_clone.lock().await; // Use async lock
                      client_guard.send_task("Task for resubscribe testing").await
                  }
              };
@@ -1076,15 +998,13 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let mut stream = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    let metadata = serde_json::json!({
-                        "_mock_stream_text_chunks": 3,
-                        "_mock_stream_chunk_delay_ms": 100 // Short delay for test speed
-                    });
-                    // Use the _typed version returning ClientError
-                    client_guard.send_task_subscribe_with_metadata_typed("Streaming task with 3 text chunks", &metadata) // Get the future
-                }.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                let metadata = serde_json::json!({
+                    "_mock_stream_text_chunks": 3,
+                    "_mock_stream_chunk_delay_ms": 100 // Short delay for test speed
+                });
+                // Use the _typed version returning ClientError
+                let mut stream = client_guard.send_task_subscribe_with_metadata_typed("Streaming task with 3 text chunks", &metadata).await?; // Await directly
                 let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
             }
@@ -1127,15 +1047,13 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let mut stream = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    let metadata = serde_json::json!({
-                        "_mock_stream_final_state": "failed",
-                        "_mock_stream_chunk_delay_ms": 100
-                    });
-                    // Use the _typed version returning ClientError
-                    client_guard.send_task_subscribe_with_metadata_typed("Streaming task with failed final state", &metadata) // Get the future
-                }.await?; // Await the future outside the scope
+                let mut client_guard = client_clone.lock().await; // Use async lock
+                let metadata = serde_json::json!({
+                    "_mock_stream_final_state": "failed",
+                    "_mock_stream_chunk_delay_ms": 100
+                });
+                // Use the _typed version returning ClientError
+                let mut stream = client_guard.send_task_subscribe_with_metadata_typed("Streaming task with failed final state", &metadata).await?; // Await directly
                 let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
             }
@@ -1154,15 +1072,13 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                  let client_clone = Arc::clone(&client_arc);
                  let id_c = rtid_clone_resub.clone();
                  async move {
-                     let mut stream = { // Scope for MutexGuard
-                         let mut client_guard = client_clone.lock().unwrap();
-                         let metadata = serde_json::json!({
-                             "_mock_stream_text_chunks": 2,
-                             "_mock_stream_artifact_types": ["text", "data"]
-                         });
-                         // Use the _typed version returning ClientError
-                         client_guard.resubscribe_task_with_metadata_typed(&id_c, &metadata) // Get the future
-                     }.await?; // Await the future outside the scope
+                     let mut client_guard = client_clone.lock().await; // Use async lock
+                     let metadata = serde_json::json!({
+                         "_mock_stream_text_chunks": 2,
+                         "_mock_stream_artifact_types": ["text", "data"]
+                     });
+                     // Use the _typed version returning ClientError
+                     let mut stream = client_guard.resubscribe_task_with_metadata_typed(&id_c, &metadata).await?; // Await directly
                      let _ = stream.next().await; // Requires StreamExt trait
                      Ok(())
                  }
@@ -1260,7 +1176,7 @@ async fn start_mock_server_if_needed(config: &TestRunnerConfig) -> Result<(MockS
 
 /// Helper function to run a single test step with timeout and result tracking.
 async fn run_test<F, Fut>(
-    results: &Arc<Mutex<TestResults>>,
+    results: &SharedResults, // Use the type alias
     description: &str,
     is_unofficial: bool,
     config: &TestRunnerConfig, // Pass config for run_unofficial_flag
