@@ -15,8 +15,8 @@ pub enum SchemaCheckResult {
 }
 
 // --- Helper: Get active schema version and path ---
-// (Keep this function private to the module or make it pub if needed elsewhere)
-fn get_active_schema_info() -> Result<(String, PathBuf), String> {
+// Make this public so validator.rs can use it
+pub fn get_active_schema_info() -> Result<(String, PathBuf), String> {
     let config_content = fs::read_to_string(CONFIG_FILE)
         .map_err(|e| format!("❌ Failed to read config file '{}': {}", CONFIG_FILE, e))?;
 
