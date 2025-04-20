@@ -50,11 +50,11 @@ run_test() {
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
     return 0
   elif [ $exit_status -eq 124 ]; then
-    echo -e "    ${RED}❌ [Test ${test_num}] Failed (Timeout): ${description}${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test ${test_num}] Unsupported or not working (Timeout): ${description}${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
     return 1
   else
-    echo -e "    ${RED}❌ [Test ${test_num}] Failed (Exit Code ${exit_status}): ${description}${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test ${test_num}] Unsupported or not working (Exit Code ${exit_status}): ${description}${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
     return 1
   fi
@@ -138,15 +138,15 @@ if [ $exit_status -eq 0 ]; then
     echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Send Task (ID: $TASK_ID)${RESET}"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
   else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Send Task (Could not extract ID)${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Send Task (Could not extract ID)${RESET}"
     echo "       Output: $TASK_OUTPUT"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi
 elif [ $exit_status -eq 124 ]; then
-  echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Timeout): Send Task${RESET}"
+  echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Timeout): Send Task${RESET}"
   FAILURE_COUNT=$((FAILURE_COUNT + 1))
 else
-  echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Exit Code ${exit_status}): Send Task${RESET}"
+  echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Exit Code ${exit_status}): Send Task${RESET}"
   FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -211,15 +211,15 @@ if [ $exit_status -eq 0 ]; then
     echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Create Task Batch (ID: $BATCH_ID)${RESET}"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
   else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Create Task Batch (Could not extract ID)${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Create Task Batch (Could not extract ID)${RESET}"
     echo "       Output: $BATCH_OUTPUT"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi
 elif [ $exit_status -eq 124 ]; then
-  echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Timeout): Create Task Batch${RESET}"
+  echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Timeout): Create Task Batch${RESET}"
   FAILURE_COUNT=$((FAILURE_COUNT + 1))
 else
-  echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Exit Code ${exit_status}): Create Task Batch${RESET}"
+  echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Exit Code ${exit_status}): Create Task Batch${RESET}"
   FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -265,7 +265,7 @@ if [ $exit_status -ne 0 ] && [ $exit_status -ne 124 ]; then
     echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Got expected error for non-existent task${RESET}"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
 else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Did not get expected error (Exit Code ${exit_status})${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Did not get expected error (Exit Code ${exit_status})${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -279,7 +279,7 @@ if [ $exit_status -ne 0 ] && [ $exit_status -ne 124 ]; then
     echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Got expected error for non-existent skill${RESET}"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
 else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Did not get expected error (Exit Code ${exit_status})${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Did not get expected error (Exit Code ${exit_status})${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -293,7 +293,7 @@ if [ $exit_status -ne 0 ] && [ $exit_status -ne 124 ]; then
     echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Got expected error for non-existent batch${RESET}"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
 else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Did not get expected error (Exit Code ${exit_status})${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Did not get expected error (Exit Code ${exit_status})${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -321,14 +321,14 @@ if [ $exit_status -eq 0 ]; then
     echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Create Task for File Ops (ID: $FILE_TASK_ID)${RESET}"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
   else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Create Task for File Ops (Could not extract ID)${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Create Task for File Ops (Could not extract ID)${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi
 elif [ $exit_status -eq 124 ]; then
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Timeout): Create Task for File Ops${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Timeout): Create Task for File Ops${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Exit Code ${exit_status}): Create Task for File Ops${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Exit Code ${exit_status}): Create Task for File Ops${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -346,14 +346,14 @@ if [ ! -z "$FILE_TASK_ID" ]; then
         echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Upload File (ID: $UPLOADED_FILE_ID)${RESET}"
         SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
       else
-        echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Upload File (Could not extract ID)${RESET}"
+        echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Upload File (Could not extract ID)${RESET}"
         FAILURE_COUNT=$((FAILURE_COUNT + 1))
       fi
     elif [ $exit_status -eq 124 ]; then
-        echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Timeout): Upload File${RESET}"
+        echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Timeout): Upload File${RESET}"
         FAILURE_COUNT=$((FAILURE_COUNT + 1))
     else
-        echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Exit Code ${exit_status}): Upload File${RESET}"
+        echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Exit Code ${exit_status}): Upload File${RESET}"
         FAILURE_COUNT=$((FAILURE_COUNT + 1))
     fi
     TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -391,14 +391,14 @@ if [ $exit_status -eq 0 ]; then
     echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Send Task With Data (ID: $DATA_TASK_ID)${RESET}"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
   else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Send Task With Data (Could not extract ID)${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Send Task With Data (Could not extract ID)${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi
 elif [ $exit_status -eq 124 ]; then
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Timeout): Send Task With Data${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Timeout): Send Task With Data${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Exit Code ${exit_status}): Send Task With Data${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Exit Code ${exit_status}): Send Task With Data${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -456,14 +456,14 @@ if [ $exit_status -eq 0 ]; then
       SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
     fi
   else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Send Task with 2-second delay (Could not extract ID)${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Send Task with 2-second delay (Could not extract ID)${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi
 elif [ $exit_status -eq 124 ]; then
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Timeout): Send Task with 2-second delay${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Timeout): Send Task with 2-second delay${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Exit Code ${exit_status}): Send Task with 2-second delay${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Exit Code ${exit_status}): Send Task with 2-second delay${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -487,7 +487,7 @@ if ps -p $STREAM_PID > /dev/null; then
    kill $STREAM_PID 2>/dev/null || true
    wait $STREAM_PID 2>/dev/null || true
 else
-   echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Start Streaming Task with slow chunks${RESET}"
+   echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Start Streaming Task with slow chunks${RESET}"
    FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -518,14 +518,14 @@ if [ $exit_status -eq 0 ]; then
     echo -e "    ${GREEN}✅ [Test $((TEST_COUNTER + 1))] Success: Create Task for Resubscribe (ID: $RESUBSCRIBE_TASK_ID)${RESET}"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
   else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed: Create Task for Resubscribe (Could not extract ID)${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working: Create Task for Resubscribe (Could not extract ID)${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi
 elif [ $exit_status -eq 124 ]; then
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Timeout): Create Task for Resubscribe${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Timeout): Create Task for Resubscribe${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 else
-    echo -e "    ${RED}❌ [Test $((TEST_COUNTER + 1))] Failed (Exit Code ${exit_status}): Create Task for Resubscribe${RESET}"
+    echo -e "    ${YELLOW}⚠️ [Test $((TEST_COUNTER + 1))] Unsupported or not working (Exit Code ${exit_status}): Create Task for Resubscribe${RESET}"
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
@@ -576,7 +576,7 @@ echo -e "${BLUE}${BOLD}📊 Test Summary${RESET}"
 echo -e "${BLUE}${BOLD}======================================================${RESET}"
 echo -e "Total Tests Attempted: ${BOLD}${TEST_COUNTER}${RESET}"
 echo -e "${GREEN}Successful Tests: ${BOLD}${SUCCESS_COUNT}${RESET}"
-echo -e "${RED}Failed Tests: ${BOLD}${FAILURE_COUNT}${RESET}"
+echo -e "${YELLOW}Unsupported/Not Working: ${BOLD}${FAILURE_COUNT}${RESET}"
 if [ "$RUN_UNOFFICIAL_TESTS" = "true" ]; then
   echo -e "${YELLOW}(Including unofficial tests)${RESET}"
 else
@@ -586,11 +586,11 @@ echo -e "${BLUE}${BOLD}======================================================${R
 
 # Server (if started locally) will be killed by trap handler
 
-# Exit with non-zero status if any tests failed
+# Exit with non-zero status if any tests were unsupported or not working
 if [ $FAILURE_COUNT -gt 0 ]; then
-    echo -e "${RED}${BOLD}Some tests failed!${RESET}"
+    echo -e "${YELLOW}${BOLD}Some tests were unsupported or not working!${RESET}"
     exit 1
 else
-    echo -e "${GREEN}${BOLD}All tests passed!${RESET}"
+    echo -e "${GREEN}${BOLD}All attempted tests passed!${RESET}"
     exit 0
 fi
