@@ -420,7 +420,7 @@ echo -e "${BLUE}${BOLD}🔑 Testing Authentication Validation (Unofficial)${RESE
 echo -e "${BLUE}${BOLD}===============================${RESET}"
 
 # Mark this test as unofficial
-run_test "Validate Authentication" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client validate-auth --url \"$TARGET_URL\" --header \"$AUTH_HEADER\" --value \"$AUTH_VALUE\"" true
+run_test "Validate Authentication" "export RUSTFLAGS='-A warnings'; cargo run --quiet -- client validate-auth --url \"$TARGET_URL\" --header \"$AUTH_HEADER\" --value \"$AUTH_VALUE\"" "$DEFAULT_TIMEOUT" true
 
 # --- Configurable Delays Tests (Unofficial) ---
 echo
