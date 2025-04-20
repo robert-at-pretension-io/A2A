@@ -82,11 +82,9 @@ fn save_schema(path: &Path, content: &str) -> Result<(), String> {
 
 // --- Main Build Logic ---
 fn main() {
-    // --- 1. Setup Rerun Triggers ---
-    println!("cargo:rerun-if-changed={}", CONFIG_FILE);
-    println!("cargo:rerun-if-changed=build.rs");
-
-    // --- 2. Get Active Local Schema Info ---
+    // --- 1. Get Active Local Schema Info ---
+    // Note: We removed cargo:rerun-if-changed directives to ensure
+    // this script runs on every build to check the remote URL.
     let (active_version, active_schema_path) = match get_active_schema_info() {
         Ok(info) => info,
         Err(e) => panic!("{}", e), // Config error is fatal
