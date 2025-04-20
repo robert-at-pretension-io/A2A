@@ -3,6 +3,9 @@ use serde_json::{json, Value};
 use mockito::Server;
 
 use crate::client::A2aClient;
+use crate::client::errors::ClientError;
+// Remove ErrorCompatibility import
+// use crate::client::error_handling::ErrorCompatibility;
 
 // Extend A2aClient with auth-related helper methods if needed
 impl A2aClient {

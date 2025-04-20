@@ -198,18 +198,23 @@ impl A2aClient {
         // Cancel each task using the typed version
         for task_id in &batch.task_ids {
             // Ignore errors for individual cancellations, as some tasks might already be completed
-            let _ = self.cancel_task(task_id).await;
+            let _ = self.cancel_task_typed(task_id).await; // Use _typed version
         }
-        
-        // Return the updated status
-        self.get_batch_status(batch_id).await
+
+        // Return the updated status using the typed version
+        self.get_batch_status_typed(batch_id).await // Use _typed version
     }
-    
-    /// Get all tasks in a batch
-    pub async fn get_batch_tasks(&mut self, batch_id: &str) -> Result<Vec<Task>, Box<dyn Error>> {
-        // First get the batch
-        let batch = self.get_batch(batch_id, false).await?;
-        
+
+    /// Cancel all tasks in a batch (backward compatible)
+    pub async fn cancel_batch(&mut self, batch_id: &str) -> Result<BatchStatusSummary, Box<dyn Error>> {
+        self.cancel_batch_typed(batch_id).await.into_box_error()
+    }
+
+    /// Get all tasks in a batch (typed error version)
+    pub async fn get_batch_tasks_typed(&mut self, batch_id: &str) -> Result<Vec<Task>, ClientError> {
+        // First get the batch using the typed version
+        let batch = self.get_batch_typed(batch_id, false).await?;
+
         // Fetch all tasks using the typed version
         let mut tasks = Vec::with_capacity(batch.task_ids.len());
         for task_id in &batch.task_ids {

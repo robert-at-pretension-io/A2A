@@ -2,6 +2,9 @@ use std::error::Error;
 use chrono::{DateTime, Utc};
 
 use crate::client::A2aClient;
+use crate::client::errors::ClientError; // Add ClientError import
+// Remove ErrorCompatibility import
+// use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{TaskState, TaskQueryParams, Message, Task, Role};
 
 /// Represents a single state transition in a task's history

@@ -8,6 +8,9 @@ use crate::types::{Part, TextPart};
 use serde_json::{json, Value};
 
 use crate::client::A2aClient;
+use crate::client::errors::{ClientError, A2aError}; // Add A2aError import
+// Remove ErrorCompatibility import
+// use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{Message, Task, Artifact, TaskSendParams, TaskQueryParams};
 
 /// Response from a streaming task operation

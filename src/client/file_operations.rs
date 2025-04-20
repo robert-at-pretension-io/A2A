@@ -164,15 +164,15 @@ impl A2aClient {
         // Send the request
         self.send_jsonrpc::<FileDownloadResponse>("files/download", params).await
     }
-    
-    /// Downloads a file by its ID (backward compatible version)
-    pub async fn download_file(&mut self, file_id: &str) -> Result<FileDownloadResponse, Box<dyn Error>> {
-        self.download_file_typed(file_id).await.into_box_error()
-    }
-    
-    /// Lists files associated with a task using the files/list endpoint (typed version)
+
+    // Remove old version if not needed
+    // pub async fn download_file(&mut self, file_id: &str) -> Result<FileDownloadResponse, Box<dyn Error>> {
+    //     self.download_file_typed(file_id).await.into_box_error()
+    // }
+
+    /// Lists files associated with a task using the files/list endpoint
     pub async fn list_files_typed(
-        &mut self, 
+        &mut self,
         task_id: Option<&str>
     ) -> Result<Vec<FileUploadResponse>, ClientError> {
         // Create request params
@@ -194,11 +194,11 @@ impl A2aClient {
         let response = self.send_jsonrpc::<ListFilesResponse>("files/list", params).await?;
         Ok(response.files)
     }
-    
-    /// Lists files associated with a task (backward compatible version)
-    pub async fn list_files(
-        &mut self, 
-        task_id: Option<&str>
+
+    // Remove old version if not needed
+    // pub async fn list_files(
+    //     &mut self,
+    //     task_id: Option<&str>
     ) -> Result<Vec<FileUploadResponse>, Box<dyn Error>> {
         self.list_files_typed(task_id).await.into_box_error()
     }
@@ -224,17 +224,17 @@ impl A2aClient {
             
         self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
-    
-    /// Sends a task with a file attachment by path (backward compatible version)
-    pub async fn send_task_with_file(&mut self, text: &str, file_path: &str) -> Result<Task, Box<dyn Error>> {
-        self.send_task_with_file_typed(text, file_path).await.into_box_error()
-    }
-    
-    /// Sends a task with a file attachment by bytes (typed version)
+
+    // Remove old version if not needed
+    // pub async fn send_task_with_file(&mut self, text: &str, file_path: &str) -> Result<Task, Box<dyn Error>> {
+    //     self.send_task_with_file_typed(text, file_path).await.into_box_error()
+    // }
+
+    /// Sends a task with a file attachment by bytes
     pub async fn send_task_with_file_bytes_typed(
-        &mut self, 
-        text: &str, 
-        file_bytes: &[u8], 
+        &mut self,
+        text: &str,
+        file_bytes: &[u8],
         file_name: &str,
         mime_type: Option<&str>
     ) -> Result<Task, ClientError> {
@@ -259,14 +259,14 @@ impl A2aClient {
             
         self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
-    
-    /// Sends a task with a file attachment by bytes (backward compatible version)
-    pub async fn send_task_with_file_bytes(
-        &mut self, 
-        text: &str, 
-        file_bytes: &[u8], 
-        file_name: &str,
-        mime_type: Option<&str>
+
+    // Remove old version if not needed
+    // pub async fn send_task_with_file_bytes(
+    //     &mut self,
+    //     text: &str,
+    //     file_bytes: &[u8],
+    //     file_name: &str,
+    //     mime_type: Option<&str>
     ) -> Result<Task, Box<dyn Error>> {
         self.send_task_with_file_bytes_typed(text, file_bytes, file_name, mime_type).await.into_box_error()
     }
