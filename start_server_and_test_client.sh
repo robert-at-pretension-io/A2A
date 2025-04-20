@@ -233,17 +233,25 @@ else
   echo -e "${YELLOW}⚠️ Skipping tests dependent on successful batch creation.${RESET}"
 fi
 
+# --- Agent Skills Tests (Unofficial) ---
 echo
 echo -e "${BLUE}${BOLD}===============================${RESET}"
-echo -e "${BLUE}${BOLD}🛠️ Testing Agent Skills${RESET}"
+echo -e "${BLUE}${BOLD}🛠️ Testing Agent Skills (Unofficial)${RESET}"
 echo -e "${BLUE}${BOLD}===============================${RESET}"
-run_test "List all skills" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client list-skills --url \"$TARGET_URL\""
-run_test "List skills with 'text' tag" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client list-skills --url \"$TARGET_URL\" --tags \"text\""
-SKILL_ID="test-skill-1" # Assuming this skill exists on the mock server
-run_test "Get details for skill '$SKILL_ID'" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client get-skill-details --url \"$TARGET_URL\" --id \"$SKILL_ID\""
-run_test "Invoke skill '$SKILL_ID'" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client invoke-skill --url \"$TARGET_URL\" --id \"$SKILL_ID\" --message \"This is a test skill invocation\""
-run_test "Invoke skill '$SKILL_ID' with specific modes" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client invoke-skill --url \"$TARGET_URL\" --id \"$SKILL_ID\" --message \"This is a test with specific modes\" -n \"text/plain\" -p \"text/plain\""
 
+# Mark this section as unofficial
+if [ "$RUN_UNOFFICIAL_TESTS" = "false" ]; then
+  echo -e "${BLUE}⏭️ Skipping Agent Skills tests (Use --run-unofficial to include)${RESET}"
+else
+  run_test "List all skills" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client list-skills --url \"$TARGET_URL\"" true
+  run_test "List skills with 'text' tag" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client list-skills --url \"$TARGET_URL\" --tags \"text\"" true
+  SKILL_ID="test-skill-1" # Assuming this skill exists on the mock server
+  run_test "Get details for skill '$SKILL_ID'" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client get-skill-details --url \"$TARGET_URL\" --id \"$SKILL_ID\"" true
+  run_test "Invoke skill '$SKILL_ID'" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client invoke-skill --url \"$TARGET_URL\" --id \"$SKILL_ID\" --message \"This is a test skill invocation\"" true
+  run_test "Invoke skill '$SKILL_ID' with specific modes" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client invoke-skill --url \"$TARGET_URL\" --id \"$SKILL_ID\" --message \"This is a test with specific modes\" -n \"text/plain\" -p \"text/plain\"" true
+fi # End of unofficial block for Agent Skills
+
+# --- Error Handling Tests ---
 echo
 echo -e "${BLUE}${BOLD}===============================${RESET}"
 echo -e "${BLUE}${BOLD}🚨 Testing Error Handling${RESET}"
