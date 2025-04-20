@@ -153,8 +153,14 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 let id_c = task_id_clone.clone(); // Clone again for async move
                 async move {
-                    let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.get_task(&id_c).await?; // Use ? to propagate ClientError
+                    // Get the client from the mutex, but don't hold guard across await
+                    let task = {
+                        let mut client_guard = client_clone.lock().unwrap();
+                        client_guard.get_task(&id_c)
+                    }; // MutexGuard is dropped here
+                    
+                    // Now await on the future without holding the MutexGuard
+                    task.await?;
                     Ok(()) // Return Ok(()) on success
                 }
             },
