@@ -62,6 +62,24 @@ enum Commands {
         #[command(subcommand)]
         command: ClientCommands,
     },
+    /// Manage configuration settings
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Set the active schema version to use for builds
+    SetSchemaVersion {
+        /// The version to set (e.g., "v1", "v2")
+        #[arg(short, long)]
+        version: String,
+    },
+    /// Check remote schema and download if different, without building
+    CheckSchema,
+    // Removed ForceRefresh as CheckSchema provides the core functionality directly
 }
 
 #[derive(Subcommand)]
