@@ -5,10 +5,28 @@ This document provides instructions for building the A2A Test Suite for multiple
 ## Prerequisites
 
 - Rust and Cargo installed (https://rustup.rs)
+- Cargo-typify installed for schema type generation:
+  ```bash
+  cargo install cargo-typify
+  ```
 - Depending on your host OS, you might need additional tools:
   - On Linux: `build-essential` (or equivalent), cross-compilation toolchains
   - On macOS: Xcode Command Line Tools
   - On Windows: Microsoft Visual C++ Build Tools
+
+## Generating Types from Schema
+
+Before building, you need to generate Rust types from the A2A schema:
+
+```bash
+# First, ensure you have the correct schema version set
+cargo run -- config set-schema-version v1
+
+# Then, generate the types
+cargo run -- config generate-types
+```
+
+This generates the `src/types.rs` file, which is required for compilation. You only need to do this once or whenever the schema changes.
 
 ## Installing Cross-Compilation Targets
 

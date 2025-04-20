@@ -14,8 +14,9 @@ use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
 use std::fs; // Add this
 use std::io::{self, BufRead, Write}; // Add this
-use std::path::Path; // Add this
+use std::path::{Path, PathBuf}; // Add this
 use std::process::Command; // Keep this for now
+use sha2::{Digest, Sha256}; // For hash calculation
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -82,7 +83,12 @@ enum ConfigCommands {
     },
     /// Check remote schema and download if different, without building
     CheckSchema,
-    // Removed ForceRefresh as CheckSchema provides the core functionality directly
+    /// Generate types from the active schema
+    GenerateTypes {
+        /// Force regeneration even if types are up to date
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 
@@ -152,7 +158,7 @@ fn main() {
                              println!("\n======================================================================");
                              println!("🚀 A new version of the A2A schema was detected and saved to:");
                              println!("   {}", path);
-                             println!("👉 To use this new version, update 'a2a_schema.config' and run 'cargo build'.");
+                             println!("👉 To use this new version, update 'a2a_schema.config' and run 'cargo run -- config generate-types'.");
                              println!("======================================================================\n");
                         },
                         Ok(schema_utils::SchemaCheckResult::NoChange) => {
@@ -163,10 +169,120 @@ fn main() {
                             std::process::exit(1);
                         }
                     }
+                },
+                ConfigCommands::GenerateTypes { force } => {
+                    if let Err(e) = generate_types_from_schema(*force) {
+                        eprintln!("❌ Error generating types: {}", e);
+                        std::process::exit(1);
+                    }
                 }
             }
         }
     }
+}
+
+// Constants used for schema handling
+const SCHEMAS_DIR: &str = "schemas";
+const CONFIG_FILE: &str = "a2a_schema.config";
+const OUTPUT_PATH: &str = "src/types.rs";
+const HASH_FILE_NAME_PREFIX: &str = "a2a_schema_";
+
+/// Calculate a SHA256 hash for a string
+fn calculate_hash(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
+/// Get active schema version and path from config file
+fn get_active_schema_info() -> Result<(String, PathBuf), String> {
+    let config_content = fs::read_to_string(CONFIG_FILE)
+        .map_err(|e| format!("Failed to read config file '{}': {}", CONFIG_FILE, e))?;
+
+    for line in config_content.lines() {
+        if let Some(stripped) = line.trim().strip_prefix("active_version") {
+            if let Some(version) = stripped.trim().strip_prefix('=') {
+                let version_str = version.trim().trim_matches('"').to_string();
+                if !version_str.is_empty() {
+                    let filename = format!("a2a_schema_{}.json", version_str);
+                    let path = Path::new(SCHEMAS_DIR).join(&filename);
+                    return Ok((version_str, path));
+                }
+            }
+        }
+    }
+    Err(format!("Could not find 'active_version = \"...\"' in {}", CONFIG_FILE))
+}
+
+/// Generate Rust types from the active schema
+fn generate_types_from_schema(force: bool) -> Result<(), String> {
+    // 1. Determine active schema
+    let (active_version, active_schema_path) = get_active_schema_info()?;
+    
+    // 2. Check if schema file exists
+    if !active_schema_path.exists() {
+        return Err(format!("Active schema file not found: {}", active_schema_path.display()));
+    }
+    
+    // 3. Read schema content
+    let schema_content = fs::read_to_string(&active_schema_path)
+        .map_err(|e| format!("Failed to read active schema '{}': {}", active_schema_path.display(), e))?;
+    
+    // 4. Determine if regeneration is needed
+    let current_hash = calculate_hash(&schema_content);
+    let output_path = Path::new(OUTPUT_PATH);
+    let output_exists = output_path.exists();
+    
+    // Store hashes in current directory for simpler management
+    let hash_dir = Path::new(".");
+    let hash_file_name = format!("{}{}_hash.txt", HASH_FILE_NAME_PREFIX, active_version);
+    let hash_file_path = hash_dir.join(hash_file_name);
+    
+    let previous_hash = fs::read_to_string(&hash_file_path).ok();
+    let needs_regeneration = force || !output_exists || previous_hash.map_or(true, |ph| ph != current_hash);
+    
+    if needs_regeneration {
+        println!("💡 Generating types from active schema (version '{}', path: {})...",
+                 active_version, active_schema_path.display());
+        
+        // Ensure the output directory exists
+        if let Some(parent) = output_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create output directory '{}': {}", parent.display(), e))?;
+            }
+        }
+        
+        // Run cargo typify
+        let typify_status = Command::new("cargo")
+            .args([
+                "typify",
+                "-o",
+                OUTPUT_PATH,
+                &active_schema_path.to_string_lossy(),
+            ])
+            .status()
+            .map_err(|e| format!("Failed to execute cargo-typify command: {}. Is it installed?", e))?;
+        
+        if !typify_status.success() {
+            return Err(format!(
+                "Failed to run 'cargo typify' for schema '{}'. Is cargo-typify installed (`cargo install cargo-typify`) and in your PATH? Exit status: {}",
+                active_schema_path.display(),
+                typify_status
+            ));
+        }
+        
+        // Write new hash
+        fs::write(&hash_file_path, &current_hash)
+            .map_err(|e| format!("Warning: Failed to write new schema hash to '{}': {}", hash_file_path.display(), e))?;
+        
+        println!("✅ Successfully generated types into '{}' using schema version '{}'", OUTPUT_PATH, active_version);
+    } else {
+        println!("✅ Schema hash matches for active version '{}' and output exists. Skipping type generation. Use --force to regenerate.", active_version);
+    }
+    
+    Ok(())
 }
 
 /// Reads a2a_schema.config, updates the active_version, and writes it back.

@@ -25,6 +25,8 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 - **src/client/tests/integration_test.rs**: Example code demonstrating client features
 
 ## Build & Test Commands
+- Generate schema types: `cargo run --quiet -- config generate-types`
+- Set schema version: `cargo run --quiet -- config set-schema-version [version]`
 - Build: `cargo build --quiet`
 - Build (no warnings): `RUSTFLAGS="-A warnings" cargo build`
 - Run: `cargo run --quiet -- [subcommand]`
@@ -34,6 +36,7 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 - Validate: `cargo run --quiet -- validate --file [path]`
 - Mock server: `cargo run --quiet -- server --port [port]`
 - Fuzzing: `cargo run --quiet -- fuzz --target [target] --time [seconds]`
+- Run integration tests: `cargo run --quiet -- run-tests`
 - Client commands:
   - Get agent card: `cargo run --quiet -- client get-agent-card --url [url]`
   - Send task: `cargo run --quiet -- client send-task --url [url] --message [text] [--metadata '{"_mock_delay_ms": 2000}'] [--header "header_name"] [--value "auth_value"]`
@@ -58,7 +61,6 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
   - List skills: `cargo run --quiet -- client list-skills --url [url] --tags [optional_tags]`
   - Get skill details: `cargo run --quiet -- client get-skill-details --url [url] --id [skill_id]`
   - Invoke skill: `cargo run --quiet -- client invoke-skill --url [url] --id [skill_id] --message [text] --input-mode [optional_mode] --output-mode [optional_mode] [--metadata '{"_mock_duration_ms": 3000}']`
-- Run integration tests: `./start_server_and_test_client.sh`
 - **REQUIRED VERIFICATION**: Always run `RUSTFLAGS="-A warnings" cargo test && cargo build` before finalizing changes
 
 ## Code Style Guidelines

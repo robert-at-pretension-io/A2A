@@ -16,7 +16,15 @@ RUN mkdir -p src && \
 # Copy actual source code
 COPY src/ src/
 
-# Build the application
+# Install cargo-typify for schema type generation
+RUN cargo install cargo-typify
+
+# Generate types from schema
+RUN if [ ! -f "src/types.rs" ]; then \
+    cargo run -- config generate-types; \
+    fi
+
+# Build the application 
 RUN cargo build --release
 
 # Create a new stage with a minimal image
