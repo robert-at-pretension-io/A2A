@@ -51,7 +51,7 @@ enum Commands {
         #[arg(short, long)]
         target: String,
         /// Maximum time to fuzz (in seconds)
-        #[arg(short, long, default_value_t = 60)]
+        #[arg(short = 'd', long, default_value_t = 60)]
         time: u64,
     },
     /// Run the integration test suite
