@@ -6,6 +6,8 @@ use serde_json::{Value, json, Map};
 use chrono::{DateTime, Utc};
 
 use crate::client::A2aClient;
+use crate::client::errors::ClientError;
+use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{Message, Role, Part, FilePart, FileContent, TaskSendParams, Task};
 
 /// Response from uploading a file
@@ -30,22 +32,23 @@ pub struct FileDownloadResponse {
 }
 
 impl A2aClient {
-    /// Uploads a file to the server using the files/upload endpoint
-    pub async fn upload_file(
+    /// Uploads a file to the server using the files/upload endpoint (typed version)
+    pub async fn upload_file_typed(
         &mut self,
         file_path: &str,
         metadata: Option<Map<String, Value>>
-    ) -> Result<FileUploadResponse, Box<dyn Error>> {
+    ) -> Result<FileUploadResponse, ClientError> {
         // Read the file and create file content
         let path = Path::new(file_path);
         
         // Check if the file exists
         if !path.exists() {
-            return Err(format!("File not found: {}", file_path).into());
+            return Err(ClientError::Other(format!("File not found: {}", file_path)));
         }
         
         // Read the file contents
-        let file_bytes = fs::read(path)?;
+        let file_bytes = fs::read(path)
+            .map_err(|e| ClientError::IoError(e))?;
         
         // Get file name and mime type
         let file_name = path.file_name()
@@ -82,14 +85,23 @@ impl A2aClient {
         self.send_jsonrpc::<FileUploadResponse>("files/upload", params).await
     }
     
-    /// Uploads a file to the server using bytes rather than a file path
-    pub async fn upload_file_bytes(
+    /// Uploads a file to the server using the files/upload endpoint (backward compatible version)
+    pub async fn upload_file(
+        &mut self,
+        file_path: &str,
+        metadata: Option<Map<String, Value>>
+    ) -> Result<FileUploadResponse, Box<dyn Error>> {
+        self.upload_file_typed(file_path, metadata).await.into_box_error()
+    }
+    
+    /// Uploads a file to the server using bytes rather than a file path (typed version)
+    pub async fn upload_file_bytes_typed(
         &mut self,
         file_bytes: &[u8],
         file_name: &str,
         mime_type: Option<&str>,
         metadata: Option<Map<String, Value>>
-    ) -> Result<FileUploadResponse, Box<dyn Error>> {
+    ) -> Result<FileUploadResponse, ClientError> {
         // Base64 encode the file content
         let encoded_bytes = BASE64.encode(file_bytes);
         
@@ -130,8 +142,19 @@ impl A2aClient {
         self.send_jsonrpc::<FileUploadResponse>("files/upload", params).await
     }
     
-    /// Downloads a file by its ID using the files/download endpoint
-    pub async fn download_file(&mut self, file_id: &str) -> Result<FileDownloadResponse, Box<dyn Error>> {
+    /// Uploads a file to the server using bytes (backward compatible version)
+    pub async fn upload_file_bytes(
+        &mut self,
+        file_bytes: &[u8],
+        file_name: &str,
+        mime_type: Option<&str>,
+        metadata: Option<Map<String, Value>>
+    ) -> Result<FileUploadResponse, Box<dyn Error>> {
+        self.upload_file_bytes_typed(file_bytes, file_name, mime_type, metadata).await.into_box_error()
+    }
+    
+    /// Downloads a file by its ID using the files/download endpoint (typed version)
+    pub async fn download_file_typed(&mut self, file_id: &str) -> Result<FileDownloadResponse, ClientError> {
         // Create request params
         let params = json!({
             "fileId": file_id
@@ -141,11 +164,16 @@ impl A2aClient {
         self.send_jsonrpc::<FileDownloadResponse>("files/download", params).await
     }
     
-    /// Lists files associated with a task using the files/list endpoint
-    pub async fn list_files(
+    /// Downloads a file by its ID (backward compatible version)
+    pub async fn download_file(&mut self, file_id: &str) -> Result<FileDownloadResponse, Box<dyn Error>> {
+        self.download_file_typed(file_id).await.into_box_error()
+    }
+    
+    /// Lists files associated with a task using the files/list endpoint (typed version)
+    pub async fn list_files_typed(
         &mut self, 
         task_id: Option<&str>
-    ) -> Result<Vec<FileUploadResponse>, Box<dyn Error>> {
+    ) -> Result<Vec<FileUploadResponse>, ClientError> {
         // Create request params
         let mut params = json!({});
         
@@ -166,10 +194,18 @@ impl A2aClient {
         Ok(response.files)
     }
     
-    /// Sends a task with a file attachment by path
-    pub async fn send_task_with_file(&mut self, text: &str, file_path: &str) -> Result<Task, Box<dyn Error>> {
+    /// Lists files associated with a task (backward compatible version)
+    pub async fn list_files(
+        &mut self, 
+        task_id: Option<&str>
+    ) -> Result<Vec<FileUploadResponse>, Box<dyn Error>> {
+        self.list_files_typed(task_id).await.into_box_error()
+    }
+    
+    /// Sends a task with a file attachment by path (typed version)
+    pub async fn send_task_with_file_typed(&mut self, text: &str, file_path: &str) -> Result<Task, ClientError> {
         // Read the file and create a file message
-        let message = self.create_text_and_file_message(text, file_path).await?;
+        let message = self.create_text_and_file_message_typed(text, file_path).await?;
         
         // Create request parameters
         let params = TaskSendParams {
@@ -182,17 +218,25 @@ impl A2aClient {
         };
         
         // Send request and return result
-        self.send_jsonrpc::<Task>("tasks/send", serde_json::to_value(params)?).await
+        let params_value = serde_json::to_value(params)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize params: {}", e)))?;
+            
+        self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
     
-    /// Sends a task with a file attachment by bytes
-    pub async fn send_task_with_file_bytes(
+    /// Sends a task with a file attachment by path (backward compatible version)
+    pub async fn send_task_with_file(&mut self, text: &str, file_path: &str) -> Result<Task, Box<dyn Error>> {
+        self.send_task_with_file_typed(text, file_path).await.into_box_error()
+    }
+    
+    /// Sends a task with a file attachment by bytes (typed version)
+    pub async fn send_task_with_file_bytes_typed(
         &mut self, 
         text: &str, 
         file_bytes: &[u8], 
         file_name: &str,
         mime_type: Option<&str>
-    ) -> Result<Task, Box<dyn Error>> {
+    ) -> Result<Task, ClientError> {
         // Create a message with text and file parts
         let message = self.create_text_and_file_bytes_message(
             text, file_bytes, file_name, mime_type
@@ -209,20 +253,35 @@ impl A2aClient {
         };
         
         // Send request and return result
-        self.send_jsonrpc::<Task>("tasks/send", serde_json::to_value(params)?).await
+        let params_value = serde_json::to_value(params)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize params: {}", e)))?;
+            
+        self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
     
-    /// Creates a message with both text and file by path
-    pub async fn create_text_and_file_message(&self, text: &str, file_path: &str) -> Result<Message, Box<dyn Error>> {
+    /// Sends a task with a file attachment by bytes (backward compatible version)
+    pub async fn send_task_with_file_bytes(
+        &mut self, 
+        text: &str, 
+        file_bytes: &[u8], 
+        file_name: &str,
+        mime_type: Option<&str>
+    ) -> Result<Task, Box<dyn Error>> {
+        self.send_task_with_file_bytes_typed(text, file_bytes, file_name, mime_type).await.into_box_error()
+    }
+    
+    /// Creates a message with both text and file by path (typed version)
+    pub async fn create_text_and_file_message_typed(&self, text: &str, file_path: &str) -> Result<Message, ClientError> {
         let path = Path::new(file_path);
         
         // Check if the file exists
         if !path.exists() {
-            return Err(format!("File not found: {}", file_path).into());
+            return Err(ClientError::Other(format!("File not found: {}", file_path)));
         }
         
         // Read the file contents
-        let file_bytes = fs::read(path)?;
+        let file_bytes = fs::read(path)
+            .map_err(|e| ClientError::IoError(e))?;
         
         // Get file name and mime type
         let file_name = path.file_name()
@@ -236,6 +295,11 @@ impl A2aClient {
             .to_string();
             
         Ok(self.create_text_and_file_bytes_message(text, &file_bytes, &file_name, Some(&mime_type)))
+    }
+    
+    /// Creates a message with both text and file by path (backward compatible version)
+    pub async fn create_text_and_file_message(&self, text: &str, file_path: &str) -> Result<Message, Box<dyn Error>> {
+        self.create_text_and_file_message_typed(text, file_path).await.into_box_error()
     }
     
     /// Creates a message with both text and file bytes

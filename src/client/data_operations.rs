@@ -3,13 +3,15 @@ use serde_json::{json, Value, Map};
 use serde::Serialize;
 
 use crate::client::A2aClient;
+use crate::client::errors::ClientError;
+use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{Message, Role, Part, DataPart, TaskSendParams, Task};
 
 impl A2aClient {
-    /// Sends a task with structured data
-    pub async fn send_task_with_data<T: Serialize>(&mut self, text: &str, data: &T) -> Result<Task, Box<dyn Error>> {
+    /// Sends a task with structured data (typed error version)
+    pub async fn send_task_with_data_typed<T: Serialize>(&mut self, text: &str, data: &T) -> Result<Task, ClientError> {
         // Create a message with structured data
-        let message = self.create_text_and_data_message(text, data)?;
+        let message = self.create_text_and_data_message_typed(text, data)?;
         
         // Create request parameters
         let params = TaskSendParams {
@@ -22,11 +24,19 @@ impl A2aClient {
         };
         
         // Send request and return result
-        self.send_jsonrpc::<Task>("tasks/send", serde_json::to_value(params)?).await
+        let params_value = serde_json::to_value(params)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize params: {}", e)))?;
+            
+        self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
     
-    /// Creates a message with both text and structured data
-    pub fn create_text_and_data_message<T: Serialize>(&self, text: &str, data: &T) -> Result<Message, Box<dyn Error>> {
+    /// Sends a task with structured data (backward compatible version)
+    pub async fn send_task_with_data<T: Serialize>(&mut self, text: &str, data: &T) -> Result<Task, Box<dyn Error>> {
+        self.send_task_with_data_typed(text, data).await.into_box_error()
+    }
+    
+    /// Creates a message with both text and structured data (typed error version)
+    pub fn create_text_and_data_message_typed<T: Serialize>(&self, text: &str, data: &T) -> Result<Message, ClientError> {
         // Create text part
         let text_part = crate::types::TextPart {
             type_: "text".to_string(),
@@ -35,10 +45,12 @@ impl A2aClient {
         };
         
         // Convert data to JSON Map
-        let data_value = serde_json::to_value(data)?;
+        let data_value = serde_json::to_value(data)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize data: {}", e)))?;
+            
         let data_map = match data_value {
             Value::Object(map) => map,
-            _ => return Err("Data must be a JSON object".into()),
+            _ => return Err(ClientError::Other("Data must be a JSON object".to_string())),
         };
         
         // Create data part
@@ -56,13 +68,20 @@ impl A2aClient {
         })
     }
     
-    /// Creates a message with just structured data
-    pub fn create_data_only_message<T: Serialize>(&self, data: &T) -> Result<Message, Box<dyn Error>> {
+    /// Creates a message with both text and structured data (backward compatible version)
+    pub fn create_text_and_data_message<T: Serialize>(&self, text: &str, data: &T) -> Result<Message, Box<dyn Error>> {
+        self.create_text_and_data_message_typed(text, data).into_box_error()
+    }
+    
+    /// Creates a message with just structured data (typed error version)
+    pub fn create_data_only_message_typed<T: Serialize>(&self, data: &T) -> Result<Message, ClientError> {
         // Convert data to JSON Map
-        let data_value = serde_json::to_value(data)?;
+        let data_value = serde_json::to_value(data)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize data: {}", e)))?;
+            
         let data_map = match data_value {
             Value::Object(map) => map,
-            _ => return Err("Data must be a JSON object".into()),
+            _ => return Err(ClientError::Other("Data must be a JSON object".to_string())),
         };
         
         // Create data part
@@ -78,6 +97,11 @@ impl A2aClient {
             parts: vec![Part::DataPart(data_part)],
             metadata: None,
         })
+    }
+    
+    /// Creates a message with just structured data (backward compatible version)
+    pub fn create_data_only_message<T: Serialize>(&self, data: &T) -> Result<Message, Box<dyn Error>> {
+        self.create_data_only_message_typed(data).into_box_error()
     }
     
     /// Extract data parts from a message

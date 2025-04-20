@@ -269,7 +269,7 @@ enum ClientCommands {
         #[arg(short, long)]
         url: String,
         /// Authentication header name (e.g., "Authorization", "X-API-Key")
-        #[arg(short, long)]
+        #[arg(long)]
         header: String,
         /// Authentication value (e.g., "Bearer token123")
         #[arg(short, long)]

@@ -21,6 +21,10 @@ mod state_history;
 pub mod task_batch;
 pub mod agent_skills;
 mod auth; // Add authentication module
+pub mod errors; // Add error handling module
+pub mod error_handling; // Add specialized error handling module with new functions
+
+use errors::{ClientError, A2aError};
 
 /// A2A Client for interacting with A2A-compatible servers
 pub struct A2aClient {
@@ -67,7 +71,7 @@ impl A2aClient {
         &mut self, 
         method: &str, 
         params: Value
-    ) -> Result<T, Box<dyn Error>> {
+    ) -> Result<T, ClientError> {
         let request = json!({
             "jsonrpc": "2.0",
             "id": self.next_request_id(),
@@ -85,7 +89,7 @@ impl A2aClient {
         let response = http_request.send().await?;
         
         if !response.status().is_success() {
-            return Err(format!("Request failed with status: {}", response.status()).into());
+            return Err(ClientError::HttpError(format!("Request failed with status: {}", response.status())));
         }
         
         // Parse the response as a generic JSON-RPC response
@@ -95,7 +99,10 @@ impl A2aClient {
         if let Some(error) = json_response.get("error") {
             let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
             let message = error.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
-            return Err(format!("JSON-RPC error: {} (code: {})", message, code).into());
+            let data = error.get("data").cloned();
+            
+            // Create a proper A2A error
+            return Err(ClientError::A2aError(A2aError::new(code, message, data)));
         }
         
         // Extract the result
@@ -103,15 +110,15 @@ impl A2aClient {
             // Parse the result into the expected type
             match serde_json::from_value::<T>(result.clone()) {
                 Ok(typed_result) => Ok(typed_result),
-                Err(e) => Err(format!("Failed to parse result: {}", e).into()),
+                Err(e) => Err(ClientError::JsonError(format!("Failed to parse result: {}", e))),
             }
         } else {
-            Err("Invalid JSON-RPC response: missing 'result' field".into())
+            Err(ClientError::Other("Invalid JSON-RPC response: missing 'result' field".to_string()))
         }
     }
     
     /// Get agent card from .well-known endpoint
-    pub async fn get_agent_card(&self) -> Result<AgentCard, Box<dyn Error>> {
+    pub async fn get_agent_card(&self) -> Result<AgentCard, ClientError> {
         // Use the provided URL directly if it contains agent.json
         let url = if self.base_url.contains("agent.json") {
             self.base_url.to_string()
@@ -128,15 +135,17 @@ impl A2aClient {
         let response = request.send().await?;
         
         if response.status() != StatusCode::OK {
-            return Err(format!("Failed to get agent card: {}", response.status()).into());
+            return Err(ClientError::HttpError(format!("Failed to get agent card: {}", response.status())));
         }
         
-        let agent_card: AgentCard = response.json().await?;
-        Ok(agent_card)
+        match response.json().await {
+            Ok(agent_card) => Ok(agent_card),
+            Err(e) => Err(ClientError::JsonError(format!("Failed to parse agent card: {}", e)))
+        }
     }
     
     /// Send a task to the A2A server
-    pub async fn send_task(&mut self, text: &str) -> Result<Task, Box<dyn Error>> {
+    pub async fn send_task(&mut self, text: &str) -> Result<Task, ClientError> {
         // Create a simple text message
         let text_part = TextPart {
             type_: "text".to_string(),
@@ -161,11 +170,16 @@ impl A2aClient {
         };
         
         // Send request and return result
-        self.send_jsonrpc::<Task>("tasks/send", serde_json::to_value(params)?).await
+        let params_value = match serde_json::to_value(params) {
+            Ok(v) => v,
+            Err(e) => return Err(ClientError::JsonError(format!("Failed to serialize params: {}", e)))
+        };
+        
+        self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
     
     /// Get a task by ID
-    pub async fn get_task(&mut self, task_id: &str) -> Result<Task, Box<dyn Error>> {
+    pub async fn get_task(&mut self, task_id: &str) -> Result<Task, ClientError> {
         // Create request parameters using the proper TaskQueryParams type
         let params = crate::types::TaskQueryParams {
             id: task_id.to_string(),
@@ -173,6 +187,11 @@ impl A2aClient {
             metadata: None,
         };
         
-        self.send_jsonrpc::<Task>("tasks/get", serde_json::to_value(params)?).await
+        let params_value = match serde_json::to_value(params) {
+            Ok(v) => v,
+            Err(e) => return Err(ClientError::JsonError(format!("Failed to serialize params: {}", e)))
+        };
+        
+        self.send_jsonrpc::<Task>("tasks/get", params_value).await
     }
 }

@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::client::A2aClient;
+use crate::client::errors::ClientError;
+use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{TaskStatus, TaskState, Message, Task, Part, TextPart, Role};
 
 /// Represents a batch of tasks
@@ -86,8 +88,8 @@ pub struct BatchQueryParams {
 }
 
 impl A2aClient {
-    /// Create a new batch of tasks
-    pub async fn create_task_batch(&mut self, params: BatchCreateParams) -> Result<TaskBatch, Box<dyn Error>> {
+    /// Create a new batch of tasks (typed version)
+    pub async fn create_task_batch_typed(&mut self, params: BatchCreateParams) -> Result<TaskBatch, ClientError> {
         // Generate task IDs
         let mut task_ids = Vec::with_capacity(params.tasks.len());
         
@@ -114,15 +116,28 @@ impl A2aClient {
         self.send_jsonrpc::<TaskBatch>("batches/create", batch_params).await
     }
     
-    /// Get a batch by ID
-    pub async fn get_batch(&mut self, batch_id: &str, include_tasks: bool) -> Result<TaskBatch, Box<dyn Error>> {
+    /// Create a new batch of tasks (backward compatible version)
+    pub async fn create_task_batch(&mut self, params: BatchCreateParams) -> Result<TaskBatch, Box<dyn Error>> {
+        self.create_task_batch_typed(params).await.into_box_error()
+    }
+    
+    /// Get a batch by ID (typed version)
+    pub async fn get_batch_typed(&mut self, batch_id: &str, include_tasks: bool) -> Result<TaskBatch, ClientError> {
         let params = BatchQueryParams {
             id: batch_id.to_string(),
             include_tasks: Some(include_tasks),
             include_history: None,
         };
         
-        self.send_jsonrpc::<TaskBatch>("batches/get", serde_json::to_value(params)?).await
+        let params_value = serde_json::to_value(params)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize params: {}", e)))?;
+            
+        self.send_jsonrpc::<TaskBatch>("batches/get", params_value).await
+    }
+    
+    /// Get a batch by ID (backward compatible version)
+    pub async fn get_batch(&mut self, batch_id: &str, include_tasks: bool) -> Result<TaskBatch, Box<dyn Error>> {
+        self.get_batch_typed(batch_id, include_tasks).await.into_box_error()
     }
     
     /// Get batch status summary

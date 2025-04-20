@@ -1,10 +1,12 @@
 use crate::client::A2aClient;
 use std::error::Error;
 use crate::types::TaskIdParams;
+use crate::client::errors::ClientError;
+use crate::client::error_handling::ErrorCompatibility;
 
 impl A2aClient {
-    /// Cancel a task by ID
-    pub async fn cancel_task(&mut self, task_id: &str) -> Result<String, Box<dyn Error>> {
+    /// Cancel a task by ID using the new error handling
+    pub async fn cancel_task_typed(&mut self, task_id: &str) -> Result<String, ClientError> {
         // Create request parameters using the proper TaskIdParams type
         let params = TaskIdParams {
             id: task_id.to_string(),
@@ -12,13 +14,22 @@ impl A2aClient {
         };
         
         // Send request and return result
-        let response: serde_json::Value = self.send_jsonrpc("tasks/cancel", serde_json::to_value(params)?).await?;
+        let params_value = serde_json::to_value(params)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize params: {}", e)))?;
+            
+        let response: serde_json::Value = self.send_jsonrpc("tasks/cancel", params_value).await?;
         
         // Extract the task ID from the response
         match response.get("id").and_then(|id| id.as_str()) {
             Some(id) => Ok(id.to_string()),
-            None => Err("Invalid response: missing task ID".into()),
+            None => Err(ClientError::Other("Invalid response: missing task ID".to_string())),
         }
+    }
+    
+    /// Cancel a task by ID (legacy version with Box<dyn Error>)
+    pub async fn cancel_task(&mut self, task_id: &str) -> Result<String, Box<dyn Error>> {
+        // Use the new typed version and convert the result
+        self.cancel_task_typed(task_id).await.into_box_error()
     }
 }
 
