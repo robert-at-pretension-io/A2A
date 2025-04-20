@@ -283,7 +283,9 @@ fn derive_batch_status(state_counts: &HashMap<TaskState, usize>) -> BatchStatus 
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    
+    use mockito::Server; // Add mockito import
+    use tokio::test; // Add tokio import
+
     #[test]
     fn test_derive_batch_status() {
         // Test case 1: All tasks completed
