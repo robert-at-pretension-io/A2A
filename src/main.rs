@@ -3,12 +3,22 @@ mod property_tests;
 mod mock_server;
 mod fuzzer;
 mod types;
+mod validator;
+mod property_tests;
+mod mock_server;
+mod fuzzer;
+mod types;
 mod client;
+mod schema_utils; // Add this line
 #[cfg(test)]
 mod client_tests;
 
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
+use std::fs; // Add this
+use std::io::{self, BufRead, Write}; // Add this
+use std::path::Path; // Add this
+use std::process::Command; // Keep this for now
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -1109,6 +1119,80 @@ fn main() {
                     });
                 }
             }
+        },
+        Commands::Config { command } => {
+            match command {
+                ConfigCommands::SetSchemaVersion { version } => {
+                    match set_active_schema_version(version) {
+                        Ok(_) => println!("✅ Successfully set active schema version to '{}' in a2a_schema.config", version),
+                        Err(e) => {
+                            eprintln!("❌ Error setting schema version: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                },
+                ConfigCommands::CheckSchema => {
+                    println!("🔎 Checking remote schema...");
+                    match schema_utils::check_and_download_remote_schema() {
+                        Ok(schema_utils::SchemaCheckResult::NewVersionSaved(path)) => {
+                             println!("\n======================================================================");
+                             println!("🚀 A new version of the A2A schema was detected and saved to:");
+                             println!("   {}", path);
+                             println!("👉 To use this new version, update 'a2a_schema.config' and run 'cargo build'.");
+                             println!("======================================================================\n");
+                        },
+                        Ok(schema_utils::SchemaCheckResult::NoChange) => {
+                            println!("✅ Remote schema matches the active local version. No changes needed.");
+                        },
+                        Err(e) => {
+                            eprintln!("❌ Error checking remote schema: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+/// Reads a2a_schema.config, updates the active_version, and writes it back.
+fn set_active_schema_version(new_version: &str) -> io::Result<()> {
+    let config_path = Path::new("a2a_schema.config");
+    let mut new_lines = Vec::new();
+    let mut found = false;
+
+    // Read the existing file line by line
+    if config_path.exists() {
+        let file = fs::File::open(&config_path)?;
+        let reader = io::BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().starts_with("active_version") {
+                // Replace the version part of the line
+                new_lines.push(format!("active_version = \"{}\"", new_version));
+                found = true;
+            } else {
+                // Keep other lines as they are
+                new_lines.push(line);
+            }
+        }
+    }
+
+    // If the active_version line wasn't found, add it
+    if !found {
+        new_lines.push(format!("active_version = \"{}\"", new_version));
+        // Add a comment if the file was empty or didn't have the line
+        if new_lines.len() == 1 {
+             new_lines.insert(0, "# Specifies the schema version to use for generating src/types.rs".to_string());
+        }
+    }
+
+    // Write the modified content back to the file
+    let mut file = fs::File::create(&config_path)?;
+    for line in new_lines {
+        writeln!(file, "{}", line)?;
+    }
+
+    Ok(())
 }
