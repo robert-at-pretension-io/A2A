@@ -173,7 +173,13 @@ To test your server's compliance with the A2A protocol, you can use our pre-buil
 
 ### Using Pre-built Binaries
 
-Download the appropriate binary for your platform from our [releases page](https://github.com/your-org/a2a-test-suite/releases).
+Download the appropriate binary for your platform from our [releases page](https://github.com/robert-at-pretension-io/A2A/releases).
+
+#### Latest Release
+
+- **Version**: v1.0.0 (Released April 20, 2025)
+- **Changes**: First stable release with complete A2A protocol implementation
+- **Binaries**: Available for Windows, macOS, and Linux
 
 #### Running Tests
 

@@ -76,6 +76,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
           body: |
             A2A Test Suite - Release ${{ github.ref_name }}
             
@@ -102,11 +103,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
           
   upload-release:
-    name: Upload Release Asset
+    name: Upload Release Asset (${{ matrix.asset_name }})
     needs: create-release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
+      fail-fast: false
       matrix:
         include:
           - asset_name: a2a-test-suite-linux-amd64
@@ -123,14 +125,22 @@ jobs:
     
     steps:
       - name: Download artifact
-        uses: actions/download-artifact@v4  # Updated to v4
+        uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
+          
+      - name: Debug
+        run: |
+          ls -la
+          echo "Working directory: $(pwd)"
+          echo "Asset name: ${{ matrix.asset_name }}"
+          echo "Asset path: ${{ matrix.asset_path }}"
           
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: ${{ matrix.asset_path }}
+          files: ./${{ matrix.asset_path }}
+          tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
