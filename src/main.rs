@@ -70,6 +70,12 @@ enum ClientCommands {
         /// Message to send
         #[arg(short, long)]
         message: String,
+        /// Optional authentication header name (e.g., "Authorization", "X-API-Key")
+        #[arg(long)]
+        header: Option<String>,
+        /// Optional authentication value (e.g., "Bearer token123")
+        #[arg(long)]
+        value: Option<String>,
     },
     /// Get a task from an A2A server
     GetTask {
@@ -79,6 +85,12 @@ enum ClientCommands {
         /// Task ID
         #[arg(short, long)]
         id: String,
+        /// Optional authentication header name (e.g., "Authorization", "X-API-Key")
+        #[arg(long)]
+        header: Option<String>,
+        /// Optional authentication value (e.g., "Bearer token123")
+        #[arg(long)]
+        value: Option<String>,
     },
     /// Cancel a task
     CancelTask {
@@ -88,6 +100,12 @@ enum ClientCommands {
         /// Task ID
         #[arg(short, long)]
         id: String,
+        /// Optional authentication header name (e.g., "Authorization", "X-API-Key")
+        #[arg(long)]
+        header: Option<String>,
+        /// Optional authentication value (e.g., "Bearer token123")
+        #[arg(long)]
+        value: Option<String>,
     },
     /// Send a task and subscribe to streaming updates 
     StreamTask {
@@ -245,6 +263,18 @@ enum ClientCommands {
         #[arg(short, long)]
         task_id: Option<String>,
     },
+    /// Validate authentication with the server
+    ValidateAuth {
+        /// URL of the A2A server
+        #[arg(short, long)]
+        url: String,
+        /// Authentication header name (e.g., "Authorization", "X-API-Key")
+        #[arg(short, long)]
+        header: String,
+        /// Authentication value (e.g., "Bearer token123")
+        #[arg(short, long)]
+        value: String,
+    },
     /// Create a batch of tasks
     CreateBatch {
         /// URL of the A2A server
@@ -334,10 +364,17 @@ fn main() {
                         }
                     });
                 }
-                ClientCommands::SendTask { url, message } => {
+                ClientCommands::SendTask { url, message, header, value } => {
                     println!("Sending task to: {}", url);
                     rt.block_on(async {
-                        let mut client = client::A2aClient::new(url);
+                        // Create client with authentication if provided
+                        let mut client = if let (Some(h), Some(v)) = (header, value) {
+                            println!("Using authentication with header: {}", h);
+                            client::A2aClient::new(url).with_auth(&h, &v)
+                        } else {
+                            client::A2aClient::new(url)
+                        };
+                        
                         match client.send_task(message).await {
                             Ok(task) => println!("Task created: {}", serde_json::to_string_pretty(&task).unwrap()),
                             Err(e) => {
@@ -347,10 +384,17 @@ fn main() {
                         }
                     });
                 }
-                ClientCommands::GetTask { url, id } => {
+                ClientCommands::GetTask { url, id, header, value } => {
                     println!("Getting task from: {}", url);
                     rt.block_on(async {
-                        let mut client = client::A2aClient::new(url);
+                        // Create client with authentication if provided
+                        let mut client = if let (Some(h), Some(v)) = (header, value) {
+                            println!("Using authentication with header: {}", h);
+                            client::A2aClient::new(url).with_auth(&h, &v)
+                        } else {
+                            client::A2aClient::new(url)
+                        };
+                        
                         match client.get_task(id).await {
                             Ok(task) => println!("Task: {}", serde_json::to_string_pretty(&task).unwrap()),
                             Err(e) => {
@@ -360,10 +404,17 @@ fn main() {
                         }
                     });
                 },
-                ClientCommands::CancelTask { url, id } => {
+                ClientCommands::CancelTask { url, id, header, value } => {
                     println!("Cancelling task: {}", id);
                     rt.block_on(async {
-                        let mut client = client::A2aClient::new(url);
+                        // Create client with authentication if provided
+                        let mut client = if let (Some(h), Some(v)) = (header, value) {
+                            println!("Using authentication with header: {}", h);
+                            client::A2aClient::new(url).with_auth(&h, &v)
+                        } else {
+                            client::A2aClient::new(url)
+                        };
+                        
                         match client.cancel_task(id).await {
                             Ok(task_id) => println!("Successfully cancelled task: {}", task_id),
                             Err(e) => {
@@ -797,6 +848,28 @@ fn main() {
                             },
                             Err(e) => {
                                 eprintln!("Error listing files: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    });
+                },
+                ClientCommands::ValidateAuth { url, header, value } => {
+                    println!("Validating authentication with server: {}", url);
+                    rt.block_on(async {
+                        let mut client = client::A2aClient::new(url)
+                            .with_auth(&header, &value);
+                        
+                        match client.validate_auth().await {
+                            Ok(valid) => {
+                                if valid {
+                                    println!("✅ Authentication validated successfully!");
+                                } else {
+                                    println!("❌ Authentication rejected by server.");
+                                    std::process::exit(1);
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("❌ Error validating authentication: {}", e);
                                 std::process::exit(1);
                             }
                         }

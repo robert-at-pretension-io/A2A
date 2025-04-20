@@ -136,15 +136,15 @@ impl crate::client::A2aClient {
 mod tests {
     use super::*;
     use crate::client::A2aClient;
-    use crate::mock_server;
+    use crate::mock_server::{self, start_mock_server_with_auth};
     use std::thread;
     
     #[tokio::test]
     async fn test_list_skills() -> Result<(), Box<dyn Error>> {
-        // Start mock server in a separate thread
+        // Start mock server in a separate thread (without authentication)
         let port = 8081;
         thread::spawn(move || {
-            mock_server::start_mock_server(port);
+            start_mock_server_with_auth(port, false);
         });
         
         // Create client
@@ -166,10 +166,10 @@ mod tests {
     
     #[tokio::test]
     async fn test_get_skill_details() -> Result<(), Box<dyn Error>> {
-        // Start mock server in a separate thread
+        // Start mock server in a separate thread (without authentication)
         let port = 8082;
         thread::spawn(move || {
-            mock_server::start_mock_server(port);
+            start_mock_server_with_auth(port, false);
         });
         
         // Create client
@@ -189,10 +189,10 @@ mod tests {
     
     #[tokio::test]
     async fn test_invoke_skill() -> Result<(), Box<dyn Error>> {
-        // Start mock server in a separate thread
+        // Start mock server in a separate thread (without authentication)
         let port = 8083;
         thread::spawn(move || {
-            mock_server::start_mock_server(port);
+            start_mock_server_with_auth(port, false);
         });
         
         // Create client

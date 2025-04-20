@@ -11,6 +11,27 @@ lazy_static::lazy_static! {
     };
 }
 
+/// Validate a JSON value directly 
+pub fn validate_json(json: &Value) -> Result<(), String> {
+    // Validate the JSON
+    let validation_result = A2A_SCHEMA.validate(json);
+    
+    match validation_result {
+        Ok(_) => {
+            Ok(())
+        }
+        Err(errors) => {
+            // Collect error messages into a single string
+            let error_messages = errors
+                .map(|e| format!("  - {}", e))
+                .collect::<Vec<_>>()
+                .join("\n");
+            
+            Err(format!("Validation failed with errors: {}", error_messages))
+        }
+    }
+}
+
 pub fn validate_file(file_path: &str) -> Result<(), String> {
     let file_content = fs::read_to_string(file_path)
         .expect("Failed to read file");
@@ -19,25 +40,17 @@ pub fn validate_file(file_path: &str) -> Result<(), String> {
         .expect("Invalid JSON");
     
     // Validate the JSON
-    let validation_result = A2A_SCHEMA.validate(&json);
+    let result = validate_json(&json);
     
-    match validation_result {
+    match &result {
         Ok(_) => {
             println!("✅ Validation passed!");
-            Ok(())
         }
-        Err(errors) => {
+        Err(error_message) => {
             println!("❌ Validation failed!");
-            
-            // Collect error messages into a single string
-            let error_messages = errors
-                .map(|e| format!("  - {}", e))
-                .collect::<Vec<_>>()
-                .join("\n");
-            
-            println!("{}", error_messages);
-            
-            Err(format!("Validation failed with {} errors", error_messages.lines().count()))
+            println!("{}", error_message);
         }
     }
+    
+    result
 }

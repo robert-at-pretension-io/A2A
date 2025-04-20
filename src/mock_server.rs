@@ -238,50 +238,116 @@ fn create_file_storage() -> FileStorage {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-// Mock handlers for A2A endpoints
+// Create agent card for the mock server
+fn create_agent_card() -> AgentCard {
+    create_agent_card_with_auth(true)
+}
+
+// Create agent card with configurable authentication requirement
+fn create_agent_card_with_auth(require_auth: bool) -> AgentCard {
+    let skill = AgentSkill {
+        id: "test-skill-1".to_string(),
+        name: "Echo".to_string(),
+        description: Some("Echoes back any message sent".to_string()),
+        tags: None,
+        examples: None,
+        input_modes: None,
+        output_modes: None,
+    };
+    
+    let capabilities = AgentCapabilities {
+        streaming: true,
+        push_notifications: true,
+        state_transition_history: true,
+    };
+    
+    // Configure authentication based on the require_auth parameter
+    let authentication = if require_auth {
+        Some(AgentAuthentication {
+            schemes: vec!["Bearer".to_string(), "ApiKey".to_string()],
+            credentials: None,
+        })
+    } else {
+        None
+    };
+    
+    AgentCard {
+        name: "Mock A2A Server".to_string(),
+        description: Some("A mock server for testing A2A protocol clients".to_string()),
+        url: "http://localhost:8080".to_string(),
+        provider: None,
+        version: "0.1.0".to_string(),
+        documentation_url: None,
+        capabilities,
+        authentication,
+        default_input_modes: vec!["text/plain".to_string()],
+        default_output_modes: vec!["text/plain".to_string()],
+        skills: vec![skill],
+    }
+}
+
+// Redirect to the new function with auth parameter defaulting to true
 async fn handle_a2a_request(task_storage: TaskStorage, batch_storage: BatchStorage, file_storage: FileStorage, req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    handle_a2a_request_with_auth(task_storage, batch_storage, file_storage, req, true).await
+}
+
+// Mock handlers for A2A endpoints with optional authentication
+async fn handle_a2a_request_with_auth(task_storage: TaskStorage, batch_storage: BatchStorage, file_storage: FileStorage, req: Request<Body>, require_auth: bool) -> Result<Response<Body>, Infallible> {
     // Check if this is a request for agent card
     // Check for Accept header to see if client wants SSE
     let accept_header = req.headers().get("Accept")
                        .and_then(|h| h.to_str().ok())
                        .unwrap_or("");
+    
+    // First get the agent card to check required auth
+    let agent_card = create_agent_card_with_auth(require_auth);
+    
+    // Check if endpoint requires authentication
+    if req.uri().path() != "/.well-known/agent.json" && agent_card.authentication.is_some() {
+        // Get the supported auth schemes
+        let auth_schemes = &agent_card.authentication.as_ref().unwrap().schemes;
+        
+        // Skip auth check if schemes includes "None"
+        if !auth_schemes.contains(&"None".to_string()) {
+            let mut auth_valid = false;
+            
+            // Check for bearer auth
+            if auth_schemes.contains(&"Bearer".to_string()) {
+                let auth_header = req.headers().get("Authorization");
+                if auth_header.is_some() && auth_header.unwrap().to_str().unwrap_or("").starts_with("Bearer ") {
+                    auth_valid = true;
+                }
+            }
+            
+            // Check for API key auth
+            if !auth_valid && auth_schemes.contains(&"ApiKey".to_string()) {
+                let api_key = req.headers().get("X-API-Key");
+                if api_key.is_some() {
+                    auth_valid = true;
+                }
+            }
+            
+            // If no valid auth was found, return unauthorized error
+            if !auth_valid {
+                return Ok(Response::builder()
+                    .status(401)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({
+                        "jsonrpc": "2.0",
+                        "id": null,
+                        "error": {
+                            "code": -32001,
+                            "message": "Unauthorized request"
+                        }
+                    }).to_string()))
+                    .unwrap());
+            }
+        }
+    }
                        
     if req.uri().path() == "/.well-known/agent.json" {
-        // Create the agent card using the proper types
-        let skill = AgentSkill {
-            id: "test-skill-1".to_string(),
-            name: "Echo".to_string(),
-            description: Some("Echoes back any message sent".to_string()),
-            tags: None,
-            examples: None,
-            input_modes: None,
-            output_modes: None,
-        };
-        
-        let capabilities = AgentCapabilities {
-            streaming: true,
-            push_notifications: true,
-            state_transition_history: true,
-        };
-        
-        let authentication = AgentAuthentication {
-            schemes: vec!["None".to_string()],
-            credentials: None,
-        };
-        
-        let agent_card = AgentCard {
-            name: "Mock A2A Server".to_string(),
-            description: Some("A mock server for testing A2A protocol clients".to_string()),
-            url: "http://localhost:8080".to_string(),
-            provider: None,
-            version: "0.1.0".to_string(),
-            documentation_url: None,
-            capabilities,
-            authentication: Some(authentication),
-            default_input_modes: vec!["text/plain".to_string()],
-            default_output_modes: vec!["text/plain".to_string()],
-            skills: vec![skill],
-        };
+        // Get the agent card
+        let agent_card = create_agent_card();
         
         let json = serde_json::to_string(&agent_card).unwrap();
         return Ok(Response::new(Body::from(json)));
@@ -317,6 +383,19 @@ async fn handle_a2a_request(task_storage: TaskStorage, batch_storage: BatchStora
     // Check method to determine response
     if let Some(method) = request.get("method").and_then(|m| m.as_str()) {
         match method {
+            // Special auth validation endpoint
+            "auth/validate" => {
+                let response = json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id").unwrap_or(&Value::Null),
+                    "result": {
+                        "valid": true
+                    }
+                });
+                
+                let json = serde_json::to_string(&response).unwrap();
+                return Ok(Response::new(Body::from(json)));
+            },
             "tasks/send" => {
                 // Generate a new task ID or extract from params if provided
                 let task_id = request.get("params")
@@ -1718,7 +1797,14 @@ fn create_response_artifacts(message_opt: &Option<Value>) -> Vec<Artifact> {
     artifacts
 }
 
+// Start the mock server with authentication required
 pub fn start_mock_server(port: u16) {
+    // Default to requiring authentication
+    start_mock_server_with_auth(port, true);
+}
+
+// Start the mock server with configurable authentication requirements
+pub fn start_mock_server_with_auth(port: u16, require_auth: bool) {
     let rt = Runtime::new().unwrap();
     
     rt.block_on(async {
@@ -1738,11 +1824,15 @@ pub fn start_mock_server(port: u16) {
         let bs = batch_storage.clone();
         let fs = file_storage.clone();
         
+        // Set whether authentication is required
+        let auth_required = require_auth;
+        
         let make_svc = make_service_fn(move |_conn| {
             // Clone storages for each service function
             let ts_clone = ts.clone();
             let bs_clone = bs.clone();
             let fs_clone = fs.clone();
+            let auth_req = auth_required;
             
             async move {
                 Ok::<_, Infallible>(service_fn(move |req| {
@@ -1750,7 +1840,7 @@ pub fn start_mock_server(port: u16) {
                     let ts_req = ts_clone.clone();
                     let bs_req = bs_clone.clone();
                     let fs_req = fs_clone.clone();
-                    handle_a2a_request(ts_req, bs_req, fs_req, req)
+                    handle_a2a_request_with_auth(ts_req, bs_req, fs_req, req, auth_req)
                 }))
             }
         });

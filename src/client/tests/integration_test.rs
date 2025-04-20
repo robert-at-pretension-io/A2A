@@ -1,5 +1,5 @@
 use crate::client::A2aClient;
-use crate::mock_server::start_mock_server;
+use crate::mock_server::{start_mock_server, start_mock_server_with_auth};
 use crate::types::{TaskState, AgentSkill};
 use std::error::Error;
 use std::thread;
@@ -12,12 +12,13 @@ use std::io::Write;
 // - File operations
 // - Data operations 
 // - Artifact handling
+// - Authentication
 #[tokio::test]
 async fn test_file_data_artifact_features() -> Result<(), Box<dyn Error>> {
-    // Start mock server in a separate thread
+    // Start mock server in a separate thread (without requiring auth)
     let port = 8088;
     thread::spawn(move || {
-        start_mock_server(port);
+        start_mock_server_with_auth(port, false);
     });
     
     // Wait for server to start
@@ -127,10 +128,10 @@ async fn test_file_data_artifact_features() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 async fn test_state_transition_history() -> Result<(), Box<dyn Error>> {
-    // Start mock server in a separate thread
+    // Start mock server in a separate thread (without requiring auth)
     let port = 8089;
     thread::spawn(move || {
-        start_mock_server(port);
+        start_mock_server_with_auth(port, false);
     });
     
     // Wait for server to start
@@ -210,10 +211,10 @@ async fn test_state_transition_history() -> Result<(), Box<dyn Error>> {
 async fn test_task_batch_operations() -> Result<(), Box<dyn Error>> {
     use crate::client::task_batch::{BatchCreateParams, BatchStatus};
     
-    // Start mock server in a separate thread
+    // Start mock server in a separate thread (without requiring auth)
     let port = 8090;
     thread::spawn(move || {
-        start_mock_server(port);
+        start_mock_server_with_auth(port, false);
     });
     
     // Wait for server to start
@@ -273,10 +274,10 @@ async fn test_task_batch_operations() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 async fn test_agent_skills_operations() -> Result<(), Box<dyn Error>> {
-    // Start mock server in a separate thread
+    // Start mock server in a separate thread (without requiring auth)
     let port = 8091;
     thread::spawn(move || {
-        start_mock_server(port);
+        start_mock_server_with_auth(port, false);
     });
     
     // Wait for server to start
@@ -362,6 +363,145 @@ async fn test_agent_skills_operations() -> Result<(), Box<dyn Error>> {
     let has_test_skill = agent_card.skills.iter()
         .any(|skill| skill.id == first_skill_id);
     assert!(has_test_skill, "Agent card should contain our test skill");
+    
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_auth_integration_flow() -> Result<(), Box<dyn Error>> {
+    // Start mock server in a separate thread
+    let port = 8092;
+    thread::spawn(move || {
+        start_mock_server(port);
+    });
+    
+    // Wait for server to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    
+    println!("Testing authentication integration flow...");
+    
+    // Test 1: Get agent card to check auth requirements
+    let base_url = format!("http://localhost:{}", port);
+    let client_no_auth = A2aClient::new(&base_url);
+    let agent_card = client_no_auth.get_agent_card().await?;
+    
+    // Verify agent card has auth requirements
+    assert!(agent_card.authentication.is_some(), "Agent card should have authentication field");
+    let auth_schemes = &agent_card.authentication.unwrap().schemes;
+    println!("Agent requires authentication schemes: {:?}", auth_schemes);
+    
+    // Test 2: Attempt operation without auth (should fail)
+    let mut client_no_auth = A2aClient::new(&base_url);
+    let task_id = "auth-test-task";
+    let get_result = client_no_auth.get_task(task_id).await;
+    
+    // Should be an error because we don't have authentication
+    assert!(get_result.is_err(), "Request without auth should fail");
+    println!("Request without auth failed as expected: {}", get_result.unwrap_err());
+    
+    // Test 3: Create client with Bearer token auth
+    let auth_header = "Authorization";
+    let auth_value = "Bearer test-token-123";
+    let mut client_with_bearer = A2aClient::new(&base_url)
+        .with_auth(auth_header, auth_value);
+    
+    // Validate auth works
+    let is_valid = client_with_bearer.validate_auth().await?;
+    assert!(is_valid, "Auth validation should succeed with valid Bearer token");
+    
+    // Perform operations with auth
+    let task = client_with_bearer.send_task("Task with auth").await?;
+    println!("Successfully created task with auth: {}", task.id);
+    
+    let task_details = client_with_bearer.get_task(&task.id).await?;
+    println!("Successfully retrieved task with auth: {} (state: {})", 
+             task_details.id, task_details.status.state);
+    
+    // Test 4: Create client with API Key auth
+    let api_key_header = "X-API-Key";
+    let api_key_value = "test-api-key-123";
+    let mut client_with_apikey = A2aClient::new(&base_url)
+        .with_auth(api_key_header, api_key_value);
+    
+    // Validate API Key auth works
+    let is_valid = client_with_apikey.validate_auth().await?;
+    assert!(is_valid, "Auth validation should succeed with valid API Key");
+    
+    // Perform operations with API Key auth
+    let task = client_with_apikey.send_task("Task with API Key auth").await?;
+    println!("Successfully created task with API Key auth: {}", task.id);
+    
+    // Test 5: Test canceling a task with authentication
+    let canceled_task_id = client_with_bearer.cancel_task(&task.id).await?;
+    println!("Successfully canceled task with auth: {}", canceled_task_id);
+    
+    // Get the task to verify it's canceled
+    let canceled_task = client_with_bearer.get_task(&canceled_task_id).await?;
+    assert_eq!(canceled_task.status.state, TaskState::Canceled, 
+               "Task should be canceled");
+    
+    // Test 6: Verify auth with other operations (batch, streaming, etc.)
+    // Create a batch of tasks
+    use crate::client::task_batch::BatchCreateParams;
+    
+    let batch_params = BatchCreateParams {
+        id: Some("auth-test-batch".to_string()),
+        name: Some("Auth Test Batch".to_string()),
+        tasks: vec![
+            "Auth test task 1".to_string(),
+            "Auth test task 2".to_string(),
+        ],
+        metadata: None,
+    };
+    
+    // Create the batch with auth
+    let batch = client_with_bearer.create_task_batch(batch_params).await?;
+    println!("Created batch with auth: {} with {} tasks", 
+             batch.id, batch.task_ids.len());
+    
+    // Get batch status with auth
+    let status = client_with_bearer.get_batch_status(&batch.id).await?;
+    println!("Successfully retrieved batch status with auth: {:?}", 
+             status.overall_status);
+    
+    // Test 7: Streaming with auth
+    println!("Testing streaming with auth...");
+    let mut stream = client_with_bearer
+        .send_task_subscribe("Test streaming with authentication").await?;
+    
+    println!("Stream created with auth, waiting for updates...");
+    use futures_util::StreamExt;
+    use crate::client::streaming::StreamingResponse;
+    
+    // Collect a few streaming updates
+    let mut updates_count = 0;
+    while let Some(update) = stream.next().await {
+        match update {
+            Ok(StreamingResponse::Artifact(artifact)) => {
+                println!("Received artifact with auth: index {}", artifact.index);
+                updates_count += 1;
+            },
+            Ok(StreamingResponse::Status(task)) => {
+                println!("Status update with auth: {}", task.status.state);
+                updates_count += 1;
+            },
+            Ok(StreamingResponse::Final(task)) => {
+                println!("Final status with auth: {}", task.status.state);
+                break;
+            },
+            Err(e) => {
+                println!("Stream error: {}", e);
+                break;
+            }
+        }
+        
+        // Only read a few updates to keep test fast
+        if updates_count >= 3 {
+            break;
+        }
+    }
+    
+    assert!(updates_count > 0, "Should have received at least one streaming update with auth");
     
     Ok(())
 }

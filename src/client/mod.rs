@@ -20,6 +20,7 @@ mod artifacts;
 mod state_history;
 pub mod task_batch;
 pub mod agent_skills;
+mod auth; // Add authentication module
 
 /// A2A Client for interacting with A2A-compatible servers
 pub struct A2aClient {

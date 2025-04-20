@@ -21,6 +21,7 @@ dependencies = [
  "mime_guess",
  "mockito",
  "proptest",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",

@@ -37,12 +37,13 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 - Fuzzing: `cargo run --quiet -- fuzz --target [target] --time [seconds]`
 - Client commands:
   - Get agent card: `cargo run --quiet -- client get-agent-card --url [url]`
-  - Send task: `cargo run --quiet -- client send-task --url [url] --message [text]`
+  - Send task: `cargo run --quiet -- client send-task --url [url] --message [text] [--header "header_name"] [--value "auth_value"]`
   - Send task with file: `cargo run --quiet -- client send-task-with-file --url [url] --message [text] --file-path [path]`
   - Send task with data: `cargo run --quiet -- client send-task-with-data --url [url] --message [text] --data [json]`
-  - Get task: `cargo run --quiet -- client get-task --url [url] --id [task_id]`
+  - Get task: `cargo run --quiet -- client get-task --url [url] --id [task_id] [--header "header_name"] [--value "auth_value"]`
   - Get artifacts: `cargo run --quiet -- client get-artifacts --url [url] --id [task_id] --output-dir [dir]`
-  - Cancel task: `cargo run --quiet -- client cancel-task --url [url] --id [task_id]`
+  - Cancel task: `cargo run --quiet -- client cancel-task --url [url] --id [task_id] [--header "header_name"] [--value "auth_value"]`
+  - Validate auth: `cargo run --quiet -- client validate-auth --url [url] --header "header_name" --value "auth_value"`
   - Stream task: `cargo run --quiet -- client stream-task --url [url] --message [text]` 
   - Resubscribe: `cargo run --quiet -- client resubscribe-task --url [url] --id [task_id]`
   - Set push notification: `cargo run --quiet -- client set-push-notification --url [url] --id [task_id] --webhook [url] --auth-scheme [scheme] --token [token]`
@@ -86,6 +87,7 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
   - **src/client/state_history.rs**: State transition history tracking and analysis
   - **src/client/task_batch.rs**: Batch operations for managing multiple tasks
   - **src/client/agent_skills.rs**: Agent skills discovery and invocation
+  - **src/client/auth.rs**: Authentication and authorization support
   - **src/client/tests/**: Client unit tests
 - **src/client_tests.rs**: Client integration tests
 - **start_server_and_test_client.sh**: Script for running integration tests

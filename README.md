@@ -37,28 +37,18 @@ This repository contains testing tools for the Agent-to-Agent (A2A) protocol, an
 
 5. **Enterprise Security**: Built on established security standards rather than reinventing authentication and authorization.
 
-## Future Possibilities
-
-* **Agent Marketplaces**: Specialized agent ecosystems where businesses offer their proprietary AI capabilities as services.
-
-* **Agent Orchestration Systems**: Meta-agents that dynamically discover and delegate to the most appropriate specialized agents for each task.
-
-* **Cross-Organization Collaboration**: Secure agent networks that span organizational boundaries for supply chain, customer service, and partnership workflows.
-
-* **Personal Agent Ecosystems**: Individual users with personalized networks of agents that know their preferences and can delegate tasks appropriately.
-
-## Getting Started
-
-This repository provides tools to test A2A protocol implementations, ensuring compatibility across different agent systems. By ensuring your agents conform to the A2A standard, you'll be positioning them to participate in the emerging ecosystem of collaborative AI.
-
-### Test Suite Components
+## Test Suite Components
 
 - **Validator**: Validate A2A messages against the JSON schema
 - **Property Tests**: Generate and test random A2A messages
 - **Mock Server**: A reference implementation for testing clients
 - **Client Implementation**: A complete A2A client for interacting with servers
-- **Fuzzer**: Test robustness against malformed inputs
+- **Fuzzer**: Test robustness against malformed inputs with intelligent A2A structure generation
 - **Integration Tests**: End-to-end testing of client-server interactions
+
+## Getting Started
+
+This repository provides tools to test A2A protocol implementations, ensuring compatibility across different agent systems. By ensuring your agents conform to the A2A standard, you'll be positioning them to participate in the emerging ecosystem of collaborative AI.
 
 ### Client Usage
 
@@ -68,20 +58,24 @@ The A2A client implementation can be used to interact with any A2A-compatible se
 # Get an agent's card (capabilities, skills, etc.)
 cargo run -- client get-agent-card --url "http://localhost:8080"
 
-# Send a task to an agent
-cargo run -- client send-task --url "http://localhost:8080" --message "Hello, agent!"
+# Send a task to an agent (with authentication)
+cargo run -- client send-task --url "http://localhost:8080" --message "Hello, agent!" --header "Authorization" --value "Bearer your-token"
 
 # Retrieve a task's status
-cargo run -- client get-task --url "http://localhost:8080" --id "task-123"
+cargo run -- client get-task --url "http://localhost:8080" --id "task-123" --header "Authorization" --value "Bearer your-token"
 
 # Cancel a task
-cargo run -- client cancel-task --url "http://localhost:8080" --id "task-123"
+cargo run -- client cancel-task --url "http://localhost:8080" --id "task-123" --header "Authorization" --value "Bearer your-token"
+
+# Validate authentication with the server
+cargo run -- client validate-auth --url "http://localhost:8080" --header "Authorization" --value "Bearer your-token"
 ```
 
-#### Advanced Features
+### Advanced Features
 
-Our client supports rich interactions beyond basic text messaging:
+Our client implements the complete A2A protocol with support for rich interactions:
 
+* **Authentication**: Support for HTTP-based authentication using Bearer tokens, API keys, and other OpenAPI-compatible schemes
 * **File Operations**: Send tasks with file attachments either by path or bytes
 * **Structured Data**: Transmit JSON data structures alongside text
 * **Streaming**: Receive incremental updates via Server-Sent Events
@@ -93,15 +87,76 @@ Our client supports rich interactions beyond basic text messaging:
 
 For detailed documentation and examples of these advanced features, see [Client README](src/client/README.md).
 
-Run the full integration test suite:
+### Authentication
+
+The A2A protocol handles authentication at the HTTP level following the OpenAPI Authentication specification. Our implementation supports:
+
+* **Bearer Token Authentication**: Using the standard `Authorization` header
+* **API Key Authentication**: Using custom headers like `X-API-Key`
+* **Agent Card Auth Discovery**: Reading authentication requirements from the agent card
+* **Auth Validation**: Methods to validate authentication credentials
+
+Authentication can be applied to any client operation by specifying the appropriate header and value.
+
+```rust
+// In Rust code
+let mut client = A2aClient::new("https://example.com/a2a")
+    .with_auth("Authorization", "Bearer your-token-here");
+```
+
+The mock server also supports configurable authentication requirements for testing both authenticated and non-authenticated scenarios.
+
+### Running Integration Tests
+
+Run the full integration test suite (with authentication):
 
 ```bash
 ./start_server_and_test_client.sh
 ```
 
-### Comprehensive Testing Strategy
+## Implemented Features
 
-For a detailed approach to testing A2A server implementations, see our [Testing Plan](docs/testing_plan.md), which outlines a comprehensive framework for validating protocol compliance, performance, and security.
+The test suite now includes:
+
+1. **Core Protocol Implementation**:
+   - Complete message validation against A2A JSON schema
+   - Property-based testing for message correctness
+   - Full mock server implementation with all A2A endpoints
+
+2. **Client Library Features**:
+   - Basic task creation, retrieval, and cancellation
+   - File attachment handling and binary data operations
+   - Structured data support (JSON)
+   - Streaming task updates via Server-Sent Events
+   - Task artifacts management and processing
+   - Push notification configuration and management
+   - State transition history and metrics
+   - Task batch operations
+   - Agent skills discovery and invocation
+   - Authentication with multiple schemes
+
+3. **Testing Tools**:
+   - End-to-end integration tests
+   - Structured fuzzing for robustness testing:
+     - Schema validation fuzzing
+     - JSON-RPC request fuzzing
+     - Message parsing fuzzing
+   - Comprehensive test script for all features
+   - Mock server with configurable authentication
+
+## Future Possibilities
+
+* **Agent Marketplaces**: Specialized agent ecosystems where businesses offer their proprietary AI capabilities as services.
+
+* **Agent Orchestration Systems**: Meta-agents that dynamically discover and delegate to the most appropriate specialized agents for each task.
+
+* **Cross-Organization Collaboration**: Secure agent networks that span organizational boundaries for supply chain, customer service, and partnership workflows.
+
+* **Personal Agent Ecosystems**: Individual users with personalized networks of agents that know their preferences and can delegate tasks appropriately.
+
+## Comprehensive Testing Strategy
+
+For a detailed approach to testing A2A server implementations, see our [Testing Plan](testing_plan.md), which outlines a comprehensive framework for validating protocol compliance, performance, and security.
 
 ---
 
