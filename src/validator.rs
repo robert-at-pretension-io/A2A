@@ -73,39 +73,4 @@ pub fn validate_file(file_path: &str) -> Result<(), String> {
 
     result
 }
-            Ok(())
-        }
-        Err(errors) => {
-            // Collect error messages into a single string
-            let error_messages = errors
-                .map(|e| format!("  - {}", e))
-                .collect::<Vec<_>>()
-                .join("\n");
-            
-            Err(format!("Validation failed with errors: {}", error_messages))
-        }
-    }
-}
 
-pub fn validate_file(file_path: &str) -> Result<(), String> {
-    let file_content = fs::read_to_string(file_path)
-        .expect("Failed to read file");
-    
-    let json: Value = serde_json::from_str(&file_content)
-        .expect("Invalid JSON");
-    
-    // Validate the JSON
-    let result = validate_json(&json);
-    
-    match &result {
-        Ok(_) => {
-            println!("✅ Validation passed!");
-        }
-        Err(error_message) => {
-            println!("❌ Validation failed!");
-            println!("{}", error_message);
-        }
-    }
-    
-    result
-}

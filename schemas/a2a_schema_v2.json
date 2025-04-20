@@ -1,0 +1,2045 @@
+{
+  "$defs": {
+    "A2ARequest": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SendTaskRequest"
+        },
+        {
+          "$ref": "#/$defs/GetTaskRequest"
+        },
+        {
+          "$ref": "#/$defs/CancelTaskRequest"
+        },
+        {
+          "$ref": "#/$defs/SetTaskPushNotificationRequest"
+        },
+        {
+          "$ref": "#/$defs/GetTaskPushNotificationRequest"
+        },
+        {
+          "$ref": "#/$defs/TaskResubscriptionRequest"
+        }
+      ],
+      "title": "A2ARequest"
+    },
+    "AgentAuthentication": {
+      "properties": {
+        "credentials": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credentials"
+        },
+        "schemes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Schemes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schemes"
+      ],
+      "title": "AgentAuthentication",
+      "type": "object"
+    },
+    "AgentCapabilities": {
+      "properties": {
+        "pushNotifications": {
+          "default": false,
+          "title": "PushNotifications",
+          "type": "boolean"
+        },
+        "stateTransitionHistory": {
+          "default": false,
+          "title": "Statetransitionhistory",
+          "type": "boolean"
+        },
+        "streaming": {
+          "default": false,
+          "title": "Streaming",
+          "type": "boolean"
+        }
+      },
+      "title": "AgentCapabilities",
+      "type": "object"
+    },
+    "AgentCard": {
+      "properties": {
+        "authentication": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentAuthentication"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "capabilities": {
+          "$ref": "#/$defs/AgentCapabilities"
+        },
+        "defaultInputModes": {
+          "default": [
+            "text"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "Defaultinputmodes",
+          "type": "array"
+        },
+        "defaultOutputModes": {
+          "default": [
+            "text"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "Defaultoutputmodes",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "documentationUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Documentationurl"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentProvider"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/AgentSkill"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "url",
+        "version",
+        "capabilities",
+        "skills"
+      ],
+      "title": "AgentCard",
+      "type": "object"
+    },
+    "AgentProvider": {
+      "properties": {
+        "organization": {
+          "title": "Organization",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "organization"
+      ],
+      "title": "AgentProvider",
+      "type": "object"
+    },
+    "AgentSkill": {
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "examples": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Examples"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "inputModes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inputmodes"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "outputModes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outputmodes"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tags"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "AgentSkill",
+      "type": "object"
+    },
+    "Artifact": {
+      "properties": {
+        "append": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Append"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "index": {
+          "default": 0,
+          "title": "Index",
+          "type": "integer"
+        },
+        "lastChunk": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "LastChunk"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/Part"
+          },
+          "title": "Parts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "parts"
+      ],
+      "title": "Artifact",
+      "type": "object"
+    },
+    "AuthenticationInfo": {
+      "additionalProperties": {},
+      "properties": {
+        "credentials": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credentials"
+        },
+        "schemes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Schemes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schemes"
+      ],
+      "title": "AuthenticationInfo",
+      "type": "object"
+    },
+    "CancelTaskRequest": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "method": {
+          "const": "tasks/cancel",
+          "default": "tasks/cancel",
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskIdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "CancelTaskRequest",
+      "type": "object"
+    },
+    "CancelTaskResponse": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JSONRPCError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Task"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "CancelTaskResponse",
+      "type": "object"
+    },
+    "DataPart": {
+      "properties": {
+        "data": {
+          "additionalProperties": {},
+          "title": "Data",
+          "type": "object"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "type": {
+          "const": "data",
+          "default": "data",
+          "description": "Type of the part",
+          "examples": [
+            "data"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "title": "DataPart",
+      "type": "object"
+    },
+    "FileContent": {
+      "description": "Represents the content of a file, either as base64 encoded bytes or a URI.\n\nEnsures that either 'bytes' or 'uri' is provided, but not both.",
+      "properties": {
+        "bytes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
+        },
+        "mimeType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mimetype"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uri"
+        }
+      },
+      "title": "FileContent",
+      "type": "object"
+    },
+    "FilePart": {
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/FileContent"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "type": {
+          "const": "file",
+          "default": "file",
+          "description": "Type of the part",
+          "examples": [
+            "file"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "file"
+      ],
+      "title": "FilePart",
+      "type": "object"
+    },
+    "GetTaskPushNotificationRequest": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "method": {
+          "const": "tasks/pushNotification/get",
+          "default": "tasks/pushNotification/get",
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskIdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "GetTaskPushNotificationRequest",
+      "type": "object"
+    },
+    "GetTaskPushNotificationResponse": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JSONRPCError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskPushNotificationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "GetTaskPushNotificationResponse",
+      "type": "object"
+    },
+    "GetTaskRequest": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "method": {
+          "const": "tasks/get",
+          "default": "tasks/get",
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskQueryParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "GetTaskRequest",
+      "type": "object"
+    },
+    "GetTaskResponse": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JSONRPCError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Task"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "GetTaskResponse",
+      "type": "object"
+    },
+    "InternalError": {
+      "properties": {
+        "code": {
+          "const": -32603,
+          "default": -32603,
+          "description": "Error code",
+          "examples": [
+            -32603
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "Internal error",
+          "default": "Internal error",
+          "description": "A short description of the error",
+          "examples": [
+            "Internal error"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "InternalError",
+      "type": "object"
+    },
+    "InvalidParamsError": {
+      "properties": {
+        "code": {
+          "const": -32602,
+          "default": -32602,
+          "description": "Error code",
+          "examples": [
+            -32602
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "Invalid parameters",
+          "default": "Invalid parameters",
+          "description": "A short description of the error",
+          "examples": [
+            "Invalid parameters"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "InvalidParamsError",
+      "type": "object"
+    },
+    "InvalidRequestError": {
+      "properties": {
+        "code": {
+          "const": -32600,
+          "default": -32600,
+          "description": "Error code",
+          "examples": [
+            -32600
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "Request payload validation error",
+          "default": "Request payload validation error",
+          "description": "A short description of the error",
+          "examples": [
+            "Request payload validation error"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "InvalidRequestError",
+      "type": "object"
+    },
+    "JSONParseError": {
+      "properties": {
+        "code": {
+          "const": -32700,
+          "default": -32700,
+          "description": "Error code",
+          "examples": [
+            -32700
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "Invalid JSON payload",
+          "default": "Invalid JSON payload",
+          "description": "A short description of the error",
+          "examples": [
+            "Invalid JSON payload"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "JSONParseError",
+      "type": "object"
+    },
+    "JSONRPCError": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "JSONRPCError",
+      "type": "object"
+    },
+    "JSONRPCMessage": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        }
+      },
+      "title": "JSONRPCMessage",
+      "type": "object"
+    },
+    "JSONRPCRequest": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Params"
+        }
+      },
+      "required": [
+        "method"
+      ],
+      "title": "JSONRPCRequest",
+      "type": "object"
+    },
+    "JSONRPCResponse": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JSONRPCError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        }
+      },
+      "title": "JSONRPCResponse",
+      "type": "object"
+    },
+    "Message": {
+      "properties": {
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/Part"
+          },
+          "title": "Parts",
+          "type": "array"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "agent"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "parts"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
+    "MethodNotFoundError": {
+      "properties": {
+        "code": {
+          "const": -32601,
+          "default": -32601,
+          "description": "Error code",
+          "examples": [
+            -32601
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "const": null,
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "Method not found",
+          "default": "Method not found",
+          "description": "A short description of the error",
+          "examples": [
+            "Method not found"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
+      "title": "MethodNotFoundError",
+      "type": "object"
+    },
+    "Part": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TextPart"
+        },
+        {
+          "$ref": "#/$defs/FilePart"
+        },
+        {
+          "$ref": "#/$defs/DataPart"
+        }
+      ],
+      "title": "Part"
+    },
+    "PushNotificationConfig": {
+      "properties": {
+        "authentication": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuthenticationInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Token"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "PushNotificationConfig",
+      "type": "object"
+    },
+    "PushNotificationNotSupportedError": {
+      "properties": {
+        "code": {
+          "const": -32003,
+          "default": -32003,
+          "description": "Error code",
+          "examples": [
+            -32003
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "const": null,
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "Push Notification is not supported",
+          "default": "Push Notification is not supported",
+          "description": "A short description of the error",
+          "examples": [
+            "Push Notification is not supported"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
+      "title": "PushNotificationNotSupportedError",
+      "type": "object"
+    },
+    "SendTaskRequest": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "method": {
+          "const": "tasks/send",
+          "default": "tasks/send",
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskSendParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "SendTaskRequest",
+      "type": "object"
+    },
+    "SendTaskResponse": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JSONRPCError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Task"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "SendTaskResponse",
+      "type": "object"
+    },
+    "SendTaskStreamingRequest": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "method": {
+          "const": "tasks/sendSubscribe",
+          "default": "tasks/sendSubscribe",
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskSendParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "SendTaskStreamingRequest",
+      "type": "object"
+    },
+    "SendTaskStreamingResponse": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JSONRPCError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskStatusUpdateEvent"
+            },
+            {
+              "$ref": "#/$defs/TaskArtifactUpdateEvent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "SendTaskStreamingResponse",
+      "type": "object"
+    },
+    "SetTaskPushNotificationRequest": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "method": {
+          "const": "tasks/pushNotification/set",
+          "default": "tasks/pushNotification/set",
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskPushNotificationConfig"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "SetTaskPushNotificationRequest",
+      "type": "object"
+    },
+    "SetTaskPushNotificationResponse": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JSONRPCError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskPushNotificationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "SetTaskPushNotificationResponse",
+      "type": "object"
+    },
+    "Task": {
+      "properties": {
+        "artifacts": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Artifact"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifacts"
+        },
+        "history": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Message"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "History"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "status": {
+          "$ref": "#/$defs/TaskStatus"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "TaskArtifactUpdateEvent": {
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/Artifact"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "id",
+        "artifact"
+      ],
+      "title": "TaskArtifactUpdateEvent",
+      "type": "object"
+    },
+    "TaskIdParams": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "TaskIdParams",
+      "type": "object"
+    },
+    "TaskNotCancelableError": {
+      "properties": {
+        "code": {
+          "const": -32002,
+          "default": -32002,
+          "description": "Error code",
+          "examples": [
+            -32002
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "const": null,
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "Task cannot be canceled",
+          "default": "Task cannot be canceled",
+          "description": "A short description of the error",
+          "examples": [
+            "Task cannot be canceled"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
+      "title": "TaskNotCancelableError",
+      "type": "object"
+    },
+    "TaskNotFoundError": {
+      "properties": {
+        "code": {
+          "const": -32001,
+          "default": -32001,
+          "description": "Error code",
+          "examples": [
+            -32001
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "const": null,
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "Task not found",
+          "default": "Task not found",
+          "description": "A short description of the error",
+          "examples": [
+            "Task not found"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
+      "title": "TaskNotFoundError",
+      "type": "object"
+    },
+    "TaskPushNotificationConfig": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "pushNotificationConfig": {
+          "$ref": "#/$defs/PushNotificationConfig"
+        }
+      },
+      "required": [
+        "id",
+        "pushNotificationConfig"
+      ],
+      "title": "TaskPushNotificationConfig",
+      "type": "object"
+    },
+    "TaskQueryParams": {
+      "properties": {
+        "historyLength": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "HistoryLength"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "TaskQueryParams",
+      "type": "object"
+    },
+    "TaskResubscriptionRequest": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Jsonrpc",
+          "type": "string"
+        },
+        "method": {
+          "const": "tasks/resubscribe",
+          "default": "tasks/resubscribe",
+          "title": "Method",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskQueryParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "TaskResubscriptionRequest",
+      "type": "object"
+    },
+    "TaskSendParams": {
+      "properties": {
+        "historyLength": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "HistoryLength"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "message": {
+          "$ref": "#/$defs/Message"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "pushNotification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PushNotificationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "message"
+      ],
+      "title": "TaskSendParams",
+      "type": "object"
+    },
+    "TaskState": {
+      "description": "An enumeration.",
+      "enum": [
+        "submitted",
+        "working",
+        "input-required",
+        "completed",
+        "canceled",
+        "failed",
+        "unknown"
+      ],
+      "title": "TaskState",
+      "type": "string"
+    },
+    "TaskStatus": {
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Message"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "$ref": "#/$defs/TaskState"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "TaskStatus",
+      "type": "object"
+    },
+    "TaskStatusUpdateEvent": {
+      "properties": {
+        "final": {
+          "default": false,
+          "title": "Final",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "status": {
+          "$ref": "#/$defs/TaskStatus"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "title": "TaskStatusUpdateEvent",
+      "type": "object"
+    },
+    "TextPart": {
+      "properties": {
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "description": "Type of the part",
+          "examples": [
+            "text"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "title": "TextPart",
+      "type": "object"
+    },
+    "UnsupportedOperationError": {
+      "properties": {
+        "code": {
+          "const": -32004,
+          "default": -32004,
+          "description": "Error code",
+          "examples": [
+            -32004
+          ],
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "const": null,
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "const": "This operation is not supported",
+          "default": "This operation is not supported",
+          "description": "A short description of the error",
+          "examples": [
+            "This operation is not supported"
+          ],
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
+      "title": "UnsupportedOperationError",
+      "type": "object"
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "JSON Schema for A2A Protocol",
+  "title": "A2A Protocol Schema"
+}
