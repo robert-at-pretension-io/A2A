@@ -108,10 +108,29 @@ The mock server also supports configurable authentication requirements for testi
 
 ### Running Integration Tests
 
-Run the full integration test suite (with authentication):
+The `start_server_and_test_client.sh` script provides a comprehensive end-to-end test suite for the A2A client against a server implementation.
+
+**Key Features:**
+*   **Local Mock Server**: Automatically starts a local mock server if no URL is provided.
+*   **Remote Testing**: Can test against any specified A2A server URL.
+*   **Comprehensive Coverage**: Executes a wide range of client commands covering core features, file operations, streaming, batching, skills, and more.
+*   **Timeouts**: Each client command is run with a configurable timeout to prevent hangs.
+*   **Continue on Failure**: The script continues to the next test even if one fails or times out.
+*   **Result Aggregation**: Provides a summary of successful and failed/unsupported tests at the end.
+*   **Capability-Based Skipping**: Reads the agent card and skips tests for features the agent doesn't report supporting (e.g., streaming, push notifications).
+*   **Optional Tests**: Includes an `--run-unofficial` flag to execute tests that might be specific to the mock server or are not part of the core specification validation.
+
+**Basic Usage:**
 
 ```bash
+# Run against the local mock server (starts automatically)
 ./start_server_and_test_client.sh
+
+# Run against a specific server URL
+./start_server_and_test_client.sh http://your-a2a-server.com
+
+# Run against local server and include unofficial tests
+./start_server_and_test_client.sh --run-unofficial
 ```
 
 ## Implemented Features
