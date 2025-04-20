@@ -105,12 +105,24 @@ pub fn check_and_download_remote_schema() -> Result<SchemaCheckResult, String> {
     };
 
     // --- 4. Compare and Handle New Version ---
-    // Normalize whitespace/newlines for comparison robustness
-    let remote_norm = remote_schema_content.trim().replace("\r\n", "\n");
-    let local_norm = local_schema_content.trim().replace("\r\n", "\n");
+    // Parse both local and remote content into serde_json::Value for semantic comparison
+    let remote_value: serde_json::Value = match serde_json::from_str(&remote_schema_content) {
+        Ok(v) => v,
+        Err(e) => return Err(format!("Failed to parse remote schema JSON: {}", e)),
+    };
 
-    if remote_norm != local_norm {
-        println!("💡 Remote schema differs from active local schema (version '{}').", active_version);
+    let local_value: serde_json::Value = match serde_json::from_str(&local_schema_content) {
+        Ok(v) => v,
+        Err(e) => {
+            // If local schema is invalid, treat it as different to force saving the valid remote one
+            println!("⚠️ Warning: Failed to parse local schema JSON: {}. Assuming difference.", e);
+            serde_json::Value::Null // Use Null which won't equal the remote value
+        }
+    };
+
+    // Compare the parsed JSON values
+    if remote_value != local_value {
+        println!("💡 Remote schema differs semantically from active local schema (version '{}').", active_version);
         let next_version_str = get_next_version(&active_version)?;
         let new_filename = format!("a2a_schema_{}.json", next_version_str);
         let new_path = Path::new(SCHEMAS_DIR).join(&new_filename);
