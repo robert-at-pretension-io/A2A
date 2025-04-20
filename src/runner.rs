@@ -40,16 +40,188 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
     // --- Client Initialization ---
     // TODO: Handle authentication based on config or agent card if needed later
     let mut client = A2aClient::new(&server_url);
+    let client_arc = Arc::new(Mutex::new(client)); // Use Arc<Mutex<>> for sharing client in async blocks
 
     // --- Agent Card & Capabilities ---
-    // TODO: Fetch agent card and determine capabilities
+    println!("{}", "\n--- Fetching Agent Card ---".cyan());
+    let mut agent_card_opt: Option<AgentCard> = None;
+    let mut capabilities = AgentCapabilities { // Default capabilities
+        streaming: false,
+        push_notifications: false,
+        state_transition_history: false,
+    };
 
-    // --- Test Execution ---
-    println!("{}", "\n===============================================".blue().bold());
-    println!("{}", "🧪 Running Client Function Tests".blue().bold());
-    println!("{}", "===============================================".blue().bold());
+    let agent_card_result = run_test(
+        &results,
+        "Get Agent Card",
+        false, // Not unofficial
+        &config,
+        || {
+            let client_clone = Arc::clone(&client_arc);
+            async move {
+                let mut client_guard = client_clone.lock().unwrap();
+                client_guard.get_agent_card().await
+            }
+        },
+    ).await;
 
-    // TODO: Implement test sections using run_test helper
+    // If successful, store the card and parse capabilities
+    if let Ok(card) = agent_card_result {
+        agent_card_opt = Some(card.clone());
+        if let Some(caps) = agent_card_opt.as_ref().map(|c| &c.capabilities) {
+            capabilities = caps.clone();
+            println!("    Agent Capabilities: Streaming={}, Push={}, History={}",
+                     capabilities.streaming.unwrap_or(false),
+                     capabilities.push_notifications.unwrap_or(false),
+                     capabilities.state_transition_history.unwrap_or(false));
+        } else {
+             println!("    Agent Capabilities: Not specified in Agent Card.");
+        }
+    } else {
+        println!("{}", "⚠️ Could not retrieve Agent Card. Assuming default capabilities (false).".yellow());
+    }
+
+    // --- Basic Task Operations ---
+    println!("{}", "\n--- Basic Task Operations ---".cyan());
+    let mut task_id: Option<String> = None;
+
+    // Send Task (needs special handling to capture ID)
+    {
+        let test_num;
+        {
+            let mut results_guard = results.lock().unwrap();
+            results_guard.test_counter += 1;
+            test_num = results_guard.test_counter;
+        }
+        println!("{}", format!("--> [Test {}] Running: Send Task...", test_num).yellow());
+
+        let send_task_closure = || {
+            let client_clone = Arc::clone(&client_arc);
+            async move {
+                let mut client_guard = client_clone.lock().unwrap();
+                client_guard.send_task("This is a test task from Rust runner").await
+            }
+        };
+
+        match tokio::time::timeout(config.default_timeout, send_task_closure()).await {
+            Ok(Ok(task)) => {
+                task_id = Some(task.id.clone());
+                println!("    {}", format!("✅ [Test {}] Success: Send Task (ID: {})", test_num, task.id).green());
+                let mut results_guard = results.lock().unwrap();
+                results_guard.success_count += 1;
+            }
+            Ok(Err(e)) => {
+                println!("    {}", format!("⚠️ [Test {}] Unsupported or not working (Error: {}): Send Task", test_num, e).yellow());
+                let mut results_guard = results.lock().unwrap();
+                results_guard.failure_count += 1;
+            }
+            Err(_) => {
+                println!("    {}", format!("⚠️ [Test {}] Unsupported or not working (Timeout): Send Task", test_num).yellow());
+                let mut results_guard = results.lock().unwrap();
+                results_guard.failure_count += 1;
+            }
+        }
+    } // Mutex guard for client_arc is dropped here if send_task_closure finished
+
+    // Dependent tests
+    if let Some(ref id) = task_id {
+        let task_id_clone = id.clone(); // Clone for the closure
+        run_test(
+            &results,
+            "Get Task Details",
+            false,
+            &config,
+            || {
+                let client_clone = Arc::clone(&client_arc);
+                let id_c = task_id_clone.clone(); // Clone again for async move
+                async move {
+                    let mut client_guard = client_clone.lock().unwrap();
+                    client_guard.get_task(&id_c).await?; // Use ? to propagate ClientError
+                    Ok(()) // Return Ok(()) on success
+                }
+            },
+        ).await.ok(); // Ignore result for now, run_test handles logging/counting
+
+        // State History Tests (Conditional)
+        if capabilities.state_transition_history.unwrap_or(false) {
+             let task_id_clone_hist = id.clone();
+             run_test(
+                 &results,
+                 "Get Task State History",
+                 false,
+                 &config,
+                 || {
+                     let client_clone = Arc::clone(&client_arc);
+                     let id_c = task_id_clone_hist.clone();
+                     async move {
+                         let mut client_guard = client_clone.lock().unwrap();
+                         client_guard.get_task_state_history(&id_c).await?;
+                         Ok(())
+                     }
+                 },
+             ).await.ok();
+
+             let task_id_clone_metrics = id.clone();
+             run_test(
+                 &results,
+                 "Get Task State Metrics",
+                 false,
+                 &config,
+                 || {
+                     let client_clone = Arc::clone(&client_arc);
+                     let id_c = task_id_clone_metrics.clone();
+                     async move {
+                         let mut client_guard = client_clone.lock().unwrap();
+                         client_guard.get_state_transition_metrics(&id_c).await?;
+                         Ok(())
+                     }
+                 },
+             ).await.ok();
+        } else {
+             println!("{}", "⏭️ Skipping State History tests (Agent capability not reported).".blue());
+             let mut results_guard = results.lock().unwrap();
+             results_guard.skipped_count += 2; // Increment skipped count for the two tests
+        }
+
+        let task_id_clone_cancel = id.clone();
+        run_test(
+            &results,
+            "Cancel Task",
+            false,
+            &config,
+            || {
+                let client_clone = Arc::clone(&client_arc);
+                let id_c = task_id_clone_cancel.clone();
+                async move {
+                    let mut client_guard = client_clone.lock().unwrap();
+                    client_guard.cancel_task(&id_c).await?;
+                    Ok(())
+                }
+            },
+        ).await.ok();
+
+        let task_id_clone_after_cancel = id.clone();
+        run_test(
+            &results,
+            "Get Task Details After Cancellation",
+            false,
+            &config,
+            || {
+                let client_clone = Arc::clone(&client_arc);
+                let id_c = task_id_clone_after_cancel.clone();
+                async move {
+                    let mut client_guard = client_clone.lock().unwrap();
+                    client_guard.get_task(&id_c).await?;
+                    Ok(())
+                }
+            },
+        ).await.ok();
+
+    } else {
+        println!("{}", "⚠️ Skipping tests dependent on successful task creation.".yellow());
+    }
+
+    // TODO: Implement remaining test sections (Streaming, Push, Batch, Skills, Errors, Files, Delays, Dynamic Streaming)
 
     // --- Test Summary ---
     println!("{}", "\n======================================================".blue().bold());
