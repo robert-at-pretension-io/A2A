@@ -41,7 +41,7 @@ eventsource-stream = "0.2"
 tokio-stream = "0.1"
 base64 = "0.21.0"
 mime_guess = "2.0.4"
-tempfile = "3.10" # Use a more recent version if possible
+tempfile = "3.10" # For creating temporary files/dirs in tests
 # serde_json is already a dependency
 once_cell = "1.17"
 
