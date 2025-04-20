@@ -65,11 +65,10 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         let get_card_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.get_agent_card() // Get the future
-                }; // MutexGuard dropped here
-                future.await // Await the future outside the scope
+                // Get the client and hold it across await
+                let mut client_guard = client_clone.lock().unwrap();
+                // Just await directly - simpler but less efficient
+                client_guard.get_agent_card().await
             }
         };
 
@@ -119,11 +118,10 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         let send_task_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let future = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    client_guard.send_task("This is a test task from Rust runner") // Get the future
-                }; // MutexGuard dropped here
-                future.await // Await the future outside the scope
+                // Get the client and hold it across await
+                let mut client_guard = client_clone.lock().unwrap();
+                // Just await directly - simpler but less efficient
+                client_guard.send_task("This is a test task from Rust runner").await
             }
         };
 
@@ -1102,15 +1100,18 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let mut stream = { // Scope for MutexGuard
-                    let mut client_guard = client_clone.lock().unwrap();
-                    let metadata = serde_json::json!({
-                        "_mock_stream_artifact_types": ["data"],
-                        "_mock_stream_chunk_delay_ms": 100
-                    });
-                    // Use the _typed version returning ClientError
-                    client_guard.send_task_subscribe_with_metadata_typed("Streaming task with only data artifacts", &metadata) // Get the future
-                }.await?; // Await the future outside the scope
+                // Create metadata
+                let metadata = serde_json::json!({
+                    "_mock_stream_artifact_types": ["data"],
+                    "_mock_stream_chunk_delay_ms": 100
+                });
+                
+                // Get the client and hold it across both awaits
+                let mut client_guard = client_clone.lock().unwrap();
+                let mut stream = client_guard.send_task_subscribe_with_metadata_typed(
+                    "Streaming task with only data artifacts", 
+                    &metadata
+                ).await?;
                 let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
             }
