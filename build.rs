@@ -82,6 +82,9 @@ fn save_schema(path: &Path, content: &str) -> Result<(), String> {
 
 // --- Main Build Logic ---
 fn main() {
+    // Add this line to check if the script is running
+    println!("--- Executing build.rs ---");
+
     // --- 1. Get Active Local Schema Info ---
     // Note: We removed cargo:rerun-if-changed directives to ensure
     // this script runs on every build to check the remote URL.
