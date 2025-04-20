@@ -51,7 +51,18 @@ enum Commands {
         #[arg(short, long, default_value_t = 60)]
         time: u64,
     },
-
+    /// Run the integration test suite
+    RunTests {
+        /// Optional URL of the target A2A server (starts local mock server if omitted)
+        #[arg(short, long)]
+        url: Option<String>,
+        /// Include unofficial tests (specific to mock server or non-standard features)
+        #[arg(long, default_value_t = false)]
+        run_unofficial: bool,
+        /// Timeout for each individual test step in seconds
+        #[arg(long, default_value_t = 15)]
+        timeout: u64,
+    },
     /// Manage configuration settings
     Config {
         #[command(subcommand)]
@@ -100,7 +111,27 @@ fn main() {
             // Call fuzzing module
             fuzzer::run_fuzzer(target, *time);
         }
+        Commands::RunTests { url, run_unofficial, timeout } => {
+            // Create a runtime for the async test runner
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let config = runner::TestRunnerConfig {
+                target_url: url.clone(),
+                run_unofficial_tests: *run_unofficial,
+                default_timeout: Duration::from_secs(*timeout),
+            };
 
+            // Run the tests
+            let result = rt.block_on(runner::run_integration_tests(config));
+
+            // Set exit code based on result
+            if result.is_err() {
+                eprintln!("Test suite finished with errors.");
+                std::process::exit(1);
+            } else {
+                println!("Test suite finished successfully.");
+                std::process::exit(0);
+            }
+        }
         Commands::Config { command } => {
             match command {
                 ConfigCommands::SetSchemaVersion { version } => {
