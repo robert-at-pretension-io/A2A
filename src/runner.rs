@@ -1027,11 +1027,11 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 });
                 
                 // Get the client and hold it across both awaits
-                let mut client_guard = client_clone.lock().unwrap();
+                let mut client_guard = client_clone.lock().await; // Use async lock
                 let mut stream = client_guard.send_task_subscribe_with_metadata_typed(
                     "Streaming task with only data artifacts", 
                     &metadata
-                ).await?;
+                ).await?; // Await directly
                 let _ = stream.next().await; // Requires StreamExt trait
                 Ok(())
             }
