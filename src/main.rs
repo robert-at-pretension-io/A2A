@@ -3,11 +3,6 @@ mod property_tests;
 mod mock_server;
 mod fuzzer;
 mod types;
-mod validator;
-mod property_tests;
-mod mock_server;
-mod fuzzer;
-mod types;
 mod client;
 mod schema_utils; // Add this line
 #[cfg(test)]
