@@ -5,9 +5,11 @@ mod fuzzer;
 mod types;
 mod client;
 mod schema_utils; // Add this line
+mod runner; // Add the runner module
 #[cfg(test)]
 mod client_tests;
 
+use std::time::Duration; // Add Duration import
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
 use std::fs; // Add this
