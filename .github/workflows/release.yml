@@ -102,9 +102,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
           
+  wait-for-release:
+    name: Wait for Release Creation
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Wait for GitHub Release API
+        run: |
+          echo "Waiting for GitHub Release API to fully process the release..."
+          sleep 15
+          echo "Release should be fully propagated now, proceeding with uploads."
+          
   upload-release:
     name: Upload Release Asset (${{ matrix.asset_name }})
-    needs: create-release
+    needs: wait-for-release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
@@ -112,13 +124,13 @@ jobs:
       matrix:
         include:
           - asset_name: a2a-test-suite-linux-amd64
-            asset_path: a2a-test-suite
+            asset_path: a2a-test-suite-linux-amd64
             
           - asset_name: a2a-test-suite-macos-intel
-            asset_path: a2a-test-suite
+            asset_path: a2a-test-suite-macos-intel
             
           - asset_name: a2a-test-suite-macos-arm64
-            asset_path: a2a-test-suite
+            asset_path: a2a-test-suite-macos-arm64
             
           - asset_name: a2a-test-suite-windows-amd64.exe
             asset_path: a2a-test-suite.exe
