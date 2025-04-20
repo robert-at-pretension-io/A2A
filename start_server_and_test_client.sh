@@ -267,6 +267,68 @@ sleep 5
 kill $STREAM_PID 2>/dev/null || true
 
 echo "===============================" 
+echo "Testing Dynamic Streaming Content"
+echo "==============================="
+
+# Create a task for resubscribe testing
+echo "Creating a task for resubscribe testing..."
+RESUBSCRIBE_TASK_ID=$(RUSTFLAGS="-A warnings" cargo run --quiet -- client send-task --url "http://localhost:8080" \
+  --message "Task for resubscribe testing" | grep -o '"id": "[^"]*"' | head -1 | cut -d'"' -f4)
+echo "Created task with ID: $RESUBSCRIBE_TASK_ID"
+
+# Test streaming with custom text chunks
+echo "Testing streaming with 3 text chunks..."
+RUSTFLAGS="-A warnings" cargo run --quiet -- client stream-task --url "http://localhost:8080" \
+  --message "Streaming task with 3 text chunks" \
+  --metadata '{"_mock_stream_text_chunks": 3, "_mock_stream_chunk_delay_ms": 500}' &
+STREAM_PID=$!
+
+# Let it run for a bit
+sleep 4
+
+# Kill the streaming client
+kill $STREAM_PID 2>/dev/null || true
+
+# Test streaming with only data artifacts
+echo "Testing streaming with only data artifacts..."
+RUSTFLAGS="-A warnings" cargo run --quiet -- client stream-task --url "http://localhost:8080" \
+  --message "Streaming task with only data artifacts" \
+  --metadata '{"_mock_stream_artifact_types": ["data"], "_mock_stream_chunk_delay_ms": 500}' &
+STREAM_PID=$!
+
+# Let it run for a bit
+sleep 3
+
+# Kill the streaming client
+kill $STREAM_PID 2>/dev/null || true
+
+# Test streaming with custom final state
+echo "Testing streaming with failed final state..."
+RUSTFLAGS="-A warnings" cargo run --quiet -- client stream-task --url "http://localhost:8080" \
+  --message "Streaming task with failed final state" \
+  --metadata '{"_mock_stream_final_state": "failed", "_mock_stream_chunk_delay_ms": 500}' &
+STREAM_PID=$!
+
+# Let it run for a bit
+sleep 3
+
+# Kill the streaming client
+kill $STREAM_PID 2>/dev/null || true
+
+# Test resubscribe with dynamic configuration
+echo "Testing resubscribe with dynamic configuration..."
+RUSTFLAGS="-A warnings" cargo run --quiet -- client resubscribe-task --url "http://localhost:8080" \
+  --id "$RESUBSCRIBE_TASK_ID" \
+  --metadata '{"_mock_stream_text_chunks": 2, "_mock_stream_artifact_types": ["text", "data"]}' &
+STREAM_PID=$!
+
+# Let it run for a bit
+sleep 4
+
+# Kill the streaming client
+kill $STREAM_PID 2>/dev/null || true
+
+echo "===============================" 
 echo "All Tests Completed Successfully"
 echo "=============================="
 
