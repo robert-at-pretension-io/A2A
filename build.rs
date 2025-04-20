@@ -82,8 +82,24 @@ fn save_schema(path: &Path, content: &str) -> Result<(), String> {
 
 // --- Main Build Logic ---
 fn main() {
-    // Add this line to check if the script is running
-    println!("--- Executing build.rs ---");
+    // --- Create a marker file to confirm execution ---
+    let out_dir = match env::var("OUT_DIR") {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("Error getting OUT_DIR: {}. Cannot confirm build script execution via marker file.", e);
+            // Attempt to continue, but marker file check won't work
+            String::from(".") // Use current dir as a fallback (not ideal)
+        }
+    };
+    let marker_path = Path::new(&out_dir).join("build_script_executed.marker");
+    if let Err(e) = fs::write(&marker_path, "executed") {
+        eprintln!("Warning: Failed to write build script marker file '{}': {}", marker_path.display(), e);
+    } else {
+        // Print confirmation *after* successfully writing the file
+        println!("--- build.rs executed (marker file created at {}) ---", marker_path.display());
+    }
+    // --- End marker file creation ---
+
 
     // --- 1. Get Active Local Schema Info ---
     // Note: We removed cargo:rerun-if-changed directives to ensure
