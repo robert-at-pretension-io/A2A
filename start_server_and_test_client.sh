@@ -19,15 +19,24 @@ DEFAULT_TIMEOUT=15 # Default timeout in seconds for commands
 SUCCESS_COUNT=0
 FAILURE_COUNT=0
 TEST_COUNTER=0
+RUN_UNOFFICIAL_TESTS=false
 
 # --- Helper Function ---
-# Usage: run_test "Description" "command_string" [timeout_override]
+# Usage: run_test "Description" "command_string" [timeout_override] [is_unofficial]
 run_test() {
   local description="$1"
   local command_str="$2"
   local timeout_val="${3:-$DEFAULT_TIMEOUT}"
+  local is_unofficial="${4:-false}" # Default to false if not provided
   local test_num=$((TEST_COUNTER + 1))
   TEST_COUNTER=$test_num
+
+  # Check if this is an unofficial test and if we should run it
+  if [ "$is_unofficial" = "true" ] && [ "$RUN_UNOFFICIAL_TESTS" = "false" ]; then
+    echo -e "${BLUE}⏭️ [Test ${test_num}] Skipping unofficial test: ${description} (Use --run-unofficial to include)${RESET}"
+    # Don't increment success/failure counts for skipped tests
+    return 0 # Return success to not fail the script
+  fi
 
   echo -e "${YELLOW}--> [Test ${test_num}] Running: ${description}...${RESET}"
   echo "    Command: timeout ${timeout_val}s ${command_str}"
@@ -79,8 +88,22 @@ else
   echo -e "${BLUE}${BOLD}======================================================${RESET}"
   echo -e "${BLUE}${BOLD}🔗 Testing against provided server URL: $TARGET_URL${RESET}"
   echo -e "${BLUE}${BOLD}======================================================${RESET}"
+  # URL provided, use it directly
+  TARGET_URL="$1"
+  # Shift arguments to check for --run-unofficial
+  shift
+  echo -e "${BLUE}${BOLD}======================================================${RESET}"
+  echo -e "${BLUE}${BOLD}🔗 Testing against provided server URL: $TARGET_URL${RESET}"
+  echo -e "${BLUE}${BOLD}======================================================${RESET}"
   # No trap needed as we didn't start the server
 fi
+
+# Check for --run-unofficial flag
+if [[ " $@ " =~ " --run-unofficial " ]]; then
+  RUN_UNOFFICIAL_TESTS=true
+  echo -e "${YELLOW}🧪 Including unofficial tests.${RESET}"
+fi
+
 
 # Basic validation
 if [ -z "$TARGET_URL" ]; then
@@ -388,11 +411,16 @@ echo -e "${BLUE}${BOLD}🔑 Testing Authentication Validation${RESET}"
 echo -e "${BLUE}${BOLD}===============================${RESET}"
 run_test "Validate Authentication" "RUSTFLAGS=\"-A warnings\" cargo run --quiet -- client validate-auth --url \"$TARGET_URL\" --header \"$AUTH_HEADER\" --value \"$AUTH_VALUE\""
 
+# --- Configurable Delays Tests (Unofficial) ---
 echo
 echo -e "${BLUE}${BOLD}===============================${RESET}"
-echo -e "${BLUE}${BOLD}⏱️ Testing Configurable Delays${RESET}"
+echo -e "${BLUE}${BOLD}⏱️ Testing Configurable Delays (Unofficial)${RESET}"
 echo -e "${BLUE}${BOLD}===============================${RESET}"
 
+# Mark this section as unofficial
+if [ "$RUN_UNOFFICIAL_TESTS" = "false" ]; then
+  echo -e "${BLUE}⏭️ Skipping Configurable Delays tests (Use --run-unofficial to include)${RESET}"
+else
 # Test with a defined delay in metadata
 DELAYED_TASK_ID=""
 echo -e "${YELLOW}--> [Test $((TEST_COUNTER + 1))] Running: Send Task with 2-second delay...${RESET}"
@@ -453,11 +481,19 @@ else
 fi
 TEST_COUNTER=$((TEST_COUNTER + 1))
 
+fi # End of unofficial block for Configurable Delays
 
+
+# --- Dynamic Streaming Content Tests (Unofficial) ---
 echo
 echo -e "${BLUE}${BOLD}===============================${RESET}"
-echo -e "${BLUE}${BOLD}🌊 Testing Dynamic Streaming Content${RESET}"
+echo -e "${BLUE}${BOLD}🌊 Testing Dynamic Streaming Content (Unofficial)${RESET}"
 echo -e "${BLUE}${BOLD}===============================${RESET}"
+
+# Mark this section as unofficial
+if [ "$RUN_UNOFFICIAL_TESTS" = "false" ]; then
+  echo -e "${BLUE}⏭️ Skipping Dynamic Streaming Content tests (Use --run-unofficial to include)${RESET}"
+else
 
 # Create a task for resubscribe testing
 RESUBSCRIBE_TASK_ID=""
@@ -524,9 +560,14 @@ echo
 echo -e "${BLUE}${BOLD}======================================================${RESET}"
 echo -e "${BLUE}${BOLD}📊 Test Summary${RESET}"
 echo -e "${BLUE}${BOLD}======================================================${RESET}"
-echo -e "Total Tests Run: ${BOLD}${TEST_COUNTER}${RESET}"
+echo -e "Total Tests Attempted: ${BOLD}${TEST_COUNTER}${RESET}"
 echo -e "${GREEN}Successful Tests: ${BOLD}${SUCCESS_COUNT}${RESET}"
 echo -e "${RED}Failed Tests: ${BOLD}${FAILURE_COUNT}${RESET}"
+if [ "$RUN_UNOFFICIAL_TESTS" = "true" ]; then
+  echo -e "${YELLOW}(Including unofficial tests)${RESET}"
+else
+  echo -e "${BLUE}(Unofficial tests were skipped. Use --run-unofficial to include them)${RESET}"
+fi
 echo -e "${BLUE}${BOLD}======================================================${RESET}"
 
 # Server (if started locally) will be killed by trap handler
