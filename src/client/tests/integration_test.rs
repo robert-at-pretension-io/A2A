@@ -39,7 +39,7 @@ async fn test_file_data_artifact_features() -> Result<(), Box<dyn Error>> {
     
     // Test sending a task with a file attachment
     println!("Testing send_task_with_file...");
-    let task_with_file = client.send_task_with_file(
+    let task_with_file = client.send_task_with_file_typed(
         "Here's a file for processing", 
         file_path.to_str().unwrap()
     ).await?;
@@ -76,7 +76,7 @@ async fn test_file_data_artifact_features() -> Result<(), Box<dyn Error>> {
         }
     });
     
-    let task_with_data = client.send_task_with_data(
+    let task_with_data = client.send_task_with_data_typed(
         "Process this data", 
         &data
     ).await?;
@@ -147,7 +147,7 @@ async fn test_state_transition_history() -> Result<(), Box<dyn Error>> {
     println!("Created task ID: {}", task.id);
     
     // Get state transition history
-    let history = client.get_task_state_history(&task.id).await?;
+    let history = client.get_task_state_history_typed(&task.id).await?;
     
     println!("State transitions for task {}:", history.task_id);
     for (i, transition) in history.transitions.iter().enumerate() {
@@ -171,7 +171,7 @@ async fn test_state_transition_history() -> Result<(), Box<dyn Error>> {
     }
     
     // Get state transition metrics
-    let metrics = client.get_state_transition_metrics(&task.id).await?;
+    let metrics = client.get_state_transition_metrics_typed(&task.id).await?;
     println!("\nState transition metrics:");
     println!("{}", metrics.to_string());
     
@@ -192,7 +192,7 @@ async fn test_state_transition_history() -> Result<(), Box<dyn Error>> {
     let cancel_result = client.cancel_task_typed(&task_to_cancel.id).await?;
 
     // Get state history for canceled task using _typed version
-    let cancel_history = client.get_task_state_history(&task_to_cancel.id).await?;
+    let cancel_history = client.get_task_state_history_typed(&task_to_cancel.id).await?;
     
     println!("State transitions for canceled task {}:", cancel_history.task_id);
     for (i, transition) in cancel_history.transitions.iter().enumerate() {
@@ -311,7 +311,7 @@ async fn test_agent_skills_operations() -> Result<(), Box<dyn Error>> {
     }
     
     // Get details for a specific skill
-    let skill_details = client.get_skill_details(&first_skill_id).await?;
+    let skill_details = client.get_skill_details_typed(&first_skill_id).await?;
     println!("Got details for skill: {} ({})", skill_details.skill.name, skill_details.skill.id);
     
     // Verify skill details
@@ -432,7 +432,7 @@ async fn test_auth_integration_flow() -> Result<(), Box<dyn Error>> {
     println!("Successfully created task with API Key auth: {}", task.id);
     
     // Test 5: Test canceling a task with authentication
-    let canceled_task_id = client_with_bearer.cancel_task(&task.id).await?;
+    let canceled_task_id = client_with_bearer.cancel_task_typed(&task.id).await?;
     println!("Successfully canceled task with auth: {}", canceled_task_id);
     
     // Get the task to verify it's canceled
@@ -455,12 +455,12 @@ async fn test_auth_integration_flow() -> Result<(), Box<dyn Error>> {
     };
     
     // Create the batch with auth
-    let batch = client_with_bearer.create_task_batch(batch_params).await?;
+    let batch = client_with_bearer.create_task_batch_typed(batch_params).await?;
     println!("Created batch with auth: {} with {} tasks", 
              batch.id, batch.task_ids.len());
     
     // Get batch status with auth
-    let status = client_with_bearer.get_batch_status(&batch.id).await?;
+    let status = client_with_bearer.get_batch_status_typed(&batch.id).await?;
     println!("Successfully retrieved batch status with auth: {:?}", 
              status.overall_status);
 

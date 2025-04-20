@@ -2,9 +2,8 @@ use std::error::Error;
 use chrono::{DateTime, Utc};
 
 use crate::client::A2aClient;
-use crate::client::errors::ClientError; // Add ClientError import
-// Remove ErrorCompatibility import
-// use crate::client::error_handling::ErrorCompatibility;
+use crate::client::errors::ClientError;
+use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{TaskState, TaskQueryParams, Message, Task, Role};
 
 /// Represents a single state transition in a task's history
@@ -156,7 +155,10 @@ impl A2aClient {
     
     /// Get a formatted report of a task's state transition history
     pub async fn get_state_history_report(&mut self, task_id: &str) -> Result<String, Box<dyn Error>> {
-        let history = self.get_task_state_history(task_id).await?;
+        let history = match self.get_task_state_history_typed(task_id).await {
+            Ok(val) => val,
+            Err(e) => return Err(Box::new(e))
+        };
         
         let mut report = format!("Task State History for {}\n", task_id);
         report.push_str("-------------------------------------------------------\n");

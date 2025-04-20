@@ -108,14 +108,14 @@ The mock server also supports configurable authentication requirements for testi
 
 ### Running Integration Tests
 
-The `start_server_and_test_client.sh` script provides a comprehensive end-to-end test suite for the A2A client against a server implementation.
+The A2A test suite includes a comprehensive test runner for end-to-end testing of A2A client-server interactions.
 
 **Key Features:**
 *   **Local Mock Server**: Automatically starts a local mock server if no URL is provided.
 *   **Remote Testing**: Can test against any specified A2A server URL.
 *   **Comprehensive Coverage**: Executes a wide range of client commands covering core features, file operations, streaming, batching, skills, and more.
 *   **Timeouts**: Each client command is run with a configurable timeout to prevent hangs.
-*   **Continue on Failure**: The script continues to the next test even if one fails or times out.
+*   **Continue on Failure**: The runner continues to the next test even if one fails or times out.
 *   **Result Aggregation**: Provides a summary of successful and failed/unsupported tests at the end.
 *   **Capability-Based Skipping**: Reads the agent card and skips tests for features the agent doesn't report supporting (e.g., streaming, push notifications).
 *   **Optional Tests**: Includes an `--run-unofficial` flag to execute tests that might be specific to the mock server or are not part of the core specification validation.
@@ -124,13 +124,16 @@ The `start_server_and_test_client.sh` script provides a comprehensive end-to-end
 
 ```bash
 # Run against the local mock server (starts automatically)
-./start_server_and_test_client.sh
+cargo run -- run-tests
 
 # Run against a specific server URL
-./start_server_and_test_client.sh http://your-a2a-server.com
+cargo run -- run-tests --url http://your-a2a-server.com
 
 # Run against local server and include unofficial tests
-./start_server_and_test_client.sh --run-unofficial
+cargo run -- run-tests --run-unofficial
+
+# Run with a custom timeout for each test (in seconds)
+cargo run -- run-tests --timeout 30
 ```
 
 ## Implemented Features
@@ -163,6 +166,69 @@ The test suite now includes:
    - Comprehensive test script for all features
    - Mock server with configurable authentication
    - Configurable network delay simulation for testing client behavior under various latency conditions
+
+## Testing Your A2A Server Implementation
+
+To test your server's compliance with the A2A protocol, you can use our pre-built binaries or build from source.
+
+### Using Pre-built Binaries
+
+Download the appropriate binary for your platform from our [releases page](https://github.com/your-org/a2a-test-suite/releases).
+
+#### Running Tests
+
+```bash
+# On Windows
+a2a-test-suite.exe run-tests --url http://your-server-url
+
+# On macOS/Linux
+./a2a-test-suite run-tests --url http://your-server-url
+```
+
+#### Test Options
+
+```bash
+# Include unofficial tests
+./a2a-test-suite run-tests --url http://your-server-url --run-unofficial
+
+# Set custom timeout (in seconds)
+./a2a-test-suite run-tests --url http://your-server-url --timeout 30
+```
+
+For detailed instructions on cross-compilation and advanced usage, see [cross-compile.md](cross-compile.md).
+
+### Using Docker
+
+You can also run the test suite using Docker:
+
+```bash
+# Build the Docker image
+docker build -t a2a-test-suite .
+
+# Run tests against your server
+docker run a2a-test-suite run-tests --url http://your-server-url
+```
+
+For complete Docker instructions, see [docker-guide.md](docker-guide.md).
+
+### What Gets Tested
+
+The test runner will evaluate your server implementation across multiple areas:
+
+1. **Agent Card**: Retrieves your agent's capabilities card
+2. **Basic Task Operations**: Task creation, retrieval, and cancellation
+3. **Streaming**: Tests real-time updates via Server-Sent Events (if supported)
+4. **Push Notifications**: Tests webhook configuration (if supported)
+5. **Task Batching**: Tests batch creation and management
+6. **Agent Skills**: Tests skill discovery and invocation (unofficial/extensions)
+7. **Error Handling**: Tests proper error responses
+8. **File Operations**: Tests file uploads, listing, and downloads
+
+The test suite automatically adapts based on the capabilities reported in your agent card, skipping tests for features your implementation doesn't support.
+
+### Implementation Checklist
+
+If you're implementing an A2A server, check out our [server implementation checklist](server-checklist.md) to ensure you've covered all the required endpoints and features.
 
 ## Future Possibilities
 

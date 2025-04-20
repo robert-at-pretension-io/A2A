@@ -2,9 +2,8 @@ use std::error::Error;
 use serde_json::{json, Value};
 
 use crate::client::A2aClient;
-use crate::client::errors::ClientError; // Add ClientError import
-// Remove ErrorCompatibility import
-// use crate::client::error_handling::ErrorCompatibility;
+use crate::client::errors::ClientError;
+use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{PushNotificationConfig, AuthenticationInfo, TaskPushNotificationConfig, TaskIdParams};
 
 impl A2aClient {
@@ -56,7 +55,10 @@ impl A2aClient {
         auth_scheme: Option<&str>,
         token: Option<&str>
     ) -> Result<String, Box<dyn Error>> {
-        self.set_task_push_notification_typed(task_id, webhook_url, auth_scheme, token).await.into_box_error()
+        match self.set_task_push_notification_typed(task_id, webhook_url, auth_scheme, token).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 
     /// Get push notification configuration for a task (typed error version)

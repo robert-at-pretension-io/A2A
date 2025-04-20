@@ -7,8 +7,7 @@ use uuid::Uuid;
 
 use crate::client::A2aClient;
 use crate::client::errors::ClientError;
-// Remove ErrorCompatibility import
-// use crate::client::error_handling::ErrorCompatibility;
+use crate::client::error_handling::ErrorCompatibility;
 use crate::types::{TaskStatus, TaskState, Message, Task, Part, TextPart, Role};
 
 /// Represents a batch of tasks
@@ -187,7 +186,10 @@ impl A2aClient {
 
     /// Get batch status summary (backward compatible)
     pub async fn get_batch_status(&mut self, batch_id: &str) -> Result<BatchStatusSummary, Box<dyn Error>> {
-        self.get_batch_status_typed(batch_id).await.into_box_error()
+        match self.get_batch_status_typed(batch_id).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 
     /// Cancel all tasks in a batch (typed error version)
@@ -207,7 +209,10 @@ impl A2aClient {
 
     /// Cancel all tasks in a batch (backward compatible)
     pub async fn cancel_batch(&mut self, batch_id: &str) -> Result<BatchStatusSummary, Box<dyn Error>> {
-        self.cancel_batch_typed(batch_id).await.into_box_error()
+        match self.cancel_batch_typed(batch_id).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 
     /// Get all tasks in a batch (typed error version)
@@ -227,7 +232,10 @@ impl A2aClient {
 
     /// Get all tasks in a batch (backward compatible)
     pub async fn get_batch_tasks(&mut self, batch_id: &str) -> Result<Vec<Task>, Box<dyn Error>> {
-        self.get_batch_tasks_typed(batch_id).await.into_box_error()
+        match self.get_batch_tasks_typed(batch_id).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 }
 
@@ -286,8 +294,8 @@ mod tests {
     use mockito::Server; // Add mockito import
     use tokio::test; // Add tokio import
 
-    #[test]
-    fn test_derive_batch_status() {
+    #[tokio::test]
+    async fn test_derive_batch_status() {
         // Test case 1: All tasks completed
         let mut counts = HashMap::new();
         counts.insert(TaskState::Completed, 5);

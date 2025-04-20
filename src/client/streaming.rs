@@ -8,9 +8,8 @@ use crate::types::{Part, TextPart};
 use serde_json::{json, Value};
 
 use crate::client::A2aClient;
-use crate::client::errors::{ClientError, A2aError}; // Add A2aError import
-// Remove ErrorCompatibility import
-// use crate::client::error_handling::ErrorCompatibility;
+use crate::client::errors::{ClientError, A2aError}; 
+use crate::client::error_handling::{ErrorCompatibility, self};
 use crate::types::{Message, Task, Artifact, TaskSendParams, TaskQueryParams};
 
 /// Response from a streaming task operation
@@ -36,7 +35,10 @@ impl A2aClient {
 
     /// Send a task with streaming response enabled via SSE (backward compatible)
     pub async fn send_task_subscribe(&mut self, text: &str) -> Result<StreamingResponseStream, Box<dyn Error>> {
-        self.send_task_subscribe_typed(text).await.into_box_error()
+        match self.send_task_subscribe_typed(text).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 
     /// Send a task with streaming response enabled via SSE and optional metadata as JSON string (backward compatible)
@@ -66,7 +68,7 @@ impl A2aClient {
             json!({})
         };
         
-        self.send_task_subscribe_with_metadata(text, &metadata).await.into_box_error()
+        self.send_task_subscribe_with_metadata(text, &metadata).await
     }
 
     /// Send a task with streaming response enabled via SSE and metadata (typed error version)
@@ -126,7 +128,10 @@ impl A2aClient {
 
     /// Send a task with streaming response enabled via SSE and metadata (backward compatible)
     pub async fn send_task_subscribe_with_metadata(&mut self, text: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
-        self.send_task_subscribe_with_metadata_typed(text, metadata).await.into_box_error()
+        match self.send_task_subscribe_with_metadata_typed(text, metadata).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 
     /// Resubscribe to an existing task's streaming updates (typed error version)
@@ -137,7 +142,10 @@ impl A2aClient {
 
     /// Resubscribe to an existing task's streaming updates (backward compatible)
     pub async fn resubscribe_task(&mut self, task_id: &str) -> Result<StreamingResponseStream, Box<dyn Error>> {
-        self.resubscribe_task_typed(task_id).await.into_box_error()
+        match self.resubscribe_task_typed(task_id).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 
     /// Resubscribe to a task's streaming updates with metadata (typed error version)
@@ -176,7 +184,10 @@ impl A2aClient {
 
     /// Resubscribe to a task's streaming updates with metadata (backward compatible)
     pub async fn resubscribe_task_with_metadata(&mut self, task_id: &str, metadata: &serde_json::Value) -> Result<StreamingResponseStream, Box<dyn Error>> {
-        self.resubscribe_task_with_metadata_typed(task_id, metadata).await.into_box_error()
+        match self.resubscribe_task_with_metadata_typed(task_id, metadata).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 
     /// Send a streaming request and return a stream of responses (typed error version)

@@ -139,7 +139,7 @@ mod tests {
         });
         
         let client = A2aClient::new("http://example.com");
-        let message = client.create_text_and_data_message(
+        let message = client.create_text_and_data_message_typed(
             "Here's my user data", &data
         ).unwrap();
         
@@ -235,7 +235,7 @@ mod tests {
         });
         
         // Create message with text and data
-        let message = client.create_text_and_data_message("Here's data", &data1).unwrap();
+        let message = client.create_text_and_data_message_typed("Here's data", &data1).unwrap();
         
         // Extract data parts
         let data_parts = A2aClient::extract_data_parts(&message);

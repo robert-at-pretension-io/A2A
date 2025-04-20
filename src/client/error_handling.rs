@@ -3,19 +3,18 @@ use crate::client::errors::{ClientError, A2aError, error_codes};
 use std::error::Error;
 use serde_json::json;
 
-// Remove the ErrorCompatibility trait and its implementation as it's no longer needed
-// pub trait ErrorCompatibility<T> {
-//     fn into_box_error(self) -> Result<T, Box<dyn Error>>;
-// }
-//
-// impl<T> ErrorCompatibility<T> for Result<T, ClientError> {
-//     fn into_box_error(self) -> Result<T, Box<dyn Error>> {
-//         match self {
-//             Ok(value) => Ok(value),
-//             Err(err) => Err(Box::new(err) as Box<dyn Error>),
-//         }
-//     }
-// }
+pub trait ErrorCompatibility<T> {
+    fn into_box_error(self) -> Result<T, Box<dyn Error>>;
+}
+
+impl<T> ErrorCompatibility<T> for Result<T, ClientError> {
+    fn into_box_error(self) -> Result<T, Box<dyn Error>> {
+        match self {
+            Ok(value) => Ok(value),
+            Err(err) => Err(Box::new(err) as Box<dyn Error>),
+        }
+    }
+}
 
 impl A2aClient {
     /// Get a task by ID with improved error handling
@@ -105,21 +104,29 @@ impl A2aClient {
     
     /// Compatibility version of send_task that returns Box<dyn Error>
     pub async fn send_task_compat(&mut self, text: &str) -> Result<crate::types::Task, Box<dyn Error>> {
-        self.send_task(text).await.into_box_error()
+        match self.send_task(text).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
     
     /// Compatibility version of get_task that returns Box<dyn Error>
     pub async fn get_task_compat(&mut self, task_id: &str) -> Result<crate::types::Task, Box<dyn Error>> {
-        self.get_task(task_id).await.into_box_error()
+        match self.get_task(task_id).await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
     
     /// Compatibility version of get_agent_card that returns Box<dyn Error>
     pub async fn get_agent_card_compat(&self) -> Result<crate::types::AgentCard, Box<dyn Error>> {
-        self.get_agent_card().await.into_box_error()
+        match self.get_agent_card().await {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Box::new(err))
+        }
     }
 }
 
-// Remove utility function as it's no longer needed
-// pub fn convert_client_error(err: ClientError) -> Box<dyn Error> {
-//     Box::new(err)
-// }
+pub fn convert_client_error(err: ClientError) -> Box<dyn Error> {
+    Box::new(err)
+}

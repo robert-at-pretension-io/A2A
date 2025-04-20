@@ -1,0 +1,142 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: a2a-test-suite
+            asset_name: a2a-test-suite-linux-amd64
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact_name: a2a-test-suite
+            asset_name: a2a-test-suite-macos-intel
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact_name: a2a-test-suite
+            asset_name: a2a-test-suite-macos-arm64
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact_name: a2a-test-suite.exe
+            asset_name: a2a-test-suite-windows-amd64.exe
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+          
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }}
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: |
+            A2A Test Suite - Release ${{ github.ref_name }}
+            
+            This release includes binaries for:
+            - Windows (x86_64)
+            - macOS (Intel)
+            - macOS (Apple Silicon)
+            - Linux (x86_64)
+            
+            ## Usage
+            
+            ```bash
+            # Test your A2A server
+            ./a2a-test-suite run-tests --url http://your-server-url
+            
+            # Include unofficial tests
+            ./a2a-test-suite run-tests --url http://your-server-url --run-unofficial
+            ```
+            
+            For complete documentation, please see the README.md and cross-compile.md files.
+          draft: false
+          prerelease: false
+          
+      - name: Output Release URL
+        run: echo "Release URL ${{ steps.create_release.outputs.upload_url }}"
+          
+  upload-release:
+    name: Upload Release Asset
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    strategy:
+      matrix:
+        include:
+          - asset_name: a2a-test-suite-linux-amd64
+            asset_path: a2a-test-suite
+            asset_content_type: application/octet-stream
+            
+          - asset_name: a2a-test-suite-macos-intel
+            asset_path: a2a-test-suite
+            asset_content_type: application/octet-stream
+            
+          - asset_name: a2a-test-suite-macos-arm64
+            asset_path: a2a-test-suite
+            asset_content_type: application/octet-stream
+            
+          - asset_name: a2a-test-suite-windows-amd64.exe
+            asset_path: a2a-test-suite.exe
+            asset_content_type: application/octet-stream
+    
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+          
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./${{ matrix.asset_path }}
+          asset_name: ${{ matrix.asset_name }}
+          asset_content_type: ${{ matrix.asset_content_type }}

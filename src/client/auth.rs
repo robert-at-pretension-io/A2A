@@ -367,7 +367,7 @@ mod tests {
         let mut client = A2aClient::new(&server.url())
             .with_auth(auth_header, auth_value);
         
-        let result = client.cancel_task(task_id).await;
+        let result = client.cancel_task_typed(task_id).await;
         
         // Assert
         assert!(result.is_ok());
