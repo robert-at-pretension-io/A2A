@@ -4,7 +4,6 @@ use crate::types::{AgentCard, AgentCapabilities};
 use std::error::Error;
 use std::sync::Arc; // Keep Arc
 use std::time::Duration;
-use tokio::process::Child;
 use tokio::sync::Mutex; // Use Tokio's Mutex for the client
 use colored::*; // For colored output
 use futures_util::StreamExt; // Add StreamExt for .next()
@@ -1122,53 +1121,59 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
 
 // --- Mock Server Management ---
 
-/// RAII guard to ensure the mock server process is killed
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use crate::mock_server;
+
+// Use a global flag to track if the server is running
+static SERVER_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// RAII guard to manage the mock server's lifetime
 struct MockServerGuard {
-    child: Option<Child>,
+    // There's no process to kill, just a flag to track
+    _private: (),
 }
 
 impl Drop for MockServerGuard {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            println!("{}", "🛑 Stopping local mock server...".yellow());
-            // Attempt to kill the process
-            if let Err(e) = child.start_kill() {
-                eprintln!("{} {}", "⚠️ Failed to kill mock server process:".red(), e);
-            } else {
-                 // Optional: Wait briefly for the process to exit
-                 // This might require making the drop async or using a blocking wait
-                 // For simplicity, we'll just send the kill signal here.
-                 println!("{}", "✅ Mock server stop signal sent.".green());
-            }
-        }
+        // We can't actually stop the server since it runs in a blocking way,
+        // but we can signal that it's no longer needed
+        SERVER_RUNNING.store(false, Ordering::SeqCst);
+        println!("{}", "🛑 Local mock server will exit when tests complete.".yellow());
     }
 }
 
 /// Starts the local mock server if no target URL is provided in the config.
-/// Returns a guard to manage the server process lifetime and the URL to test against.
+/// Returns a guard to manage the server tracking and the URL to test against.
 async fn start_mock_server_if_needed(config: &TestRunnerConfig) -> Result<(MockServerGuard, String), Box<dyn Error>> {
     if let Some(url) = &config.target_url {
         // Use provided URL, no server to manage
-        Ok((MockServerGuard { child: None }, url.clone()))
+        Ok((MockServerGuard { _private: () }, url.clone()))
     } else {
         // Start local mock server
-        let port = 8080; // Or choose a random available port
+        let port = 8080; // Fixed port for now
         let url = format!("http://localhost:{}", port);
         println!("{} {}", "🚀 Starting local mock server on port".blue().bold(), port.to_string().cyan());
 
-        let mut command = tokio::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string()));
-        command.args(["run", "--quiet", "--", "server", "--port", &port.to_string()]);
-        command.kill_on_drop(true); // Ensure it's killed if the command handle is dropped
-
-        let child = command.spawn()
-            .map_err(|e| format!("Failed to start mock server: {}. Is cargo in PATH?", e))?;
-
-        println!("{} {}", "⏳ Waiting for local server to start... PID:".yellow(), child.id().unwrap_or(0));
-        // TODO: Implement a more robust check (e.g., polling /.well-known/agent.json)
-        tokio::time::sleep(Duration::from_secs(4)).await; // Increased sleep
-
-        println!("{}", "✅ Local mock server started.".green());
-        Ok((MockServerGuard { child: Some(child) }, url))
+        // Only start the server if it's not already running
+        if !SERVER_RUNNING.load(Ordering::SeqCst) {
+            SERVER_RUNNING.store(true, Ordering::SeqCst);
+            
+            // Start the mock server in a dedicated thread
+            thread::spawn(move || {
+                // Start the mock server (this is a blocking call)
+                mock_server::start_mock_server(port);
+            });
+            
+            // Wait a moment for the server to start
+            println!("{}", "⏳ Waiting for local server to start...".yellow());
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        } else {
+            println!("{}", "✅ Using existing local mock server.".green());
+        }
+        
+        println!("{}", "✅ Local mock server is ready.".green());
+        Ok((MockServerGuard { _private: () }, url))
     }
 }
 
