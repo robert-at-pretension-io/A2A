@@ -35,26 +35,32 @@ jobs:
             asset_name: a2a-test-suite-windows-amd64.exe
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
       
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
           
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --target ${{ matrix.target }}
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
           
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.asset_name }}
           path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          retention-days: 1
+          
+  # Simple workflow to test building only (without release)
+  test-success:
+    name: Test Success
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - run: echo "✅ Build test successful! All platforms built correctly."
           
   create-release:
     name: Create Release
@@ -65,14 +71,11 @@ jobs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     
     steps:
-      - name: Create Release
+      - name: Create GitHub Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          name: Release ${{ github.ref_name }}
           body: |
             A2A Test Suite - Release ${{ github.ref_name }}
             
@@ -95,34 +98,28 @@ jobs:
             For complete documentation, please see the README.md and cross-compile.md files.
           draft: false
           prerelease: false
-          
-      - name: Output Release URL
-        run: echo "Release URL ${{ steps.create_release.outputs.upload_url }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
   upload-release:
     name: Upload Release Asset
     needs: create-release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
-    
     strategy:
       matrix:
         include:
           - asset_name: a2a-test-suite-linux-amd64
             asset_path: a2a-test-suite
-            asset_content_type: application/octet-stream
             
           - asset_name: a2a-test-suite-macos-intel
             asset_path: a2a-test-suite
-            asset_content_type: application/octet-stream
             
           - asset_name: a2a-test-suite-macos-arm64
             asset_path: a2a-test-suite
-            asset_content_type: application/octet-stream
             
           - asset_name: a2a-test-suite-windows-amd64.exe
             asset_path: a2a-test-suite.exe
-            asset_content_type: application/octet-stream
     
     steps:
       - name: Download artifact
@@ -130,13 +127,10 @@ jobs:
         with:
           name: ${{ matrix.asset_name }}
           
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ matrix.asset_path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./${{ matrix.asset_path }}
-          asset_name: ${{ matrix.asset_name }}
-          asset_content_type: ${{ matrix.asset_content_type }}
