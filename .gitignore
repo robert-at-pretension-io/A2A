@@ -1,3 +1,4 @@
 /target
 a2a_schema.json
 *types.rs*
+.aider*

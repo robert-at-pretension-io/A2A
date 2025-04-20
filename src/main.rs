@@ -130,6 +130,10 @@ enum ClientCommands {
         /// Task ID
         #[arg(short, long)]
         id: String,
+        /// Optional metadata as JSON string 
+        /// (e.g. '{"_mock_stream_text_chunks": 3, "_mock_stream_final_state": "failed"}')
+        #[arg(long)]
+        metadata: Option<String>,
     },
     /// Set push notifications for a task
     SetPushNotification {
@@ -450,8 +454,21 @@ fn main() {
                     rt.block_on(async {
                         let mut client = client::A2aClient::new(url);
                         
-                        // Use simple version without metadata for now
-                        let stream_result = client.send_task_subscribe(message).await;
+                        // Use metadata if provided
+                        let stream_result = if let Some(meta) = metadata.as_deref() {
+                            // Parse metadata JSON
+                            match serde_json::from_str::<serde_json::Value>(meta) {
+                                Ok(metadata_value) => {
+                                    client.send_task_subscribe_with_metadata(message, &metadata_value).await
+                                },
+                                Err(e) => {
+                                    eprintln!("Error parsing metadata JSON: {}", e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        } else {
+                            client.send_task_subscribe(message).await
+                        };
                         
                         match stream_result {
                             Ok(mut stream) => {
@@ -500,12 +517,30 @@ fn main() {
                         }
                     });
                 },
-                ClientCommands::ResubscribeTask { url, id } => {
+                ClientCommands::ResubscribeTask { url, id, metadata } => {
                     println!("Resubscribing to task: {}", id);
+                    if let Some(meta) = &metadata {
+                        println!("Using metadata: {}", meta);
+                    }
+                    
                     rt.block_on(async {
                         let mut client = client::A2aClient::new(url);
-                        // Fixed version without using undefined metadata variable
-                        let task_result = client.resubscribe_task(id).await;
+                        
+                        // Use metadata if provided
+                        let task_result = if let Some(meta) = metadata.as_deref() {
+                            // Parse metadata JSON
+                            match serde_json::from_str::<serde_json::Value>(meta) {
+                                Ok(metadata_value) => {
+                                    client.resubscribe_task_with_metadata(id, &metadata_value).await
+                                },
+                                Err(e) => {
+                                    eprintln!("Error parsing metadata JSON: {}", e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        } else {
+                            client.resubscribe_task(id).await
+                        };
                         
                         match task_result {
                             Ok(mut stream) => {
