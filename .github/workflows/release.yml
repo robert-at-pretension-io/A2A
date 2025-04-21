@@ -16,22 +16,22 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact_name: a2a-test-suite
+            artifact_name: a2a-test-suite-linux-amd64
             asset_name: a2a-test-suite-linux-amd64
 
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact_name: a2a-test-suite
+            artifact_name: a2a-test-suite-macos-intel
             asset_name: a2a-test-suite-macos-intel
 
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact_name: a2a-test-suite
+            artifact_name: a2a-test-suite-macos-arm64
             asset_name: a2a-test-suite-macos-arm64
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            artifact_name: a2a-test-suite.exe
+            artifact_name: a2a-test-suite-windows-amd64.exe
             asset_name: a2a-test-suite-windows-amd64.exe
 
     steps:
@@ -133,7 +133,7 @@ jobs:
             asset_path: a2a-test-suite-macos-arm64
             
           - asset_name: a2a-test-suite-windows-amd64.exe
-            asset_path: a2a-test-suite.exe
+            asset_path: a2a-test-suite-windows-amd64.exe
     
     steps:
       - name: Download artifact
