@@ -46,6 +46,15 @@ jobs:
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }}
           
+      - name: Rename binary
+        run: |
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            mv target/${{ matrix.target }}/release/a2a-test-suite.exe target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          else
+            mv target/${{ matrix.target }}/release/a2a-test-suite target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          fi
+        shell: bash
+          
       - name: Upload artifact
         uses: actions/upload-artifact@v4  # Updated to v4
         with:
