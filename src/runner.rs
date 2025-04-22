@@ -165,13 +165,13 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             },
         ).await.ok(); // Ignore result for now, run_test handles logging/counting
 
-        // State History Tests (Conditional)
+        // State History Tests (Conditional, Unofficial)
         if capabilities.state_transition_history { // Access bool directly
              let task_id_clone_hist = id.clone();
              run_test(
                  &results,
                  "Get Task State History",
-                 false,
+                 true, // Unofficial
                  &config,
                  || {
                      let client_clone = Arc::clone(&client_arc);
@@ -189,7 +189,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
              run_test(
                  &results,
                  "Get Task State Metrics",
-                 false,
+                 true, // Unofficial
                  &config,
                  || {
                      let client_clone = Arc::clone(&client_arc);
@@ -327,8 +327,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         results.lock().unwrap().skipped_count += 2; // Increment skipped count
     }
 
-    // --- Task Batching Tests ---
-    println!("{}", "\n--- Task Batching Tests ---".cyan());
+    // --- Task Batching Tests (Unofficial) ---
+    println!("{}", "\n--- Task Batching Tests (Unofficial) ---".cyan());
     let mut batch_id: Option<String> = None;
     {
         let test_num;
@@ -379,7 +379,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         run_test(
             &results,
             "Get Batch Info",
-            false,
+            true, // Unofficial
             &config,
             || {
                 let client_clone = Arc::clone(&client_arc);
@@ -397,7 +397,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         run_test(
             &results,
             "Get Batch Status",
-            false,
+            true, // Unofficial
             &config,
             || {
                 let client_clone = Arc::clone(&client_arc);
@@ -415,7 +415,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         run_test(
             &results,
             "Cancel Batch",
-            false,
+            true, // Unofficial
             &config,
             || {
                 let client_clone = Arc::clone(&client_arc);
@@ -623,8 +623,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
          }
     }
 
-    // --- File Operations Tests ---
-    println!("{}", "\n--- File Operations Tests ---".cyan());
+    // --- File Operations Tests (Unofficial) ---
+    println!("{}", "\n--- File Operations Tests (Unofficial) ---".cyan());
     let temp_dir = tempfile::tempdir()?; // RAII temporary directory
     let test_file_path = temp_dir.path().join("test_file.txt");
     let test_file_content = "This is test file content.";
@@ -714,7 +714,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         run_test(
             &results,
             &format!("List files for task {}", ftid),
-            false,
+            true, // Unofficial
             &config,
             || {
                 let client_clone = Arc::clone(&client_arc);
@@ -743,7 +743,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             run_test(
                 &results,
                 &format!("Download file {}", ufid),
-                false,
+                true, // Unofficial
                 &config,
                 || {
                     let client_clone = Arc::clone(&client_arc);
@@ -778,7 +778,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
     run_test(
         &results,
         "Send Task With File Attachment",
-        false,
+        true, // Unofficial
         &config,
         || {
             let client_clone = Arc::clone(&client_arc);
@@ -838,7 +838,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         run_test(
             &results,
             "Get Task Details with Data",
-            false,
+            true, // Unofficial
             &config,
             || {
                 let client_clone = Arc::clone(&client_arc);
