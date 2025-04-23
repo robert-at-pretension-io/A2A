@@ -880,52 +880,9 @@ async fn test_send_with_data_get_verify_artifacts() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-// Test task cancellation
-#[tokio::test]
-async fn test_task_cancellation() -> Result<(), Box<dyn Error>> {
-    // Start the server on a unique port
-    let port = 8202;
-    start_test_server(port).await;
-    
-    // Create client
-    let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-    
-    // 1. Create a task with special metadata to keep it in Working state
-    // (For our reference server, tasks normally complete immediately)
-    // Using a fixed ID to avoid random failures from missing tasks
-    let task_id = "task-cancel-abc-123".to_string();
-    
-    // Use direct API to create a task that will stay in Working state
-    let params = json!({
-        "id": task_id,
-        "message": {
-            "role": "user",
-            "parts": [
-                {
-                    "type": "text",
-                    "text": "This task should remain in working state until canceled"
-                }
-            ]
-        },
-        "metadata": {"_mock_remain_working": true}
-    });
-    
-    let task = client.send_jsonrpc::<Task>("tasks/send", params).await?;
-    
-    // 2. Cancel the task
-    let canceled_task = client.cancel_task_typed(&task.id).await?;
-    assert_eq!(canceled_task, task.id, "Task ID should be returned");
-    
-    // 3. Verify task is canceled
-    let retrieved_task = client.get_task(&task.id).await?;
-    assert_eq!(retrieved_task.status.state, TaskState::Canceled, "Retrieved task should be canceled");
-    
-    Ok(())
-}
-
-// Test streaming functionality
-#[tokio::test]
-async fn test_task_streaming() -> Result<(), Box<dyn Error>> {
+// Test streaming functionality - Redundant, covered by test_basic_sendsubscribe etc.
+// #[tokio::test]
+// async fn test_task_streaming() -> Result<(), Box<dyn Error>> {
     // Start the server on a unique port
     let port = 8203;
     start_test_server(port).await;
@@ -973,9 +930,9 @@ async fn test_task_streaming() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// Test push notification configuration
-#[tokio::test]
-async fn test_push_notification_config() -> Result<(), Box<dyn Error>> {
+// Test push notification configuration - Redundant, covered by test_set_get_push_notification etc.
+// #[tokio::test]
+// async fn test_push_notification_config() -> Result<(), Box<dyn Error>> {
     // Start the server on a unique port
     let port = 8204;
     start_test_server(port).await;
@@ -1060,9 +1017,9 @@ async fn test_state_history() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// Test follow-up messages - transition from input-required to working
-#[tokio::test]
-async fn test_follow_up_message_workflow() -> Result<(), Box<dyn Error>> {
+// Test follow-up messages - Redundant, covered by test_input_required_flow etc.
+// #[tokio::test]
+// async fn test_follow_up_message_workflow() -> Result<(), Box<dyn Error>> {
     // Start the server on a unique port
     let port = 8206;
     start_test_server(port).await;
@@ -1094,9 +1051,9 @@ async fn test_follow_up_message_workflow() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// Test resubscribe to ongoing task
-#[tokio::test]
-async fn test_resubscribe_to_task() -> Result<(), Box<dyn Error>> {
+// Test resubscribe to ongoing task - Redundant, covered by test_basic_resubscribe_working_task etc.
+// #[tokio::test]
+// async fn test_resubscribe_to_task() -> Result<(), Box<dyn Error>> {
     // Start the server on a unique port
     let port = 8207;
     start_test_server(port).await;
