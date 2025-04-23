@@ -27,6 +27,7 @@ pub mod error_handling; // Add specialized error handling module with new functi
 use errors::{ClientError, A2aError};
 
 /// A2A Client for interacting with A2A-compatible servers
+#[derive(Clone)]
 pub struct A2aClient {
     http_client: ReqwestClient,
     base_url: String,
@@ -67,7 +68,7 @@ impl A2aClient {
     }
     
     /// Send a JSON-RPC request and receive a response
-    async fn send_jsonrpc<T: serde::de::DeserializeOwned>(
+    pub async fn send_jsonrpc<T: serde::de::DeserializeOwned>(
         &mut self, 
         method: &str, 
         params: Value

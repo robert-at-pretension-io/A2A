@@ -17,6 +17,32 @@ impl<T> ErrorCompatibility<T> for Result<T, ClientError> {
 }
 
 impl A2aClient {
+    /// Resubscribe to an existing task's streaming updates with error handling
+    pub async fn resubscribe_task_with_error_handling(&mut self, task_id: &str) -> Result<crate::client::streaming::StreamingResponseStream, ClientError> {
+        // Delegate to the implementation in streaming.rs
+        self.resubscribe_task_typed(task_id).await
+    }
+    /// Send a task with improved error handling
+    pub async fn send_task_with_error_handling(&mut self, task_id: &str, text: &str) -> Result<crate::types::Task, ClientError> {
+        // Create a message with the text content
+        let message = self.create_text_message(text);
+        
+        // Create request parameters
+        let params = crate::types::TaskSendParams {
+            id: task_id.to_string(),
+            message: message,
+            history_length: None,
+            metadata: None,
+            push_notification: None,
+            session_id: None,
+        };
+        
+        let params_value = serde_json::to_value(params)
+            .map_err(|e| ClientError::JsonError(format!("Failed to serialize params: {}", e)))?;
+        
+        self.send_jsonrpc::<crate::types::Task>("tasks/send", params_value).await
+    }
+
     /// Get a task by ID with improved error handling
     pub async fn get_task_with_error_handling(&mut self, task_id: &str) -> Result<crate::types::Task, ClientError> {
         // Create request parameters using the proper TaskQueryParams type

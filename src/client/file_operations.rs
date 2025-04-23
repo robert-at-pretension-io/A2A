@@ -49,7 +49,7 @@ impl A2aClient {
         
         // Read the file contents
         let file_bytes = fs::read(path)
-            .map_err(|e| ClientError::IoError(e))?;
+            .map_err(|e| ClientError::IoError(format!("{}", e)))?;
         
         // Get file name and mime type
         let file_name = path.file_name()
@@ -245,7 +245,7 @@ impl A2aClient {
         
         // Read the file contents
         let file_bytes = fs::read(path)
-            .map_err(|e| ClientError::IoError(e))?;
+            .map_err(|e| ClientError::IoError(format!("{}", e)))?;
         
         // Get file name and mime type
         let file_name = path.file_name()

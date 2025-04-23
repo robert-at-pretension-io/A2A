@@ -286,7 +286,7 @@ impl A2aClient {
     }
     
     /// Creates a text message with the given content
-    fn create_text_message(&self, text: &str) -> Message {
+    pub fn create_text_message(&self, text: &str) -> Message {
         use crate::types::{TextPart, Part, Role};
         
         let text_part = TextPart {

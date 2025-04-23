@@ -40,11 +40,29 @@ impl A2aClient {
         // Send request and return result
         let response: Value = self.send_jsonrpc("tasks/pushNotification/set", serde_json::to_value(params)?).await?;
         
-        // Extract the task ID from the response
-        match response.get("id").and_then(|id| id.as_str()) {
-            Some(id) => Ok(id.to_string()),
-            None => Err(ClientError::Other("Invalid response: missing task ID".to_string())),
+        // Handle various possible response formats
+        
+        // Format 1: Direct success boolean
+        if let Some(success) = response.as_bool() {
+            if success {
+                return Ok(task_id.to_string());
+            }
         }
+        
+        // Format 2: Success field in an object
+        if let Some(success) = response.get("success") {
+            if success.as_bool().unwrap_or(false) {
+                return Ok(task_id.to_string());
+            }
+        }
+        
+        // Format 3: Task ID present
+        if let Some(id) = response.get("id").and_then(|id| id.as_str()) {
+            return Ok(id.to_string());
+        }
+        
+        // If we get here, we couldn't find a valid response format
+        Err(ClientError::Other("Invalid response format for push notification".to_string()))
     }
 
     /// Set a push notification webhook for a task (backward compatible)
@@ -76,15 +94,59 @@ impl A2aClient {
         let response: Value = self.send_jsonrpc("tasks/pushNotification/get", serde_json::to_value(params)?).await?;
         
         // Extract the push notification config from the response
-        match response.get("pushNotificationConfig") {
-            Some(config) => {
-                match serde_json::from_value::<PushNotificationConfig>(config.clone()) {
-                    Ok(config) => Ok(config),
-                    Err(e) => Err(ClientError::JsonError(format!("Failed to parse push notification config: {}", e)))
-                }
-            },
-            None => Err(ClientError::Other("Invalid response: missing push notification config".to_string())),
+        // Try different response formats
+        
+        // Format 1: Direct PushNotificationConfig
+        if let Ok(config) = serde_json::from_value::<PushNotificationConfig>(response.clone()) {
+            return Ok(config);
         }
+        
+        // Format 2: Wrapped in pushNotificationConfig field
+        if let Some(config) = response.get("pushNotificationConfig") {
+            if let Ok(config_parsed) = serde_json::from_value::<PushNotificationConfig>(config.clone()) {
+                return Ok(config_parsed);
+            }
+        }
+        
+        // Format 3: Converted from raw JSON structure manually
+        if let Some(url) = response.get("url").and_then(|u| u.as_str()) {
+            let mut config = PushNotificationConfig {
+                url: url.to_string(),
+                authentication: None,
+                token: None,
+            };
+            
+            // Extract authentication if available
+            if let Some(auth) = response.get("authentication") {
+                if let Some(schemes) = auth.get("schemes").and_then(|s| s.as_array()) {
+                    let mut auth_info = AuthenticationInfo {
+                        schemes: schemes.iter()
+                                        .filter_map(|s| s.as_str())
+                                        .map(|s| s.to_string())
+                                        .collect(),
+                        credentials: None,
+                        extra: serde_json::Map::new(),
+                    };
+                    
+                    // Extract credentials
+                    if let Some(cred) = auth.get("credentials").and_then(|c| c.as_str()) {
+                        auth_info.credentials = Some(cred.to_string());
+                    }
+                    
+                    config.authentication = Some(auth_info);
+                }
+            }
+            
+            // Extract token if available
+            if let Some(token) = response.get("token").and_then(|t| t.as_str()) {
+                config.token = Some(token.to_string());
+            }
+            
+            return Ok(config);
+        }
+        
+        // No valid format found
+        Err(ClientError::Other("Invalid response format for push notification config".to_string()))
     }
 
     // Remove backward compatible version

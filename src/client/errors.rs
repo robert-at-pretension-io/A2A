@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 
 /// Represents an error returned by the A2A API
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct A2aError {
     pub code: i64,
     pub message: String,
@@ -78,7 +78,7 @@ impl fmt::Display for A2aError {
 impl Error for A2aError {}
 
 /// Represents all possible error types the A2A client might encounter
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ClientError {
     /// JSON-RPC error from the A2A server
     A2aError(A2aError),
@@ -89,8 +89,9 @@ pub enum ClientError {
     /// JSON serialization/deserialization error
     JsonError(String),
     
-    /// File I/O error
-    IoError(std::io::Error),
+    /// File I/O error (note: doesn't support Clone)
+    #[allow(dead_code)]
+    IoError(String),
     
     /// Any other error
     Other(String),
@@ -102,7 +103,7 @@ impl fmt::Display for ClientError {
             ClientError::A2aError(err) => write!(f, "{}", err),
             ClientError::HttpError(msg) => write!(f, "HTTP error: {}", msg),
             ClientError::JsonError(msg) => write!(f, "JSON error: {}", msg),
-            ClientError::IoError(err) => write!(f, "I/O error: {}", err),
+            ClientError::IoError(msg) => write!(f, "I/O error: {}", msg),
             ClientError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -112,7 +113,7 @@ impl Error for ClientError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             ClientError::A2aError(err) => Some(err),
-            ClientError::IoError(err) => Some(err),
+            ClientError::IoError(_) => None,
             _ => None,
         }
     }
@@ -138,7 +139,7 @@ impl From<serde_json::Error> for ClientError {
 
 impl From<std::io::Error> for ClientError {
     fn from(err: std::io::Error) -> Self {
-        ClientError::IoError(err)
+        ClientError::IoError(format!("{}", err))
     }
 }
 

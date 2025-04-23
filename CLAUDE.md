@@ -35,6 +35,7 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 - Property tests: `cargo run --quiet -- test --cases [number]`
 - Validate: `cargo run --quiet -- validate --file [path]`
 - Mock server: `cargo run --quiet -- server --port [port]`
+- Reference server: `cargo run --quiet -- reference-server --port [port]`
 - Fuzzing: `cargo run --quiet -- fuzz --target [target] --time [seconds]`
 - Run integration tests: `cargo run --quiet -- run-tests`
 - Client commands:
@@ -76,7 +77,13 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 ## Project Structure
 - **src/validator.rs**: A2A message JSON schema validation
 - **src/property_tests.rs**: Property-based testing using proptest
-- **src/mock_server.rs**: Reference A2A server implementation with configurable network delay simulation, state machine fidelity, and dynamic streaming content
+- **src/mock_server.rs**: Mock A2A server implementation with configurable network delay simulation, state machine fidelity, and dynamic streaming content
+- **src/server/**: Clean reference A2A server implementation following best practices
+  - **src/server/mod.rs**: Core server setup and entrypoint
+  - **src/server/error.rs**: Server error types and handling
+  - **src/server/repositories/**: Data storage layer
+  - **src/server/services/**: Business logic layer
+  - **src/server/handlers/**: Request handling and routing
 - **src/fuzzer.rs**: Fuzzing tools for A2A message handlers
 - **src/types.rs**: A2A protocol type definitions
 - **src/client/**: A2A client implementation

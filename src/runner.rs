@@ -757,7 +757,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                         let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &download_resp.bytes)
                             .map_err(|e| ClientError::Other(format!("Base64 decode failed: {}", e)))?;
                         std::fs::write(&path_c, decoded)
-                            .map_err(|e| ClientError::IoError(e))?;
+                            .map_err(|e| ClientError::IoError(format!("{}", e)))?;
                         Ok(())
                     }
                 },

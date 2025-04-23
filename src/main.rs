@@ -6,6 +6,7 @@ mod types;
 mod client;
 mod schema_utils; // Add this line
 mod runner; // Add the runner module
+mod server; // Add the reference server module
 #[cfg(test)]
 mod client_tests;
 
@@ -43,6 +44,12 @@ enum Commands {
     Server {
         /// Port to listen on
         #[arg(short, long, default_value_t = 8080)]
+        port: u16,
+    },
+    /// Start a reference A2A server implementation
+    ReferenceServer {
+        /// Port to listen on
+        #[arg(short, long, default_value_t = 8081)]
         port: u16,
     },
     /// Run fuzzing on A2A message handlers
@@ -113,6 +120,16 @@ fn main() {
             println!("Starting mock A2A server on port {}...", port);
             // Call mock server module
             mock_server::start_mock_server(*port);
+        }
+        Commands::ReferenceServer { port } => {
+            println!("Starting reference A2A server on port {}...", port);
+            
+            // Create a runtime for the async server
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            if let Err(e) = rt.block_on(server::run_server(*port)) {
+                eprintln!("Server error: {}", e);
+                std::process::exit(1);
+            }
         }
         Commands::Fuzz { target, time } => {
             println!("Fuzzing {} for {} seconds...", target, time);
