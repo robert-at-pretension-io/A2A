@@ -272,8 +272,10 @@ async fn test_resubscribe_to_nonexistent_task() {
     
     if let Err(err) = result {
         match err {
-            ServerError::TaskNotFound(id) => {
-                assert_eq!(id, non_existent_id, "Error should contain the task ID");
+            ServerError::TaskNotFound(msg) => {
+                // Check if the error message contains the non-existent ID
+                assert!(msg.contains(&non_existent_id), 
+                       "Error message '{}' should contain the task ID '{}'", msg, non_existent_id);
             },
             _ => panic!("Unexpected error type: {:?}", err),
         }
