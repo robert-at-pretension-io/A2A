@@ -166,6 +166,996 @@ async fn test_handler_returns_proper_jsonrpc_errors() {
     assert_eq!(json["error"]["code"], -32700); // Parse error code
 }
 
+// --- tasks/send Edge Cases & Error Handling ---
+
+// Test 1: tasks/send with Extremely Long Text
+#[tokio::test]
+async fn test_tasks_send_long_text() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("long-text-task-{}", Uuid::new_v4());
+    let long_text = "a".repeat(10 * 1024 * 1024); // 10MB string
+    let params = json!({
+        "id": task_id,
+        "message": {
+            "role": "user",
+            "parts": [
+                {
+                    "type": "text",
+                    "text": long_text
+                }
+            ]
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Depending on server limits, this might succeed or fail.
+    // For this test, we assume it succeeds if the server handles large inputs.
+    // A more robust test might check for a specific error if limits are known.
+    if json["error"].is_object() {
+        // If it errors, it should likely be Invalid Parameters or Internal
+        let code = json["error"]["code"].as_i64().unwrap();
+        assert!(code == -32602 || code == -32603, "Expected Invalid Params or Internal Error for too long text, got {}", code);
+    } else {
+        assert!(json["result"].is_object());
+        assert_eq!(json["result"]["id"], task_id);
+        assert_eq!(json["result"]["status"]["state"], "completed"); // Assuming success
+    }
+}
+
+// Test 2: tasks/send with Invalid UTF-8 in Text (Best effort)
+#[tokio::test]
+async fn test_tasks_send_invalid_utf8() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("invalid-utf8-task-{}", Uuid::new_v4());
+    // Simulate invalid UTF-8 bytes (e.g., lone continuation byte)
+    // NOTE: Directly creating invalid strings is tricky. Serde might handle this.
+    // We send a string that JSON can represent, but might cause issues deeper in.
+    // A better test might involve crafting raw bytes if the handler read raw bytes first.
+    let invalid_text = unsafe { String::from_utf8_unchecked(vec![0x80]) }; // Example invalid byte
+
+    let params = json!({
+        "id": task_id,
+        "message": {
+            "role": "user",
+            "parts": [
+                {
+                    "type": "text",
+                    // Serde might escape this, or the handler might fail during deserialization
+                    "text": invalid_text
+                }
+            ]
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Expecting Invalid Parameters due to deserialization failure or validation
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+}
+
+// Test 3: tasks/send with Deeply Nested Metadata
+#[tokio::test]
+async fn test_tasks_send_deeply_nested_metadata() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("nested-metadata-task-{}", Uuid::new_v4());
+    let nested_metadata = json!({
+        "level1": {
+            "level2": {
+                "level3": {
+                    "key": "value",
+                    "array": [1, {"nested_in_array": true}]
+                }
+            }
+        }
+    });
+
+    let params = json!({
+        "id": task_id,
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": "Test"}]
+        },
+        "metadata": nested_metadata
+    });
+
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["result"].is_object());
+    assert_eq!(json["result"]["id"], task_id);
+    assert_eq!(json["result"]["status"]["state"], "completed");
+    // We assume the service layer correctly stored the metadata
+    // Verifying requires peeking into the repo, which this test doesn't do directly.
+}
+
+// Test 4: tasks/send with Null Values in Message
+#[tokio::test]
+async fn test_tasks_send_null_values() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("null-values-task-{}", Uuid::new_v4());
+    let params = json!({
+        "id": task_id,
+        "message": {
+            "role": "user",
+            "parts": [
+                {
+                    "type": "text",
+                    "text": "Test",
+                    "metadata": null // Explicit null for optional field
+                }
+            ],
+            "metadata": null // Explicit null for optional field
+        },
+        "metadata": null // Explicit null for optional task metadata
+    });
+
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["result"].is_object());
+    assert_eq!(json["result"]["id"], task_id);
+    assert_eq!(json["result"]["status"]["state"], "completed");
+}
+
+// Test 5: tasks/send Follow-up to "Working" Task
+#[tokio::test]
+async fn test_tasks_send_follow_up_to_working() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    // Create a task and mock its state to Working
+    let task_id = format!("working-followup-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    // Send follow-up message
+    let params = json!({
+        "id": task_id,
+        "message": {"role": "user", "parts": [{"type": "text", "text": "Follow-up"}]}
+    });
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Expect Invalid Parameters because task is not in InputRequired state
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+    assert!(json["error"]["message"].as_str().unwrap().contains("still processing"));
+}
+
+// Test 6: tasks/send Follow-up to "Canceled" Task
+#[tokio::test]
+async fn test_tasks_send_follow_up_to_canceled() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("canceled-followup-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Canceled, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "message": {"role": "user", "parts": [{"type": "text", "text": "Follow-up"}]}
+    });
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+    assert!(json["error"]["message"].as_str().unwrap().contains("cannot accept follow-up"));
+}
+
+// Test 7: tasks/send Follow-up to "Failed" Task
+#[tokio::test]
+async fn test_tasks_send_follow_up_to_failed() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("failed-followup-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Failed, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "message": {"role": "user", "parts": [{"type": "text", "text": "Follow-up"}]}
+    });
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+    assert!(json["error"]["message"].as_str().unwrap().contains("cannot accept follow-up"));
+}
+
+// Test 8: tasks/send with Non-Object Metadata in Part
+#[tokio::test]
+async fn test_tasks_send_non_object_part_metadata() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("non-object-part-meta-{}", Uuid::new_v4());
+    let params = json!({
+        "id": task_id,
+        "message": {
+            "role": "user",
+            "parts": [
+                {
+                    "type": "text",
+                    "text": "Test",
+                    "metadata": "not-an-object" // Invalid type
+                }
+            ]
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+}
+
+// Test 9: tasks/send with Missing `type` in Part
+#[tokio::test]
+async fn test_tasks_send_missing_part_type() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("missing-part-type-{}", Uuid::new_v4());
+    let params = json!({
+        "id": task_id,
+        "message": {
+            "role": "user",
+            "parts": [
+                {
+                    // Missing "type" field
+                    "text": "Test"
+                }
+            ]
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/send", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+}
+
+// Test 10: tasks/send with `id` Field Mismatch (Body vs. Params)
+#[tokio::test]
+async fn test_tasks_send_id_mismatch() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id_in_params = format!("task-in-params-{}", Uuid::new_v4());
+    let request_id_top_level = "request-id-abc";
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": request_id_top_level, // Different from params.id
+        "method": "tasks/send",
+        "params": {
+            "id": task_id_in_params,
+            "message": {"role": "user", "parts": [{"type": "text", "text": "Test"}]}
+        }
+    });
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/")
+        .header("Content-Type", "application/json")
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Assert response uses the top-level ID
+    assert_eq!(json["id"], request_id_top_level);
+    assert!(json["result"].is_object());
+    // Assert task was created with the ID from params
+    assert_eq!(json["result"]["id"], task_id_in_params);
+    assert_eq!(json["result"]["status"]["state"], "completed");
+
+    // Verify task stored with params ID
+    let stored_task = repository.get_task(&task_id_in_params).await.unwrap();
+    assert!(stored_task.is_some());
+}
+
+
+// --- tasks/sendSubscribe Edge Cases & Error Handling ---
+
+// Test 11: tasks/sendSubscribe with Invalid Message Structure
+#[tokio::test]
+async fn test_tasks_sendsubscribe_invalid_message_structure() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("invalid-subscribe-msg-{}", Uuid::new_v4());
+    let params = json!({
+        "id": task_id,
+        "message": {
+            // Missing "role"
+            "parts": [{"type": "text", "text": "Test"}]
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/sendSubscribe", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+
+    // Should return a JSON error, not SSE
+    assert!(!is_sse_response(&response));
+    let json = extract_response_json(response).await;
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+}
+
+// Test 12: tasks/sendSubscribe for Task Requiring Input
+#[tokio::test]
+async fn test_tasks_sendsubscribe_require_input() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("subscribe-input-req-{}", Uuid::new_v4());
+    let params = json!({
+        "id": task_id,
+        "message": {"role": "user", "parts": [{"type": "text", "text": "Test"}]},
+        "metadata": {"_mock_require_input": true}
+    });
+
+    let req = create_jsonrpc_request("tasks/sendSubscribe", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+
+    // Should return SSE
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(is_sse_response(&response));
+    // Further testing would involve consuming the stream and checking the state
+}
+
+// Test 13: tasks/sendSubscribe for Task That Fails Immediately - Skipped
+// Requires modification of TaskService mock behavior, complex for handler test.
+
+// Test 14: tasks/sendSubscribe with `Accept: application/json` Header
+#[tokio::test]
+async fn test_tasks_sendsubscribe_accept_json() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("subscribe-accept-json-{}", Uuid::new_v4());
+     let params = json!({
+        "id": task_id,
+        "message": {"role": "user", "parts": [{"type": "text", "text": "Test"}]}
+    });
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": "test-request",
+        "method": "tasks/sendSubscribe",
+        "params": params
+    });
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json") // Incorrect Accept for SSE method
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+
+    // Current handler prioritizes method name, so it should still return SSE
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(is_sse_response(&response));
+}
+
+// Test 15: tasks/sendSubscribe with Empty Parts Array
+#[tokio::test]
+async fn test_tasks_sendsubscribe_empty_parts() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("subscribe-empty-parts-{}", Uuid::new_v4());
+    let params = json!({
+        "id": task_id,
+        "message": {
+            "role": "user",
+            "parts": [] // Empty parts
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/sendSubscribe", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+
+    // Should return SSE, likely completing quickly
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(is_sse_response(&response));
+}
+
+
+// --- tasks/get Edge Cases & Error Handling ---
+
+// Test 16: tasks/get Task in "Submitted" State
+#[tokio::test]
+async fn test_tasks_get_submitted_state() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("get-submitted-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Submitted, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({"id": task_id});
+    let req = create_jsonrpc_request("tasks/get", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["result"].is_object());
+    assert_eq!(json["result"]["id"], task_id);
+    assert_eq!(json["result"]["status"]["state"], "submitted");
+}
+
+// Test 17: tasks/get Task in "InputRequired" State
+#[tokio::test]
+async fn test_tasks_get_input_required_state() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("get-inputreq-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::InputRequired, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({"id": task_id});
+    let req = create_jsonrpc_request("tasks/get", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["result"].is_object());
+    assert_eq!(json["result"]["id"], task_id);
+    assert_eq!(json["result"]["status"]["state"], "input-required");
+}
+
+// Test 18: tasks/get Task in "Failed" State
+#[tokio::test]
+async fn test_tasks_get_failed_state() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("get-failed-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Failed, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({"id": task_id});
+    let req = create_jsonrpc_request("tasks/get", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["result"].is_object());
+    assert_eq!(json["result"]["id"], task_id);
+    assert_eq!(json["result"]["status"]["state"], "failed");
+}
+
+// Test 19: tasks/get with Extra Unknown Parameters
+#[tokio::test]
+async fn test_tasks_get_extra_params() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("get-extra-params-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Completed, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "extra_field": "should_be_ignored",
+        "another": 123
+    });
+    let req = create_jsonrpc_request("tasks/get", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Should succeed, ignoring extra fields
+    assert!(json["result"].is_object());
+    assert_eq!(json["result"]["id"], task_id);
+    assert_eq!(json["result"]["status"]["state"], "completed");
+}
+
+
+// --- tasks/cancel Edge Cases & Error Handling ---
+
+// Test 20: tasks/cancel Task in "InputRequired" State
+#[tokio::test]
+async fn test_tasks_cancel_input_required_state() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("cancel-inputreq-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::InputRequired, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({"id": task_id});
+    let req = create_jsonrpc_request("tasks/cancel", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["result"].is_object());
+    assert_eq!(json["result"]["id"], task_id);
+    assert_eq!(json["result"]["status"]["state"], "canceled");
+
+    // Verify state in repo
+    let stored_task = repository.get_task(&task_id).await.unwrap().unwrap();
+    assert_eq!(stored_task.status.state, TaskState::Canceled);
+}
+
+// Test 21: tasks/cancel Task Already Canceled
+#[tokio::test]
+async fn test_tasks_cancel_already_canceled() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("cancel-already-canceled-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Canceled, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({"id": task_id});
+    let req = create_jsonrpc_request("tasks/cancel", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32002); // Task Not Cancelable code
+}
+
+// Test 22: tasks/cancel Non-Existent Task
+#[tokio::test]
+async fn test_tasks_cancel_non_existent() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("cancel-non-existent-{}", Uuid::new_v4());
+    let params = json!({"id": task_id});
+    let req = create_jsonrpc_request("tasks/cancel", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32001); // Task Not Found code
+}
+
+// Test 23: tasks/cancel with Extra Unknown Parameters
+#[tokio::test]
+async fn test_tasks_cancel_extra_params() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("cancel-extra-params-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "reason": "user_request", // Extra field
+        "force": false
+    });
+    let req = create_jsonrpc_request("tasks/cancel", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Should succeed, ignoring extra fields
+    assert!(json["result"].is_object());
+    assert_eq!(json["result"]["id"], task_id);
+    assert_eq!(json["result"]["status"]["state"], "canceled");
+}
+
+
+// --- tasks/pushNotification/set Edge Cases & Error Handling ---
+
+// Test 24: tasks/pushNotification/set with Invalid URL Format
+#[tokio::test]
+async fn test_push_notification_set_invalid_url() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("push-invalid-url-task-{}", Uuid::new_v4());
+     let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "push_notification_config": {
+            "url": "htp:/invalid-url", // Invalid URL scheme/format
+            "authentication": null,
+            "token": null
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/pushNotification/set", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Serde might fail deserializing PushNotificationConfig if URL validation is strict
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+}
+
+// Test 25: tasks/pushNotification/set Overwriting Existing Config
+#[tokio::test]
+async fn test_push_notification_set_overwrite() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("push-overwrite-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    // First set
+    let params1 = json!({
+        "id": task_id,
+        "push_notification_config": {"url": "https://first.example.com"}
+    });
+    let req1 = create_jsonrpc_request("tasks/pushNotification/set", params1);
+    let response1 = jsonrpc_handler(req1, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json1 = extract_response_json(response1).await;
+    assert!(json1["result"].is_object());
+
+    // Second set (overwrite)
+    let params2 = json!({
+        "id": task_id,
+        "push_notification_config": {"url": "https://second.example.com"} // Different URL
+    });
+    let req2 = create_jsonrpc_request("tasks/pushNotification/set", params2);
+    let response2 = jsonrpc_handler(req2, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json2 = extract_response_json(response2).await;
+    assert!(json2["result"].is_object());
+
+    // Get and verify the second config is stored
+    let get_params = json!({"id": task_id});
+    let get_req = create_jsonrpc_request("tasks/pushNotification/get", get_params);
+    let get_response = jsonrpc_handler(get_req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let get_json = extract_response_json(get_response).await;
+
+    assert!(get_json["result"].is_object());
+    assert!(get_json["result"]["pushNotificationConfig"].is_object());
+    assert_eq!(get_json["result"]["pushNotificationConfig"]["url"], "https://second.example.com");
+}
+
+// Test 26: tasks/pushNotification/set with Empty Auth Schemes
+#[tokio::test]
+async fn test_push_notification_set_empty_auth_schemes() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("push-empty-schemes-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "push_notification_config": {
+            "url": "https://example.com",
+            "authentication": {
+                "schemes": [], // Empty schemes array
+                "credentials": "some-token"
+            }
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/pushNotification/set", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Should succeed
+    assert!(json["result"].is_object());
+
+    // Verify stored config
+    let config = repository.get_push_notification_config(&task_id).await.unwrap().unwrap();
+    assert!(config.authentication.is_some());
+    assert!(config.authentication.unwrap().schemes.is_empty());
+}
+
+// Test 27: tasks/pushNotification/set with Null Credentials
+#[tokio::test]
+async fn test_push_notification_set_null_credentials() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("push-null-creds-task-{}", Uuid::new_v4());
+     let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "push_notification_config": {
+            "url": "https://example.com",
+            "authentication": {
+                "schemes": ["Bearer"],
+                "credentials": null // Explicit null credentials
+            }
+        }
+    });
+
+    let req = create_jsonrpc_request("tasks/pushNotification/set", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Should succeed
+    assert!(json["result"].is_object());
+
+    // Verify stored config
+    let config = repository.get_push_notification_config(&task_id).await.unwrap().unwrap();
+    assert!(config.authentication.is_some());
+    assert!(config.authentication.unwrap().credentials.is_none());
+}
+
+// Test 28: tasks/pushNotification/set for Completed Task
+#[tokio::test]
+async fn test_push_notification_set_completed_task() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("push-completed-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Completed, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "push_notification_config": {"url": "https://example.com"}
+    });
+
+    let req = create_jsonrpc_request("tasks/pushNotification/set", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Should succeed
+    assert!(json["result"].is_object());
+    assert!(repository.get_push_notification_config(&task_id).await.unwrap().is_some());
+}
+
+
+// --- tasks/pushNotification/get Edge Cases & Error Handling ---
+
+// Test 29: tasks/pushNotification/get for Task Without Config
+#[tokio::test]
+async fn test_push_notification_get_no_config() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("push-get-no-config-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap(); // Task exists, but no config saved
+
+    let params = json!({"id": task_id});
+    let req = create_jsonrpc_request("tasks/pushNotification/get", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Current service logic returns InvalidParameters when config not found
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32602); // Invalid params code
+    assert!(json["error"]["message"].as_str().unwrap().contains("No push notification configuration found"));
+}
+
+// Test 30: tasks/pushNotification/get for Non-Existent Task
+#[tokio::test]
+async fn test_push_notification_get_non_existent_task() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("push-get-non-existent-{}", Uuid::new_v4());
+    let params = json!({"id": task_id});
+    let req = create_jsonrpc_request("tasks/pushNotification/get", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    assert!(json["error"].is_object());
+    assert_eq!(json["error"]["code"], -32001); // Task Not Found code
+}
+
+// Test 31: tasks/pushNotification/get with Extra Unknown Parameters
+#[tokio::test]
+async fn test_push_notification_get_extra_params() {
+    // Setup services
+    let repository = Arc::new(MockTaskRepository::new());
+    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(repository.clone()));
+
+    let task_id = format!("push-get-extra-params-task-{}", Uuid::new_v4());
+    let task = Task {
+        id: task_id.clone(), session_id: None,
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None },
+        artifacts: None, history: None, metadata: None,
+    };
+    repository.add_task(task).await.unwrap();
+    // Save a config
+    let config = PushNotificationConfig { url: "https://example.com".to_string(), authentication: None, token: None };
+    repository.save_push_notification_config(&task_id, &config).await.unwrap();
+
+    let params = json!({
+        "id": task_id,
+        "include_details": true // Extra param
+    });
+    let req = create_jsonrpc_request("tasks/pushNotification/get", params);
+    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
+    let json = extract_response_json(response).await;
+
+    // Should succeed, ignoring extra fields
+    assert!(json["result"].is_object());
+    assert!(json["result"]["pushNotificationConfig"].is_object());
+    assert_eq!(json["result"]["pushNotificationConfig"]["url"], "https://example.com");
+}
+
 // Test creating a simple task with text content returns a valid task ID and "working" state
 #[tokio::test]
 async fn test_tasks_send_endpoint() {
