@@ -2168,7 +2168,14 @@ async fn test_wild_push_notification_complex_extra() {
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
     let task_id = format!("push-complex-extra-{}", Uuid::new_v4());
-    let task = Task { id: task_id.clone(), status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None } session_id: None, artifacts: None, history: None, metadata: None };
+    let task = Task { 
+        id: task_id.clone(), 
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None }, 
+        session_id: None, 
+        artifacts: None, 
+        history: None, 
+        metadata: None 
+    };
     repository.add_task(task).await.unwrap();
 
     let complex_extra = json!({
@@ -2334,8 +2341,22 @@ async fn test_wild_get_history_length_exceeds() {
 
     let task_id = format!("get-history-exceed-{}", Uuid::new_v4());
     // Create task and save 2 history entries manually
-    let task1 = Task { id: task_id.clone(), status: TaskStatus { state: TaskState::Submitted, timestamp: Some(Utc::now()), message: None } session_id: None, artifacts: None, history: None, metadata: None };
-    let task2 = Task { id: task_id.clone(), status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None } session_id: None, artifacts: None, history: None, metadata: None };
+    let task1 = Task { 
+        id: task_id.clone(), 
+        status: TaskStatus { state: TaskState::Submitted, timestamp: Some(Utc::now()), message: None }, 
+        session_id: None, 
+        artifacts: None, 
+        history: None, 
+        metadata: None 
+    };
+    let task2 = Task { 
+        id: task_id.clone(), 
+        status: TaskStatus { state: TaskState::Working, timestamp: Some(Utc::now()), message: None }, 
+        session_id: None, 
+        artifacts: None, 
+        history: None, 
+        metadata: None 
+    };
     repository.add_task(task2.clone()).await.unwrap(); // Save final state as the main task
     repository.save_state_history(&task_id, &task1).await.unwrap();
     repository.save_state_history(&task_id, &task2).await.unwrap();
@@ -2502,7 +2523,14 @@ async fn test_wild_followup_wrong_role() {
 
     // Create a task that requires input
     let task_id = format!("followup-wrong-role-{}", Uuid::new_v4());
-    let task = Task { id: task_id.clone(), status: TaskStatus { state: TaskState::InputRequired, timestamp: Some(Utc::now()), message: None } session_id: None, artifacts: None, history: None, metadata: None };
+    let task = Task { 
+        id: task_id.clone(), 
+        status: TaskStatus { state: TaskState::InputRequired, timestamp: Some(Utc::now()), message: None }, 
+        session_id: None, 
+        artifacts: None, 
+        history: None, 
+        metadata: None 
+    };
     repository.add_task(task).await.unwrap();
 
     // Send follow-up with role: Agent instead of User
