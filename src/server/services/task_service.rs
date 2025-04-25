@@ -8,7 +8,9 @@ use uuid::Uuid;
 
 // Conditionally import bidirectional components
 #[cfg(feature = "bidir-local-exec")]
-use crate::bidirectional_agent::{TaskRouter, ToolExecutor, RoutingDecision};
+use crate::bidirectional_agent::{TaskRouter, ToolExecutor};
+#[cfg(feature = "bidir-local-exec")]
+use crate::bidirectional_agent::task_router::RoutingDecision;
 
 
 pub struct TaskService {
@@ -46,10 +48,14 @@ impl TaskService {
             return self.process_follow_up(existing_task, Some(params.message)).await;
         }
         
+        // Clone the necessary parts to avoid partial moves
+        let metadata_clone = params.metadata.clone();
+        let session_id_clone = params.session_id.clone();
+        
         // Create new task
         let mut task = Task {
             id: task_id.clone(),
-            session_id: Some(params.session_id.unwrap_or_else(|| format!("session-{}", Uuid::new_v4()))),
+            session_id: Some(session_id_clone.unwrap_or_else(|| format!("session-{}", Uuid::new_v4()))),
             status: TaskStatus {
                 state: TaskState::Working,
                 timestamp: Some(Utc::now()),
@@ -57,7 +63,7 @@ impl TaskService {
             },
             artifacts: None,
             history: None,
-            metadata: params.metadata,
+            metadata: metadata_clone,
         };
         
         // First save the initial state of the task for state history

@@ -52,8 +52,8 @@ impl ClientManager {
              .map_err(|e| ClientError::Other(format!("Failed to build HTTP client: {}", e)))?;
 
 
-        // 3. Create the A2aClient instance
-        let mut a2a_client = A2aClient::new_with_client(agent_url, http_client); // Assuming A2aClient has this constructor
+        // 3. Create the A2aClient instance - use standard constructor since new_with_client isn't available
+        let mut a2a_client = A2aClient::new(agent_url);
 
         // 4. Configure authentication based on agent card and self config
         if let Some(required_auth) = &agent_card.authentication {
@@ -157,7 +157,14 @@ impl ClientManager {
         let mut client = self.get_or_create_client(agent_id).await?;
         // Use the existing send_task_with_metadata method, passing metadata if present
         let metadata_str = params.metadata.map(|m| serde_json::to_string(&m).unwrap_or_default());
-        client.send_task_with_metadata(&params.message.parts[0].to_string(), metadata_str.as_deref()).await // Assuming first part is text for simplicity
+        
+        // Extract text from message parts - assuming first part is TextPart 
+        let text = match &params.message.parts[0] {
+            crate::types::Part::TextPart(text_part) => &text_part.text,
+            _ => "Default message text" // Fallback text if not a TextPart
+        };
+        
+        client.send_task_with_metadata(text, metadata_str.as_deref()).await
          // Note: This simplification might need adjustment based on actual message structure
     }
 

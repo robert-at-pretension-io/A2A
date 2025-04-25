@@ -3,7 +3,8 @@
 #![cfg(feature = "bidir-local-exec")]
 
 use crate::bidirectional_agent::error::AgentError;
-use crate::types::{Task, TaskState, Message, Role, Part, TextPart}; // Import necessary types
+use crate::types::{Task, TaskState, TaskStatus, Message, Role, Part, TextPart}; // Import necessary types
+use serde_json::json;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;

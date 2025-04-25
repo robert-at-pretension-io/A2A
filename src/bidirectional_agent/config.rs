@@ -5,6 +5,7 @@
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path};
 use anyhow::{Context, Result};
+use serde_json::Value;
 
 /// Main configuration for the Bidirectional Agent.
 #[derive(Deserialize, Debug, Clone)]

@@ -93,8 +93,10 @@ impl AgentRegistry {
         let new_card = temp_client.get_agent_card().await
             .with_context(|| format!("Failed to refresh agent card from {}", url))?;
 
-        // Check if the card content has actually changed (simple equality check)
-        if new_card == current_info.card {
+        // Check if the card content has actually changed by comparing key fields
+        if new_card.name == current_info.card.name && 
+           new_card.url == current_info.card.url && 
+           new_card.version == current_info.card.version {
             println!("  ✅ Agent card for '{}' is unchanged.", agent_id);
             // Update last_checked timestamp even if content is the same
             if let Some(mut entry) = self.agents.get_mut(agent_id) {
@@ -116,8 +118,10 @@ impl AgentRegistry {
     /// This should be run in a background task.
     pub async fn run_refresh_loop(&self, interval: Duration) {
         println!("🕰️ Starting agent registry refresh loop (interval: {:?})", interval);
+        // Convert chrono::Duration to std::time::Duration
+        let std_duration = std::time::Duration::from_secs(interval.num_seconds() as u64);
         loop {
-            tokio::time::sleep(interval.into()).await;
+            tokio::time::sleep(std_duration).await;
             println!("🔄 Running periodic agent refresh...");
             let agent_ids: Vec<String> = self.agents.iter().map(|e| e.key().clone()).collect();
             for agent_id in agent_ids {
