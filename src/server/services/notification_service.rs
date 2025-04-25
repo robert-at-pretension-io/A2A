@@ -1,5 +1,5 @@
 use crate::types::{PushNotificationConfig, TaskPushNotificationConfig, TaskIdParams};
-use crate::server::repositories::task_repository::TaskRepository;
+use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository};
 use crate::server::ServerError;
 use std::sync::Arc;
 

@@ -1,5 +1,5 @@
 use crate::types::{Task, TaskStatusUpdateEvent, TaskArtifactUpdateEvent};
-use crate::server::repositories::task_repository::TaskRepository;
+use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository};
 use crate::server::ServerError;
 use std::sync::Arc;
 use tokio::sync::mpsc;

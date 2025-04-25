@@ -11,6 +11,9 @@ use crate::bidirectional_agent::types::{TaskOrigin, TaskRelationships};
 
 
 /// Task repository trait for storing and retrieving tasks
+///
+/// Note: This trait cannot be used with dyn pointers due to async fn in traits.
+/// Instead, use the specific implementation directly (InMemoryTaskRepository).
 #[async_trait]
 pub trait TaskRepository: Send + Sync + 'static {
     async fn get_task(&self, id: &str) -> Result<Option<Task>, ServerError>;

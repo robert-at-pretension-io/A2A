@@ -5,9 +5,10 @@ edition = "2021"
 
 [features]
 default = []
-bidir-core = ["tokio", "dashmap", "async-trait", "reqwest/rustls-tls", "uuid", "chrono", "log", "env_logger"]
+bidir-core = []
 bidir-local-exec = ["bidir-core"]
 bidir-delegate = ["bidir-local-exec"]
+fuzzing = ["dep:libfuzzer-sys"]
 
 [dependencies]
 # Core dependencies
@@ -51,16 +52,15 @@ tempfile = "3.10" # For creating temporary files/dirs in tests
 # serde_json is already a dependency
 once_cell = "1.17"
 sha2 = "0.10"
-async-trait = { version = "0.1.88", optional = true }
+async-trait = { version = "0.1.88" }
 http = "1.3.1"
-dashmap = { version = "5", optional = true }
-log = { version = "0.4", optional = true }
-env_logger = { version = "0.11", optional = true }
+dashmap = { version = "5" }
+log = { version = "0.4" }
+env_logger = { version = "0.11" }
 anyhow = "1.0" # For easier error handling in registry/config
+thiserror = "1.0" # For deriving Error
+toml = "0.8" # For parsing TOML configuration files
 
 [build-dependencies]
 sha2 = "0.10"
 # reqwest and serde_json are no longer needed *only* here
-
-[features]
-fuzzing = ["libfuzzer-sys"]
