@@ -1,9 +1,14 @@
 use crate::types::{Task, PushNotificationConfig};
 use crate::server::ServerError;
 use async_trait::async_trait;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
+use dashmap::DashMap; // Use DashMap for concurrent side-tables
+
+// Import new types conditionally
+#[cfg(feature = "bidir-delegate")]
+use crate::bidirectional_agent::types::{TaskOrigin, TaskRelationships};
+
 
 /// Task repository trait for storing and retrieving tasks
 #[async_trait]
@@ -19,9 +24,16 @@ pub trait TaskRepository: Send + Sync + 'static {
 
 /// In-memory implementation of the task repository
 pub struct InMemoryTaskRepository {
+    // Use Mutex for primary task data as updates might involve complex logic
     tasks: Arc<Mutex<HashMap<String, Task>>>,
     push_configs: Arc<Mutex<HashMap<String, PushNotificationConfig>>>,
     state_history: Arc<Mutex<HashMap<String, Vec<Task>>>>,
+
+    // Use DashMap for side-tables accessed frequently and concurrently by bidirectional agent
+    #[cfg(feature = "bidir-delegate")]
+    task_origins: Arc<DashMap<String, TaskOrigin>>,
+    #[cfg(feature = "bidir-delegate")]
+    task_relationships: Arc<DashMap<String, TaskRelationships>>,
 }
 
 impl InMemoryTaskRepository {
@@ -30,6 +42,11 @@ impl InMemoryTaskRepository {
             tasks: Arc::new(Mutex::new(HashMap::new())),
             push_configs: Arc::new(Mutex::new(HashMap::new())),
             state_history: Arc::new(Mutex::new(HashMap::new())),
+            // Initialize side-tables only if feature is enabled
+            #[cfg(feature = "bidir-delegate")]
+            task_origins: Arc::new(DashMap::new()),
+            #[cfg(feature = "bidir-delegate")]
+            task_relationships: Arc::new(DashMap::new()),
         }
     }
 }

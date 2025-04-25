@@ -78,6 +78,14 @@ enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
+    /// Start a bidirectional A2A agent (requires 'bidir-core' feature)
+    #[cfg(feature = "bidir-core")]
+    BidirectionalAgent {
+        /// Configuration file path
+        #[arg(short, long, default_value = "bidirectional_agent.toml")]
+        config: String,
+        // Port binding will be handled internally based on config or defaults
+    },
 }
 
 #[derive(Subcommand)]
@@ -194,6 +202,19 @@ fn main() {
                     }
                 }
             }
+        }
+        // Handle the new BidirectionalAgent command
+        #[cfg(feature = "bidir-core")]
+        Commands::BidirectionalAgent { config } => {
+            println!("🚀 Attempting to start Bidirectional A2A Agent...");
+            // Create a runtime for the async agent
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            // Run the agent using the function from the bidirectional_agent module
+            if let Err(e) = rt.block_on(crate::bidirectional_agent::run(&config)) {
+                 eprintln!("❌ Bidirectional Agent failed to run: {}", e);
+                 std::process::exit(1);
+            }
+             println!("🏁 Bidirectional Agent finished."); // Should ideally run indefinitely
         }
     }
 }

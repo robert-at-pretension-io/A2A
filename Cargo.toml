@@ -3,6 +3,12 @@ name = "a2a-test-suite"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+bidir-core = ["tokio", "dashmap", "async-trait", "reqwest/rustls-tls", "uuid", "chrono", "log", "env_logger"]
+bidir-local-exec = ["bidir-core"]
+bidir-delegate = ["bidir-local-exec"]
+
 [dependencies]
 # Core dependencies
 serde = { version = "1.0", features = ["derive"] }
@@ -45,8 +51,12 @@ tempfile = "3.10" # For creating temporary files/dirs in tests
 # serde_json is already a dependency
 once_cell = "1.17"
 sha2 = "0.10"
-async-trait = "0.1.88"
+async-trait = { version = "0.1.88", optional = true }
 http = "1.3.1"
+dashmap = { version = "5", optional = true }
+log = { version = "0.4", optional = true }
+env_logger = { version = "0.11", optional = true }
+anyhow = "1.0" # For easier error handling in registry/config
 
 [build-dependencies]
 sha2 = "0.10"
