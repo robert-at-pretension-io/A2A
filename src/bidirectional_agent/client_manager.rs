@@ -172,10 +172,77 @@ impl ClientManager {
         };
         
         client.send_task_with_metadata(text, metadata_str.as_deref()).await
-         // Note: This simplification might need adjustment based on actual message structure
     }
 
-    // Add methods for streaming, polling etc. in Slice 3
+    /// Retrieves the status of a task from a remote agent.
+    pub async fn get_task_status(&self, agent_id: &str, task_id: &str) -> Result<Task, ClientError> {
+        let mut client = self.get_or_create_client(agent_id).await?;
+        client.get_task(task_id).await
+    }
+
+    /// Periodically polls the status of delegated tasks.
+    /// This should be run in a background task managed by the main agent loop.
+    pub async fn run_delegated_task_poll_loop(&self, interval: chrono::Duration) {
+        println!("🕰️ Starting delegated task polling loop (interval: {:?})", interval);
+        let std_interval = Duration::from_secs(interval.num_seconds() as u64); // Convert to std::time::Duration
+
+        loop {
+            sleep(std_interval).await;
+            println!("🔄 Running periodic check for delegated tasks...");
+
+            // --- Find Delegated Tasks ---
+            // This requires access to the TaskRepository and the TaskOrigin side-table.
+            // For now, we'll assume a way to get these tasks.
+            // let delegated_tasks = self.find_active_delegated_tasks().await;
+            let delegated_tasks: Vec<(String, String, String)> = Vec::new(); // Placeholder
+             println!("  (Placeholder: Found {} active delegated tasks)", delegated_tasks.len());
+
+
+            for (local_task_id, agent_id, remote_task_id) in delegated_tasks {
+                println!("  Checking status for remote task '{}' on agent '{}' (local task '{}')",
+                         remote_task_id, agent_id, local_task_id);
+
+                match self.get_task_status(&agent_id, &remote_task_id).await {
+                    Ok(remote_task) => {
+                         println!("    Remote status: {:?}", remote_task.status.state);
+                        // Update local task status based on remote status
+                        // This also requires access to the TaskRepository.
+                        // self.update_local_task_status(&local_task_id, remote_task).await;
+
+                        if matches!(remote_task.status.state, TaskState::Completed | TaskState::Failed | TaskState::Canceled) {
+                             println!("    ✅ Remote task '{}' reached final state.", remote_task_id);
+                             // Potentially trigger result synthesis or finalization logic here.
+                        }
+                    }
+                    Err(e) => {
+                         println!("    ⚠️ Failed to get status for remote task '{}': {}", remote_task_id, e);
+                         // Handle error (e.g., mark local task as failed)
+                         // self.mark_local_task_as_failed(&local_task_id, e).await;
+                    }
+                }
+            }
+             println!("🔄 Periodic delegated task check complete.");
+        }
+    }
+
+     // --- Placeholder Helper Methods (Requires TaskRepositoryExt access) ---
+
+     // async fn find_active_delegated_tasks(&self) -> Vec<(String, String, String)> {
+     //     // Implementation would iterate through tasks in the repository,
+     //     // check their origin using get_task_origin, and filter for active Delegated tasks.
+     //     vec![]
+     // }
+
+     // async fn update_local_task_status(&self, local_task_id: &str, remote_task: Task) {
+     //     // Implementation would fetch the local task, update its status and artifacts
+     //     // based on the remote_task, and save it back.
+     // }
+
+     // async fn mark_local_task_as_failed(&self, local_task_id: &str, error: ClientError) {
+     //     // Implementation would fetch the local task, set its status to Failed
+     //     // with an appropriate error message, and save it back.
+     // }
+
 }
 
 
