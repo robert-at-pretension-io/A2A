@@ -23,10 +23,10 @@ pub enum AgentError {
     ToolError(String), // Keep this
 
     #[error("Task Flow Error: {0}")]
-    TaskFlowError(String),
+    TaskFlowError(String), // Keep this
 
     #[error("Result Synthesis Error: {0}")]
-    SynthesisError(String),
+    SynthesisError(String), // Keep this
 
     #[error("Delegation Error: {0}")]
     DelegationError(String),

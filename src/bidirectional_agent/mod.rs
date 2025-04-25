@@ -25,11 +25,11 @@ pub mod task_router; // Keep this
 pub mod tools; // Keep this
 
 #[cfg(feature = "bidir-delegate")]
-pub mod task_flow;
+pub mod task_flow; // Keep this
 #[cfg(feature = "bidir-delegate")]
-pub mod result_synthesis;
+pub mod result_synthesis; // Keep this
 #[cfg(feature = "bidir-delegate")]
-pub mod task_extensions;
+pub mod task_extensions; // Keep this
 
 
 // Re-export key types for easier access
@@ -42,6 +42,13 @@ pub use error::AgentError;
 pub use tool_executor::ToolExecutor;
 #[cfg(feature = "bidir-local-exec")]
 pub use task_router::TaskRouter;
+// Add imports for Slice 3 components
+#[cfg(feature = "bidir-delegate")]
+pub use task_flow::TaskFlow;
+#[cfg(feature = "bidir-delegate")]
+pub use result_synthesis::ResultSynthesizer;
+#[cfg(feature = "bidir-delegate")]
+pub use task_extensions::TaskRepositoryExt;
 
 
 /// Main struct representing the Bidirectional Agent.
@@ -56,7 +63,10 @@ pub struct BidirectionalAgent {
     pub tool_executor: Arc<ToolExecutor>,
     #[cfg(feature = "bidir-local-exec")]
     pub task_router: Arc<TaskRouter>,
-    // Add other components like task_repository later
+    // Add components for Slice 3
+    // Note: TaskRepository needs to be Arc<dyn TaskRepositoryExt> potentially
+    pub task_repository: Arc<crate::server::repositories::task_repository::InMemoryTaskRepository>, // Use concrete type for now
+    // Add other components like server handle, background task handles later
 }
 
 impl BidirectionalAgent {
@@ -72,11 +82,15 @@ impl BidirectionalAgent {
         #[cfg(feature = "bidir-local-exec")]
         let task_router = Arc::new(TaskRouter::new(agent_registry.clone(), tool_executor.clone()));
 
+        // Initialize Task Repository (concrete type for now)
+        let task_repository = Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new());
+
 
         Ok(Self {
             config: config_arc,
             agent_registry,
             client_manager,
+            task_repository, // Add repository
             // Initialize Slice 2 fields
             #[cfg(feature = "bidir-local-exec")]
             tool_executor,
@@ -86,12 +100,12 @@ impl BidirectionalAgent {
         })
     }
 
-    /// Initializes and runs the agent's core services.
-    /// This will be expanded to include the server and background tasks.
-    pub async fn run(&self, _port: u16) -> Result<()> {
+    /// Initializes and runs the agent's core services, including the server and background tasks.
+    pub async fn run(&self, port: u16) -> Result<()> {
         println!("🚀 Bidirectional Agent '{}' starting...", self.config.self_id);
 
-        // Initialize agent registry from bootstrap URLs
+        // --- Agent Discovery ---
+        println!("🔍 Discovering initial agents...");
         println!("🔍 Discovering initial agents...");
         for url in &self.config.discovery {
             match self.agent_registry.discover(url).await {
@@ -99,23 +113,51 @@ impl BidirectionalAgent {
                 Err(e) => println!("  ⚠️ Failed to discover agent at {}: {}", url, e),
             }
         }
-        println!("Agent discovery complete.");
+        println!("✅ Agent discovery complete.");
 
-        // --- Placeholder for starting the server (Slice 2/3) ---
-        println!("⏳ Server component not yet implemented (Slice 2/3).");
+        // --- Start Background Tasks (Registry Refresh, Delegated Task Polling) ---
+        let registry_clone = self.agent_registry.clone();
+        let refresh_interval = chrono::Duration::minutes(5); // Example interval
+        let _registry_refresh_handle = tokio::spawn(async move {
+            registry_clone.run_refresh_loop(refresh_interval).await;
+        });
+        println!("✅ Started agent registry refresh loop.");
 
-        // --- Placeholder for starting background tasks (Slice 3) ---
-        println!("⏳ Background task polling not yet implemented (Slice 3).");
+        #[cfg(feature = "bidir-delegate")]
+        {
+            let client_manager_clone = self.client_manager.clone();
+            let poll_interval = chrono::Duration::seconds(30); // Example interval
+             let _delegation_poll_handle = tokio::spawn(async move {
+                client_manager_clone.run_delegated_task_poll_loop(poll_interval).await;
+            });
+            println!("✅ Started delegated task polling loop.");
+        }
 
-        // Keep the agent running (e.g., wait for a shutdown signal)
-        // For now, just print a message and exit for Slice 1.
-        println!("✅ Bidirectional Agent core initialized (Slice 1).");
-        println!("🛑 Agent will exit now. Full server/background tasks in later slices.");
 
-        // In a real scenario, this would loop or wait indefinitely.
-        // tokio::signal::ctrl_c().await?;
-        // println!("🛑 Shutting down Bidirectional Agent...");
+        // --- Start the A2A Server ---
+        println!("🔌 Starting A2A server component on port {}...", port);
+        // We need to pass the necessary components (TaskService, etc.) to the server runner.
+        // This requires modifying src/server/mod.rs to accept these components.
+        // For now, we'll use a placeholder call.
+        // TODO: Update src/server/mod.rs run_server function signature
+        let server_handle = tokio::spawn(async move {
+             // Placeholder: Need to pass TaskService configured with router/executor
+             if let Err(e) = crate::server::run_server(port).await {
+                 eprintln!("❌ Server failed: {}", e);
+             }
+        });
+        println!("✅ A2A Server started.");
 
+
+        // Keep the agent running until interrupted
+        println!("✅ Bidirectional Agent '{}' running. Press Ctrl+C to stop.", self.config.self_id);
+        tokio::signal::ctrl_c().await?;
+        println!("\n🛑 Shutting down Bidirectional Agent...");
+
+        // TODO: Add graceful shutdown logic for server and background tasks
+        server_handle.abort(); // Simple abort for now
+
+        println!("🏁 Bidirectional Agent stopped.");
         Ok(())
     }
 }

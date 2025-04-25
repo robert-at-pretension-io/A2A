@@ -26,6 +26,8 @@ use crate::server::services::notification_service::NotificationService;
 // Conditionally import bidirectional components
 #[cfg(feature = "bidir-local-exec")]
 use crate::bidirectional_agent::{TaskRouter, ToolExecutor};
+#[cfg(feature = "bidir-delegate")]
+use crate::bidirectional_agent::{ClientManager, AgentRegistry};
 
 
 /// Runs the A2A server on the specified port
@@ -33,17 +35,17 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error + Sen
     // Create repositories
     let task_repository = Arc::new(InMemoryTaskRepository::new());
 
-    // Create services
-    // Initialize TaskService potentially with router/executor if feature enabled
-    #[cfg(feature = "bidir-local-exec")]
+    // Create services - Pass bidirectional components if features are enabled
     let task_service = Arc::new(TaskService::new(
         task_repository.clone(),
-        None, // Provide router if available in this context
-        None  // Provide executor if available in this context
-        // Note: In a real app, these might come from an Agent struct
+        // Provide router/executor only if bidir-local-exec is enabled
+        #[cfg(feature = "bidir-local-exec")] None, // Placeholder - these should be passed in
+        #[cfg(feature = "bidir-local-exec")] None, // Placeholder
+        // Provide client_manager/registry only if bidir-delegate is enabled
+        #[cfg(feature = "bidir-delegate")] None, // Placeholder
+        #[cfg(feature = "bidir-delegate")] None, // Placeholder
+        #[cfg(feature = "bidir-delegate")] None, // Placeholder for agent_id
     ));
-    #[cfg(not(feature = "bidir-local-exec"))]
-    let task_service = Arc::new(TaskService::new(task_repository.clone())); // Original constructor
 
     let streaming_service = Arc::new(StreamingService::new(task_repository.clone()));
     let notification_service = Arc::new(NotificationService::new(task_repository.clone()));

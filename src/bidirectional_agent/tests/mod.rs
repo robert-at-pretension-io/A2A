@@ -8,7 +8,7 @@ mod core; // Tests for Slice 1 components
 mod local_exec; // Keep this
 
 #[cfg(feature = "bidir-delegate")]
-mod delegation; // Tests for Slice 3 components
+mod delegation; // Keep this
 
 #[cfg(feature = "bidir-delegate")]
 mod property; // Property tests for Slice 3

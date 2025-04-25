@@ -2,9 +2,12 @@
 
 #![cfg(feature = "bidir-local-exec")]
 
-use crate::bidirectional_agent::agent_registry::AgentRegistry;
-use crate::bidirectional_agent::tool_executor::ToolExecutor;
-use crate::types::TaskSendParams; // Use TaskSendParams for routing decision
+use crate::bidirectional_agent::{
+    agent_registry::AgentRegistry,
+    tool_executor::ToolExecutor,
+    types::SubtaskDefinition, // Import SubtaskDefinition
+};
+use crate::types::TaskSendParams;
 use std::sync::Arc;
 
 /// Represents the decision made by the TaskRouter.
@@ -16,8 +19,21 @@ pub enum RoutingDecision {
     Remote { agent_id: String },
     /// The task cannot be handled locally or remotely.
     Reject { reason: String },
-    // Add Decompose later in Slice 3
+    /// Decompose the task into subtasks.
+    #[cfg(feature = "bidir-delegate")] // Only if delegation is enabled
+    Decompose { subtasks: Vec<SubtaskDefinition> },
 }
+
+/// Definition of a subtask for decomposition.
+#[cfg(feature = "bidir-delegate")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubtaskDefinition {
+    pub id_suffix: String, // Suffix to append to parent task ID
+    pub description: String, // Description or prompt for the subtask
+    pub required_capabilities: Vec<String>, // Capabilities needed for this subtask
+    // Add other fields like dependencies, specific parameters if needed
+}
+
 
 /// Routes incoming tasks to either local execution or remote delegation.
 #[derive(Clone)]
@@ -68,11 +84,23 @@ impl TaskRouter {
         RoutingDecision::Local { tool_names: vec!["echo".to_string()] }
 
         // --- Placeholder for more advanced logic (Slice 3) ---
-        // - Analyze task requirements (skills needed, data types, etc.)
-        // - Check local tool capabilities via self.tool_executor
-        // - Check remote agent capabilities via self.agent_registry
+        // - Analyze task requirements (skills needed, data types, etc.) from params.message
+        // - Check local tool capabilities via self.tool_executor.get_capabilities()
+        // - Check remote agent capabilities via self.agent_registry.all()
         // - Apply routing policy (prefer local, prefer cheapest, specific rules)
+        // - If task is complex, consider RoutingDecision::Decompose
         // - If no suitable local tool or remote agent, return Reject.
+
+        // Example: If task description contains "and", maybe decompose? (Very naive)
+        #[cfg(feature = "bidir-delegate")]
+        if params.message.parts.iter().any(|p| matches!(p, Part::TextPart(tp) if tp.text.contains(" and "))) {
+             println!("  Task might be complex, considering decomposition (placeholder).");
+             // return RoutingDecision::Decompose { subtasks: vec![...] };
+        }
+
+
+        // Fallback to local execution if no other decision is made yet
+         RoutingDecision::Local { tool_names: vec!["echo".to_string()] } // Keep default for now
     }
 }
 
