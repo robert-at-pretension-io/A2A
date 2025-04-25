@@ -6,14 +6,35 @@ use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
 
-/// Service for handling task operations
+// Conditionally import bidirectional components
+#[cfg(feature = "bidir-local-exec")]
+use crate::bidirectional_agent::{TaskRouter, ToolExecutor, RoutingDecision};
+
+
 pub struct TaskService {
     task_repository: Arc<dyn TaskRepository>,
+    // Add fields for bidirectional components, conditionally compiled
+    #[cfg(feature = "bidir-local-exec")]
+    task_router: Option<Arc<TaskRouter>>, // Option<> allows initialization without these features
+    #[cfg(feature = "bidir-local-exec")]
+    tool_executor: Option<Arc<ToolExecutor>>,
 }
 
 impl TaskService {
-    pub fn new(task_repository: Arc<dyn TaskRepository>) -> Self {
-        Self { task_repository }
+    /// Creates a new TaskService.
+    /// Router and executor are optional and only used if the corresponding features are enabled.
+    pub fn new(
+        task_repository: Arc<dyn TaskRepository>,
+        #[cfg(feature = "bidir-local-exec")] router: Option<Arc<TaskRouter>>,
+        #[cfg(feature = "bidir-local-exec")] executor: Option<Arc<ToolExecutor>>,
+    ) -> Self {
+        Self {
+            task_repository,
+            #[cfg(feature = "bidir-local-exec")]
+            task_router: router,
+            #[cfg(feature = "bidir-local-exec")]
+            tool_executor: executor,
+        }
     }
 
     /// Process a new task or a follow-up message
@@ -42,11 +63,74 @@ impl TaskService {
         // First save the initial state of the task for state history
         self.task_repository.save_task(&task).await?;
         self.task_repository.save_state_history(&task.id, &task).await?;
-        
-        // Process the task (simplified implementation for reference server)
-        self.process_task_content(&mut task, Some(params.message)).await?;
-        
-        // Store the updated task
+
+        // --- Routing and Execution Logic (Slice 2) ---
+        #[cfg(feature = "bidir-local-exec")]
+        {
+            if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
+                // Make routing decision based on incoming params
+                let decision = router.decide(&params).await;
+                println!("Routing decision for task {}: {:?}", task.id, decision);
+
+                match decision {
+                    RoutingDecision::Local { tool_names: _ } => { // tool_names ignored for now
+                        // Execute locally using the executor
+                        // The executor updates the task status internally
+                        if let Err(e) = executor.execute_task_locally(&mut task).await {
+                             println!("Local execution failed for task {}: {}", task.id, e);
+                            // Task status is already set to Failed by execute_task_locally
+                        } else {
+                             println!("Local execution successful for task {}", task.id);
+                            // Task status is set to Completed by execute_task_locally
+                        }
+                    }
+                    RoutingDecision::Remote { agent_id } => {
+                        println!("Task {} marked for delegation to agent '{}' (Slice 3)", task.id, agent_id);
+                        // Mark task for delegation (actual delegation in Slice 3)
+                        // For now, just leave it in 'Working' state or a new 'Delegated' state
+                         task.status.state = TaskState::Working; // Placeholder state
+                         task.status.message = Some(Message {
+                             role: Role::Agent,
+                             parts: vec![Part::TextPart(TextPart {
+                                 type_: "text".to_string(),
+                                 text: format!("Task pending delegation to {}", agent_id),
+                                 metadata: None,
+                             })],
+                             metadata: None,
+                         });
+                         // TODO: Add TaskOrigin::Delegated in Slice 3
+                    }
+                    RoutingDecision::Reject { reason } => {
+                         println!("Task {} rejected: {}", task.id, reason);
+                         task.status.state = TaskState::Failed; // Or a new 'Rejected' state
+                         task.status.message = Some(Message {
+                             role: Role::Agent,
+                             parts: vec![Part::TextPart(TextPart {
+                                 type_: "text".to_string(),
+                                 text: format!("Task rejected: {}", reason),
+                                 metadata: None,
+                             })],
+                             metadata: None,
+                         });
+                    }
+                }
+            } else {
+                // Fallback to default processing if router/executor not available
+                 println!("Router/Executor not available, using default processing for task {}", task.id);
+                self.process_task_content(&mut task, Some(params.message)).await?;
+            }
+        }
+
+        // Default processing if bidir-local-exec feature is not enabled
+        #[cfg(not(feature = "bidir-local-exec"))]
+        {
+            // Process the task (simplified implementation for reference server)
+            self.process_task_content(&mut task, Some(params.message)).await?;
+        }
+        // --- End Routing and Execution Logic ---
+
+
+        // Store the potentially updated task
         self.task_repository.save_task(&task).await?;
         
         // Save state history again after processing

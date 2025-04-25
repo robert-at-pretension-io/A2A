@@ -23,7 +23,19 @@ pub struct BidirectionalAgentConfig {
     /// Network configuration (proxy, TLS).
     #[serde(default)]
     pub network: NetworkConfig,
-    // Add fields for tool config, routing policy etc. in later slices
+    /// Tool-specific configurations.
+    #[cfg(feature = "bidir-local-exec")]
+    #[serde(default)]
+    pub tools: ToolConfigs,
+    // Add fields for routing policy etc. in later slices
+}
+
+/// Tool configurations. Keyed by tool name.
+#[cfg(feature = "bidir-local-exec")]
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct ToolConfigs {
+    #[serde(flatten)]
+    pub specific_configs: HashMap<String, Value>, // Allows arbitrary tool configs
 }
 
 /// Authentication configuration.
@@ -104,6 +116,8 @@ mod tests {
         assert_eq!(config.auth.server_auth_type, ServerAuthType::None);
         assert!(config.auth.client_credentials.is_empty());
         assert!(config.network.proxy_url.is_none());
+        #[cfg(feature = "bidir-local-exec")]
+        assert!(config.tools.specific_configs.is_empty());
     }
 
     #[test]
@@ -123,6 +137,10 @@ mod tests {
             proxy_url = "http://proxy.example.com:8080"
             proxy_auth = ["proxy_user", "proxy_pass"]
             ca_cert_path = "/path/to/ca.pem"
+
+            [tools]
+            shell_allowed_commands = ["ls", "echo"] # Example tool config
+            http_max_redirects = 5
         "#;
         let config: BidirectionalAgentConfig = toml::from_str(config_str).unwrap();
         assert_eq!(config.self_id, "agent2");
@@ -133,6 +151,13 @@ mod tests {
         assert_eq!(config.network.proxy_url, Some("http://proxy.example.com:8080".to_string()));
         assert_eq!(config.network.proxy_auth, Some(("proxy_user".to_string(), "proxy_pass".to_string())));
         assert_eq!(config.network.ca_cert_path, Some("/path/to/ca.pem".to_string()));
+
+        #[cfg(feature = "bidir-local-exec")]
+        {
+            assert!(config.tools.specific_configs.contains_key("shell_allowed_commands"));
+            assert!(config.tools.specific_configs.contains_key("http_max_redirects"));
+            assert_eq!(config.tools.specific_configs["http_max_redirects"], Value::Integer(5));
+        }
     }
 
      #[test]

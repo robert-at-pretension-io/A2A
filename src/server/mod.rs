@@ -23,16 +23,31 @@ use crate::server::services::task_service::TaskService;
 use crate::server::services::streaming_service::StreamingService;
 use crate::server::services::notification_service::NotificationService;
 
+// Conditionally import bidirectional components
+#[cfg(feature = "bidir-local-exec")]
+use crate::bidirectional_agent::{TaskRouter, ToolExecutor};
+
+
 /// Runs the A2A server on the specified port
 pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create repositories
     let task_repository = Arc::new(InMemoryTaskRepository::new());
-    
+
     // Create services
-    let task_service = Arc::new(TaskService::new(task_repository.clone()));
+    // Initialize TaskService potentially with router/executor if feature enabled
+    #[cfg(feature = "bidir-local-exec")]
+    let task_service = Arc::new(TaskService::new(
+        task_repository.clone(),
+        None, // Provide router if available in this context
+        None  // Provide executor if available in this context
+        // Note: In a real app, these might come from an Agent struct
+    ));
+    #[cfg(not(feature = "bidir-local-exec"))]
+    let task_service = Arc::new(TaskService::new(task_repository.clone())); // Original constructor
+
     let streaming_service = Arc::new(StreamingService::new(task_repository.clone()));
     let notification_service = Arc::new(NotificationService::new(task_repository.clone()));
-    
+
     // Create service function
     let service = make_service_fn(move |_| {
         let task_svc = task_service.clone();

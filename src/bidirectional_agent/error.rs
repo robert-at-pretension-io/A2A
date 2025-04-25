@@ -17,10 +17,10 @@ pub enum AgentError {
     ClientManagerError(String),
 
     #[error("Task Routing Error: {0}")]
-    RoutingError(String),
+    RoutingError(String), // Keep this
 
     #[error("Tool Execution Error: {0}")]
-    ToolError(String),
+    ToolError(String), // Keep this
 
     #[error("Task Flow Error: {0}")]
     TaskFlowError(String),

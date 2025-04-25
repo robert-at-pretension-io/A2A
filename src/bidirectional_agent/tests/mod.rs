@@ -5,7 +5,7 @@
 mod core; // Tests for Slice 1 components
 
 #[cfg(feature = "bidir-local-exec")]
-mod local_exec; // Tests for Slice 2 components
+mod local_exec; // Keep this
 
 #[cfg(feature = "bidir-delegate")]
 mod delegation; // Tests for Slice 3 components

@@ -18,11 +18,11 @@ pub mod error;
 pub mod types;
 
 #[cfg(feature = "bidir-local-exec")]
-pub mod tool_executor;
+pub mod tool_executor; // Keep this
 #[cfg(feature = "bidir-local-exec")]
-pub mod task_router;
+pub mod task_router; // Keep this
 #[cfg(feature = "bidir-local-exec")]
-pub mod tools;
+pub mod tools; // Keep this
 
 #[cfg(feature = "bidir-delegate")]
 pub mod task_flow;
@@ -37,6 +37,12 @@ pub use config::BidirectionalAgentConfig;
 pub use agent_registry::AgentRegistry;
 pub use client_manager::ClientManager;
 pub use error::AgentError;
+// Add imports for Slice 2 components
+#[cfg(feature = "bidir-local-exec")]
+pub use tool_executor::ToolExecutor;
+#[cfg(feature = "bidir-local-exec")]
+pub use task_router::TaskRouter;
+
 
 /// Main struct representing the Bidirectional Agent.
 /// This will be expanded in later slices.
@@ -45,7 +51,12 @@ pub struct BidirectionalAgent {
     pub config: Arc<BidirectionalAgentConfig>,
     pub agent_registry: Arc<AgentRegistry>,
     pub client_manager: Arc<ClientManager>,
-    // Add other components like task_repository, router, executor later
+    // Add components for Slice 2
+    #[cfg(feature = "bidir-local-exec")]
+    pub tool_executor: Arc<ToolExecutor>,
+    #[cfg(feature = "bidir-local-exec")]
+    pub task_router: Arc<TaskRouter>,
+    // Add other components like task_repository later
 }
 
 impl BidirectionalAgent {
@@ -55,10 +66,22 @@ impl BidirectionalAgent {
         let agent_registry = Arc::new(AgentRegistry::new());
         let client_manager = Arc::new(ClientManager::new(agent_registry.clone(), config_arc.clone())?);
 
+        // Initialize Slice 2 components if feature is enabled
+        #[cfg(feature = "bidir-local-exec")]
+        let tool_executor = Arc::new(ToolExecutor::new());
+        #[cfg(feature = "bidir-local-exec")]
+        let task_router = Arc::new(TaskRouter::new(agent_registry.clone(), tool_executor.clone()));
+
+
         Ok(Self {
             config: config_arc,
             agent_registry,
             client_manager,
+            // Initialize Slice 2 fields
+            #[cfg(feature = "bidir-local-exec")]
+            tool_executor,
+            #[cfg(feature = "bidir-local-exec")]
+            task_router,
             // Initialize other fields later
         })
     }
