@@ -5,7 +5,6 @@
 use crate::bidirectional_agent::{
     agent_registry::AgentRegistry,
     tool_executor::ToolExecutor,
-    types::SubtaskDefinition, // Import SubtaskDefinition
 };
 use crate::types::TaskSendParams;
 use std::sync::Arc;
@@ -26,7 +25,7 @@ pub enum RoutingDecision {
 
 /// Definition of a subtask for decomposition.
 #[cfg(feature = "bidir-delegate")]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubtaskDefinition {
     pub id_suffix: String, // Suffix to append to parent task ID
     pub description: String, // Description or prompt for the subtask
@@ -77,30 +76,30 @@ impl TaskRouter {
             }
         }
 
+        // Check for task complexity under bidir-delegate feature
+        self.check_task_complexity(params);
+
         // 2. Default Logic: Try local execution first (using placeholder "echo" tool)
         // In a real scenario, analyze capabilities needed vs. local tools available.
         println!("  Default routing: Attempting local execution first.");
         // For Slice 2, always assume we have a local "echo" tool.
         RoutingDecision::Local { tool_names: vec!["echo".to_string()] }
+    }
 
-        // --- Placeholder for more advanced logic (Slice 3) ---
-        // - Analyze task requirements (skills needed, data types, etc.) from params.message
-        // - Check local tool capabilities via self.tool_executor.get_capabilities()
-        // - Check remote agent capabilities via self.agent_registry.all()
-        // - Apply routing policy (prefer local, prefer cheapest, specific rules)
-        // - If task is complex, consider RoutingDecision::Decompose
-        // - If no suitable local tool or remote agent, return Reject.
-
-        // Example: If task description contains "and", maybe decompose? (Very naive)
-        #[cfg(feature = "bidir-delegate")]
+    // Separate helper method to handle task complexity analysis
+    #[cfg(feature = "bidir-delegate")]
+    fn check_task_complexity(&self, params: &TaskSendParams) {
+        use crate::types::Part;
         if params.message.parts.iter().any(|p| matches!(p, Part::TextPart(tp) if tp.text.contains(" and "))) {
-             println!("  Task might be complex, considering decomposition (placeholder).");
-             // return RoutingDecision::Decompose { subtasks: vec![...] };
+            println!("  Task might be complex, considering decomposition (placeholder).");
+            // return RoutingDecision::Decompose { subtasks: vec![...] };
         }
+    }
 
-
-        // Fallback to local execution if no other decision is made yet
-         RoutingDecision::Local { tool_names: vec!["echo".to_string()] } // Keep default for now
+    // No-op version when feature is disabled
+    #[cfg(not(feature = "bidir-delegate"))]
+    fn check_task_complexity(&self, _params: &TaskSendParams) {
+        // Do nothing when bidir-delegate feature is not enabled
     }
 }
 
@@ -108,8 +107,9 @@ impl TaskRouter {
 mod tests {
     use super::*;
     use crate::bidirectional_agent::config::BidirectionalAgentConfig;
-    use crate::types::{Message, Role, Part, TextPart}; // Import necessary types
+    use crate::types::{Message, Role, Part, TextPart}; // Import necessary types 
     use std::collections::HashMap;
+    use serde_json::json;
 
     // Helper to create basic TaskSendParams
     fn create_test_params(id: &str, text: &str, metadata: Option<serde_json::Map<String, serde_json::Value>>) -> TaskSendParams {

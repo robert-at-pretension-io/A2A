@@ -6,10 +6,11 @@ use crate::server::repositories::task_repository::TaskRepository;
 use crate::server::ServerError;
 use crate::bidirectional_agent::types::{TaskOrigin, TaskRelationships};
 use async_trait::async_trait;
+use std::any::Any;
 
 /// Extends the base TaskRepository with methods needed for delegation and decomposition.
 #[async_trait]
-pub trait TaskRepositoryExt: TaskRepository {
+pub trait TaskRepositoryExt: TaskRepository + Any + Sized {
     /// Sets the origin of a task (Local, Delegated, Remote).
     async fn set_task_origin(&self, task_id: &str, origin: TaskOrigin) -> Result<(), ServerError>;
 
@@ -21,6 +22,10 @@ pub trait TaskRepositoryExt: TaskRepository {
 
     /// Retrieves the relationships (parent/children) for a task.
     async fn get_task_relationships(&self, task_id: &str) -> Result<TaskRelationships, ServerError>;
+    
+    /// Returns self as Any for downcasting.
+    /// This is needed to access implementation-specific fields.
+    fn as_any(&self) -> &dyn Any;
 }
 
 // --- Blanket Implementation for InMemoryTaskRepository ---
@@ -96,5 +101,9 @@ impl TaskRepositoryExt for InMemoryTaskRepository {
               println!("Warning: get_task_relationships called but bidir-delegate feature is not enabled.");
               Ok(TaskRelationships::default())
          }
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

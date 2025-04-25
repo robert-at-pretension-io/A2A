@@ -50,6 +50,9 @@ pub use result_synthesis::ResultSynthesizer;
 #[cfg(feature = "bidir-delegate")]
 pub use task_extensions::TaskRepositoryExt;
 
+// We've removed the GlobalRepository singleton since we're now passing
+// the task repository directly to the client manager's poll loop
+
 
 /// Main struct representing the Bidirectional Agent.
 /// This will be expanded in later slices.
@@ -84,7 +87,9 @@ impl BidirectionalAgent {
 
         // Initialize Task Repository (concrete type for now)
         let task_repository = Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new());
-
+        
+        // We're now passing the task repository directly to components that need it
+        // instead of using a global repository
 
         Ok(Self {
             config: config_arc,

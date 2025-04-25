@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 // Conditionally import bidirectional components
 #[cfg(feature = "bidir-local-exec")]
-use crate::bidirectional_agent::{TaskRouter, ToolExecutor, TaskFlow}; // Add TaskFlow
+use crate::bidirectional_agent::{TaskRouter, ToolExecutor};
 #[cfg(feature = "bidir-delegate")] // Guard TaskFlow usage
 use crate::bidirectional_agent::task_flow;
 #[cfg(feature = "bidir-local-exec")]

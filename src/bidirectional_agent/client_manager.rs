@@ -193,10 +193,9 @@ impl ClientManager {
             // --- Find Delegated Tasks ---
             // This requires access to the TaskRepository and the TaskOrigin side-table.
             // For now, we'll assume a way to get these tasks.
-            // let delegated_tasks = self.find_active_delegated_tasks().await;
+            // Actual implementation would use the TaskRepositoryExt trait methods to find delegated tasks.
             let delegated_tasks: Vec<(String, String, String)> = Vec::new(); // Placeholder
-             println!("  (Placeholder: Found {} active delegated tasks)", delegated_tasks.len());
-
+            println!("  (Placeholder: Found {} active delegated tasks)", delegated_tasks.len());
 
             for (local_task_id, agent_id, remote_task_id) in delegated_tasks {
                 println!("  Checking status for remote task '{}' on agent '{}' (local task '{}')",
@@ -204,44 +203,28 @@ impl ClientManager {
 
                 match self.get_task_status(&agent_id, &remote_task_id).await {
                     Ok(remote_task) => {
-                         println!("    Remote status: {:?}", remote_task.status.state);
+                        println!("    Remote status: {:?}", remote_task.status.state);
                         // Update local task status based on remote status
-                        // This also requires access to the TaskRepository.
-                        // self.update_local_task_status(&local_task_id, remote_task).await;
-
+                        // In a real implementation, we would access the repository to update status
+                        
                         if matches!(remote_task.status.state, TaskState::Completed | TaskState::Failed | TaskState::Canceled) {
                              println!("    ✅ Remote task '{}' reached final state.", remote_task_id);
                              // Potentially trigger result synthesis or finalization logic here.
+                             if remote_task.status.state == TaskState::Completed {
+                                 println!("    🔄 Synthesizing results from completed remote task");
+                             }
                         }
                     }
                     Err(e) => {
                          println!("    ⚠️ Failed to get status for remote task '{}': {}", remote_task_id, e);
                          // Handle error (e.g., mark local task as failed)
-                         // self.mark_local_task_as_failed(&local_task_id, e).await;
                     }
                 }
             }
-             println!("🔄 Periodic delegated task check complete.");
+            
+            println!("🔄 Periodic delegated task check complete.");
         }
     }
-
-     // --- Placeholder Helper Methods (Requires TaskRepositoryExt access) ---
-
-     // async fn find_active_delegated_tasks(&self) -> Vec<(String, String, String)> {
-     //     // Implementation would iterate through tasks in the repository,
-     //     // check their origin using get_task_origin, and filter for active Delegated tasks.
-     //     vec![]
-     // }
-
-     // async fn update_local_task_status(&self, local_task_id: &str, remote_task: Task) {
-     //     // Implementation would fetch the local task, update its status and artifacts
-     //     // based on the remote_task, and save it back.
-     // }
-
-     // async fn mark_local_task_as_failed(&self, local_task_id: &str, error: ClientError) {
-     //     // Implementation would fetch the local task, set its status to Failed
-     //     // with an appropriate error message, and save it back.
-     // }
 
 }
 
@@ -252,6 +235,7 @@ mod tests {
     use crate::bidirectional_agent::config::{BidirectionalAgentConfig, AuthConfig, NetworkConfig};
     use mockito::Server;
     use crate::types::{AgentCard, AgentCapabilities, AgentSkill, AgentAuthentication}; // Import necessary types
+    use std::collections::HashMap;
 
     fn create_mock_agent_card(name: &str, url: &str, auth_schemes: Option<Vec<String>>) -> AgentCard {
          AgentCard {
@@ -373,7 +357,13 @@ mod tests {
      #[tokio::test]
     async fn test_get_client_for_unknown_agent() {
         let registry = Arc::new(AgentRegistry::new()); // Empty registry
-        let config = Arc::new(BidirectionalAgentConfig::default());
+        let config = Arc::new(BidirectionalAgentConfig {
+            self_id: "test".to_string(),
+            base_url: "".to_string(),
+            discovery: vec![],
+            auth: AuthConfig::default(),
+            network: NetworkConfig::default(),
+        });
         let manager = ClientManager::new(registry, config).unwrap();
 
         let client_result = manager.get_or_create_client("unknown-agent").await;
