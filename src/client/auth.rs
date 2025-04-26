@@ -4,11 +4,10 @@ use mockito::Server;
 
 use crate::client::A2aClient;
 use crate::client::errors::ClientError;
-// Remove ErrorCompatibility import
-// use crate::client::error_handling::ErrorCompatibility;
+// Removed commented out ErrorCompatibility import
 
 // Extend A2aClient with auth-related helper methods if needed
-// Note: `validate_auth_typed` and related tests removed as `auth/validate` is non-standard.
+// Removed note about non-standard auth/validate
 
 #[cfg(test)]
 mod tests {

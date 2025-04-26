@@ -58,25 +58,7 @@ impl A2aClient {
         self.send_jsonrpc::<crate::types::Task>("tasks/get", params_value).await
     }
 
-    /// Simulates an invalid parameters error
-    pub async fn test_invalid_parameters_error(&mut self) -> Result<serde_json::Value, ClientError> {
-        // Create params with missing required fields
-        let params = json!({
-            // Missing 'id' parameter
-        });
-        
-        self.send_jsonrpc::<serde_json::Value>("tasks/get", params).await
-    }
-
-    /// Simulates a method not found error
-    pub async fn test_method_not_found_error(&mut self) -> Result<serde_json::Value, ClientError> {
-        // Use a non-existent method
-        let params = json!({
-            "id": "test-id"
-        });
-        
-        self.send_jsonrpc::<serde_json::Value>("non_existent_method", params).await
-    }
+    // Removed test_invalid_parameters_error and test_method_not_found_error as they are less relevant now.
 
     /// Try to cancel a task that's already completed
     pub async fn cancel_task_with_error_handling(&mut self, task_id: &str) -> Result<String, ClientError> {
@@ -98,32 +80,7 @@ impl A2aClient {
         }
     }
 
-    /// Get an agent skill with error handling
-    pub async fn get_skill_details_with_error_handling(&mut self, skill_id: &str) -> Result<serde_json::Value, ClientError> {
-        let params = json!({
-            "id": skill_id
-        });
-        
-        self.send_jsonrpc::<serde_json::Value>("skills/get", params).await
-    }
-
-    /// Get a batch with error handling
-    pub async fn get_batch_with_error_handling(&mut self, batch_id: &str) -> Result<serde_json::Value, ClientError> {
-        let params = json!({
-            "id": batch_id
-        });
-        
-        self.send_jsonrpc::<serde_json::Value>("batches/get", params).await
-    }
-
-    /// Download a file with error handling
-    pub async fn download_file_with_error_handling(&mut self, file_id: &str) -> Result<serde_json::Value, ClientError> {
-        let params = json!({
-            "fileId": file_id
-        });
-        
-        self.send_jsonrpc::<serde_json::Value>("files/download", params).await
-    }
+    // Removed non-standard methods: get_skill_details_with_error_handling, get_batch_with_error_handling, download_file_with_error_handling
 
     // Compatibility versions of core methods that retain Box<dyn Error> return type
     // These methods serve as adapters for the original API during the transition
