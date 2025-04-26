@@ -32,31 +32,56 @@ pub struct TaskService {
 }
 
 impl TaskService {
-    /// Creates a new TaskService.
-    /// Router and executor are optional and only used if the corresponding features are enabled.
-    pub fn new(
-        task_repository: Arc<dyn TaskRepository>, // Keep using base trait for flexibility
-        #[cfg(feature = "bidir-local-exec")] router: Option<Arc<TaskRouter>>,
-        #[cfg(feature = "bidir-local-exec")] executor: Option<Arc<ToolExecutor>>,
-        // Add Slice 3 components
-        #[cfg(feature = "bidir-delegate")] client_manager: Option<Arc<crate::bidirectional_agent::ClientManager>>,
-        #[cfg(feature = "bidir-delegate")] agent_registry: Option<Arc<crate::bidirectional_agent::AgentRegistry>>,
-        #[cfg(feature = "bidir-delegate")] agent_id: Option<String>,
-    ) -> Self {
+    /// Creates a new TaskService for standalone server mode.
+    pub fn standalone(task_repository: Arc<dyn TaskRepository>) -> Self {
         Self {
             task_repository,
             #[cfg(feature = "bidir-local-exec")]
-            task_router: router,
+            task_router: None,
             #[cfg(feature = "bidir-local-exec")]
-            tool_executor: executor,
+            tool_executor: None,
             #[cfg(feature = "bidir-delegate")]
-            client_manager,
+            client_manager: None,
             #[cfg(feature = "bidir-delegate")]
-            agent_registry,
+            agent_registry: None,
             #[cfg(feature = "bidir-delegate")]
-            agent_id,
+            agent_id: None,
         }
     }
+
+    /// Creates a new TaskService configured for bidirectional operation.
+    /// Requires the corresponding features to be enabled.
+    #[cfg(feature = "bidir-core")] // Guard the whole function
+    pub fn bidirectional(
+        task_repository: Arc<dyn TaskRepository>,
+        #[cfg(feature = "bidir-local-exec")] task_router: Arc<TaskRouter>,
+        #[cfg(feature = "bidir-local-exec")] tool_executor: Arc<ToolExecutor>,
+        // Add Slice 3 components
+        #[cfg(feature = "bidir-delegate")] client_manager: Option<Arc<crate::bidirectional_agent::ClientManager>>,
+        #[cfg(feature = "bidir-delegate")] agent_registry: Option<Arc<crate::bidirectional_agent::AgentRegistry>>,
+        #[cfg(feature = "bidir-delegate")] client_manager: Arc<crate::bidirectional_agent::ClientManager>,
+        #[cfg(feature = "bidir-delegate")] agent_registry: Arc<crate::bidirectional_agent::AgentRegistry>,
+        #[cfg(feature = "bidir-delegate")] agent_id: String,
+    ) -> Self {
+        // Compile-time check for feature consistency (example)
+        // #[cfg(all(feature = "bidir-local-exec", not(feature = "bidir-delegate")))]
+        // compile_error!("Feature 'bidir-local-exec' requires 'bidir-delegate' in this configuration.");
+
+        Self {
+            task_repository,
+            #[cfg(feature = "bidir-local-exec")]
+            task_router: Some(task_router),
+            #[cfg(feature = "bidir-local-exec")]
+            tool_executor: Some(tool_executor),
+            #[cfg(feature = "bidir-delegate")]
+            client_manager: Some(client_manager),
+            #[cfg(feature = "bidir-delegate")]
+            agent_registry: Some(agent_registry),
+            #[cfg(feature = "bidir-delegate")]
+            agent_id: Some(agent_id),
+        }
+    }
+
 
     /// Process a new task or a follow-up message
     pub async fn process_task(&self, params: TaskSendParams) -> Result<Task, ServerError> {

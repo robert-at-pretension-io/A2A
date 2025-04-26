@@ -22,6 +22,8 @@ use crate::server::repositories::task_repository::InMemoryTaskRepository;
 use crate::server::services::task_service::TaskService;
 use crate::server::services::streaming_service::StreamingService;
 use crate::server::services::notification_service::NotificationService;
+use tokio::task::JoinHandle; // Add JoinHandle import
+use tokio_util::sync::CancellationToken; // Add CancellationToken import
 
 // Conditionally import bidirectional components
 #[cfg(feature = "bidir-local-exec")]
@@ -30,27 +32,18 @@ use crate::bidirectional_agent::{TaskRouter, ToolExecutor};
 use crate::bidirectional_agent::{ClientManager, AgentRegistry};
 
 
-/// Runs the A2A server on the specified port
-pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Create repositories
-    let task_repository = Arc::new(InMemoryTaskRepository::new());
+/// Runs the A2A server on the specified port, accepting pre-built services.
+/// Returns a JoinHandle for the server task.
+pub async fn run_server(
+    port: u16,
+    bind_address: &str, // Add bind address parameter
+    task_service: Arc<TaskService>, // Accept pre-built TaskService
+    streaming_service: Arc<StreamingService>, // Accept pre-built StreamingService
+    notification_service: Arc<NotificationService>, // Accept pre-built NotificationService
+    shutdown_token: CancellationToken, // Add shutdown token
+) -> Result<JoinHandle<()>, Box<dyn std::error::Error + Send + Sync>> {
 
-    // Create services - Pass bidirectional components if features are enabled
-    let task_service = Arc::new(TaskService::new(
-        task_repository.clone(),
-        // Provide router/executor only if bidir-local-exec is enabled
-        #[cfg(feature = "bidir-local-exec")] None, // Placeholder - these should be passed in
-        #[cfg(feature = "bidir-local-exec")] None, // Placeholder
-        // Provide client_manager/registry only if bidir-delegate is enabled
-        #[cfg(feature = "bidir-delegate")] None, // Placeholder
-        #[cfg(feature = "bidir-delegate")] None, // Placeholder
-        #[cfg(feature = "bidir-delegate")] None, // Placeholder for agent_id
-    ));
-
-    let streaming_service = Arc::new(StreamingService::new(task_repository.clone()));
-    let notification_service = Arc::new(NotificationService::new(task_repository.clone()));
-
-    // Create service function
+    // Create service function using the provided services
     let service = make_service_fn(move |_| {
         let task_svc = task_service.clone();
         let stream_svc = streaming_service.clone();
@@ -67,18 +60,35 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error + Sen
             }))
         }
     });
-    
-    // Create the server
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+
+    // Create the server address
+    let addr_str = format!("{}:{}", bind_address, port);
+    let addr: SocketAddr = addr_str.parse()
+        .map_err(|e| format!("Invalid bind address '{}': {}", addr_str, e))?;
+
+    // Create the server with graceful shutdown
     let server = Server::bind(&addr).serve(service);
-    
-    println!("A2A Server running at http://{}", addr);
-    server.await?;
-    
-    Ok(())
+    let server_with_shutdown = server.with_graceful_shutdown(async move {
+        shutdown_token.cancelled().await;
+        println!("🔌 Server shutdown initiated...");
+    });
+
+    println!("🔌 A2A Server running at http://{}", addr);
+
+    // Start server in a task and return the handle
+    let handle = tokio::spawn(async move {
+        if let Err(e) = server_with_shutdown.await {
+            eprintln!("❌ Server error: {}", e);
+        }
+        println!("🔌 Server shutdown complete.");
+    });
+
+    Ok(handle)
 }
 
+
 /// Creates and returns the agent card for this server
+// TODO: This should likely move or accept config to generate dynamic URL/skills
 pub fn create_agent_card() -> serde_json::Value {
     // Using a serde_json::Value instead of the typed AgentCard
     // to ensure all required fields are present and properly formatted

@@ -212,9 +212,10 @@ fn main() {
             println!("🚀 Attempting to start Bidirectional A2A Agent...");
             // Create a runtime for the async agent
             let rt = tokio::runtime::Runtime::new().unwrap();
-            // Run the agent using the function from the bidirectional_agent module
-            if let Err(e) = rt.block_on(crate::bidirectional_agent::run(&config)) {
-                 eprintln!("❌ Bidirectional Agent failed to run: {}", e);
+            // Run the agent using the updated function from the bidirectional_agent module
+            // The port is now handled internally based on the config file
+            if let Err(e) = rt.block_on(crate::bidirectional_agent::run(config)) {
+                 eprintln!("❌ Bidirectional Agent failed to run: {:?}", e); // Use debug format for anyhow::Error
                  std::process::exit(1);
             }
              println!("🏁 Bidirectional Agent finished."); // Should ideally run indefinitely
