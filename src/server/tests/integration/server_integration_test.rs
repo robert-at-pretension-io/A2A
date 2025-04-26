@@ -892,37 +892,5 @@ async fn test_send_with_data_get_verify_artifacts() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-
-// Test state history tracking
-#[tokio::test]
-async fn test_state_history() -> Result<(), Box<dyn Error>> {
-    // Start the server on a unique port
-    let port = 8205;
-    start_test_server(port).await;
-    
-    // Create client
-    let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-    
-    // 1. Create and then cancel a task to generate multiple state transitions
-    let task = client.send_task("Test task for state history").await?;
-    
-    // 2. Get state history
-    let history = client.get_task_state_history_typed(&task.id).await?;
-    
-    // History should have at least one entry
-    assert!(!history.transitions.is_empty(), "State history should not be empty");
-    
-    // Verify state transitions make sense
-    if history.transitions.len() >= 2 {
-        // The first state could be either Working or Submitted depending on implementation
-        assert!(history.transitions[0].state == TaskState::Working || 
-                history.transitions[0].state == TaskState::Submitted,
-                "First recorded state should be either Working or Submitted");
-                  
-        assert_eq!(history.transitions.last().unwrap().state, TaskState::Completed,
-                  "Final state should be Completed");
-    }
-    
-    Ok(())
-}
+// Removed test_state_history as it relies on non-standard client methods
 

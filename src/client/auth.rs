@@ -8,97 +8,12 @@ use crate::client::errors::ClientError;
 // use crate::client::error_handling::ErrorCompatibility;
 
 // Extend A2aClient with auth-related helper methods if needed
-impl A2aClient {
-    /// Validate authentication credentials with the server (typed error version)
-    pub async fn validate_auth_typed(&mut self) -> Result<bool, ClientError> {
-        // This method makes a request to a specific endpoint designed for auth validation
-        let response: Value = self.send_jsonrpc("auth/validate", json!({})).await?;
-        
-        // Extract the result from the response
-        match response.get("valid").and_then(|v| v.as_bool()) {
-            Some(valid) => Ok(valid),
-            None => Err(ClientError::Other("Invalid response: missing validation result".to_string())),
-        }
-    }
-
-    // Remove backward compatible version
-    // pub async fn validate_auth(&mut self) -> Result<bool, Box<dyn Error>> {
-    //     self.validate_auth_typed().await.into_box_error()
-    // }
-}
+// Note: `validate_auth_typed` and related tests removed as `auth/validate` is non-standard.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    #[tokio::test]
-    async fn test_client_with_bearer_auth() {
-        // Arrange
-        let auth_header = "Authorization";
-        let auth_value = "Bearer test-token-123";
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "valid": true
-            }
-        });
-        
-        let mut server = Server::new_async().await;
-        
-        // Create a mock that expects an auth header
-        let mock = server.mock("POST", "/")
-            .match_header(auth_header, auth_value)
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(response.to_string())
-            .create_async().await;
-
-        // Act
-        let mut client = A2aClient::new(&server.url())
-            .with_auth(auth_header, auth_value);
-        // Call the _typed version
-        let result = client.validate_auth_typed().await.unwrap();
-
-        // Assert
-        assert!(result);
-        mock.assert_async().await;
-    }
-    
-    #[tokio::test]
-    async fn test_client_without_auth_rejected() {
-        // Arrange
-        let error_response = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "error": {
-                "code": -32001,
-                "message": "Unauthorized request"
-            }
-        });
-        
-        let mut server = Server::new_async().await;
-        
-        // Create a mock that returns 401 for unauthorized requests
-        let mock = server.mock("POST", "/")
-            .with_status(401)
-            .with_header("content-type", "application/json")
-            .with_body(error_response.to_string())
-            .create_async().await;
-        
-        // Act
-        let mut client = A2aClient::new(&server.url());
-        // Notably, we don't add auth here
-        // Call the _typed version
-        let result = client.validate_auth_typed().await;
-
-        // Assert
-        assert!(result.is_err());
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("401"));
-        
-        mock.assert_async().await;
-    }
+    use crate::types::{AgentCard, AgentCapabilities, AgentAuthentication}; // Import necessary types
     
     #[tokio::test]
     async fn test_agent_card_with_auth_requirements() {

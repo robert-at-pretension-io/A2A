@@ -14,12 +14,8 @@ mod tests;
 mod cancel_task;
 pub mod streaming;
 mod push_notifications;
-mod file_operations;
-mod data_operations;
-mod artifacts;
-mod state_history;
-pub mod task_batch;
-pub mod agent_skills;
+// Removed: file_operations, data_operations, state_history, task_batch, agent_skills
+mod artifacts; // Keep artifacts as it might be used by standard methods
 mod auth; // Add authentication module
 pub mod errors; // Add error handling module
 pub mod error_handling; // Add specialized error handling module with new functions

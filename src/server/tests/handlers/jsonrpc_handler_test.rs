@@ -1838,34 +1838,7 @@ async fn test_push_notification_get_invalid_id() {
     assert_eq!(json["error"]["code"], -32602); // Invalid params code
 }
 
-// Test 11. tasks/stateHistory/get Invalid ID: Call tasks/stateHistory/get with a non-string id
-#[tokio::test]
-async fn test_state_history_get_invalid_id() {
-    // Setup services
-    let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::standalone(repository.clone()));
-    let streaming_service = Arc::new(StreamingService::new(repository.clone()));
-    let notification_service = Arc::new(NotificationService::new(repository.clone()));
-    
-    // Get state history with null ID
-    let params = json!({
-        "id": null // Null instead of string
-    });
-    
-    let req = create_jsonrpc_request("tasks/stateHistory/get", params);
-    let response = jsonrpc_handler(req, task_service.clone(), streaming_service.clone(), notification_service.clone()).await.unwrap();
-    
-    // Extract the JSON response
-    let json = extract_response_json(response).await;
-    
-    // Verify error - we expect Method Not Found since stateHistory isn't in required protocol methods
-    assert!(json["error"].is_object());
-    
-    // Determine if this is a Method Not Found error or Invalid Params
-    let error_code = json["error"]["code"].as_i64().unwrap();
-    assert!(error_code == -32601 || error_code == -32602, 
-           "Expected either Method Not Found (-32601) or Invalid Params (-32602), got {}", error_code);
-}
+// Removed test_state_history_get_invalid_id as stateHistory is non-standard
 
 // Test 22. Method Mismatch: Send a GET request to a POST-only JSON-RPC endpoint
 #[tokio::test]

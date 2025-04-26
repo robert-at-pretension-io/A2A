@@ -70,9 +70,7 @@ enum Commands {
         /// Optional URL of the target A2A server (starts local mock server if omitted)
         #[arg(short, long)]
         url: Option<String>,
-        /// Include unofficial tests (specific to mock server or non-standard features)
-        #[arg(long, default_value_t = false)]
-        run_unofficial: bool,
+        // Removed run_unofficial flag
         /// Timeout for each individual test step in seconds
         #[arg(long, default_value_t = 15)]
         timeout: u64,
@@ -170,16 +168,16 @@ fn main() {
             // Call fuzzing module
             fuzzer::run_fuzzer(target, *time);
         }
-        Commands::RunTests { url, run_unofficial, timeout } => {
+        Commands::RunTests { url, timeout } => { // Removed run_unofficial
             // Create a runtime for the async test runner
             let rt = tokio::runtime::Runtime::new().unwrap();
             let config = runner::TestRunnerConfig {
                 target_url: url.clone(),
-                run_unofficial_tests: *run_unofficial,
+                // Removed run_unofficial_tests field
                 default_timeout: Duration::from_secs(*timeout),
             };
 
-            // Run the tests
+            // Run the tests (now only official tests)
             let result = rt.block_on(runner::run_integration_tests(config));
 
             // Set exit code based on result
