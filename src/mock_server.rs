@@ -17,7 +17,8 @@ use crate::types::{
     Part, TextPart, FilePart, DataPart, FileContent, Artifact, Role, Message,
     TaskStatus, TaskState
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+// Removed unused base64 import
+// use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Utc, DateTime};
 
 // Task information storage for the mock server
