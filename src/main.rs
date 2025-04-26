@@ -19,6 +19,7 @@ use futures_util::StreamExt;
 use std::fs; // Add this
 use std::io::{self, BufRead, Write}; // Add this
 use std::path::{Path, PathBuf}; // Add this
+use std::sync::Arc; // For reference server
 use std::process::Command; // Keep this for now
 use sha2::{Digest, Sha256}; // For hash calculation
 
@@ -137,7 +138,29 @@ fn main() {
             
             // Create a runtime for the async server
             let rt = tokio::runtime::Runtime::new().unwrap();
-            if let Err(e) = rt.block_on(server::run_server(*port)) {
+            if let Err(e) = rt.block_on(async {
+                // Use default settings for the reference server
+                let bind_address = "127.0.0.1";
+                let task_repo = Arc::new(server::repositories::task_repository::InMemoryTaskRepository::new());
+                
+                // Create services
+                let task_service = Arc::new(server::services::task_service::TaskService::standalone(task_repo.clone()));
+                let streaming_service = Arc::new(server::services::streaming_service::StreamingService::new(task_repo.clone()));
+                let notification_service = Arc::new(server::services::notification_service::NotificationService::new(task_repo));
+                
+                // Create cancellation token for graceful shutdown
+                let shutdown_token = tokio_util::sync::CancellationToken::new();
+                
+                // Start the server
+                server::run_server(
+                    *port,
+                    bind_address,
+                    task_service,
+                    streaming_service,
+                    notification_service,
+                    shutdown_token
+                ).await
+            }) {
                 eprintln!("Server error: {}", e);
                 std::process::exit(1);
             }

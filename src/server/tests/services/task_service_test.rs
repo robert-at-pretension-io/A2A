@@ -75,7 +75,7 @@ impl TaskRepository for MockTaskRepository {
 async fn test_process_task_valid_input_returns_task() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let task_id = format!("test-task-{}", Uuid::new_v4());
     let text_part = TextPart {
@@ -120,7 +120,7 @@ async fn test_process_task_valid_input_returns_task() {
 async fn test_process_task_unique_id_persists_correctly() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let task_id = format!("unique-task-{}", Uuid::new_v4());
     let text_part = TextPart {
@@ -170,7 +170,7 @@ async fn test_process_task_unique_id_persists_correctly() {
 async fn test_create_task_same_id_twice_returns_error() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let task_id = format!("duplicate-task-{}", Uuid::new_v4());
     
@@ -230,7 +230,7 @@ async fn test_create_task_same_id_twice_returns_error() {
 async fn test_get_task_existing_returns_correct_data() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let task_id = format!("task-to-retrieve-{}", Uuid::new_v4());
     
@@ -275,7 +275,7 @@ async fn test_get_task_existing_returns_correct_data() {
 async fn test_get_task_nonexistent_returns_error() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let non_existent_id = format!("non-existent-{}", Uuid::new_v4());
     
@@ -305,7 +305,7 @@ async fn test_get_task_nonexistent_returns_error() {
 async fn test_cancel_task_working_state_transitions_to_canceled() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let task_id = format!("task-to-cancel-{}", Uuid::new_v4());
     
@@ -352,7 +352,7 @@ async fn test_cancel_task_working_state_transitions_to_canceled() {
 async fn test_cancel_completed_task_returns_error() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let task_id = format!("completed-task-{}", Uuid::new_v4());
     
@@ -400,7 +400,7 @@ async fn test_cancel_completed_task_returns_error() {
 async fn test_follow_up_message_transitions_input_required_to_working() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let task_id = format!("input-required-task-{}", Uuid::new_v4());
     
@@ -478,7 +478,7 @@ async fn test_follow_up_message_transitions_input_required_to_working() {
 async fn test_get_task_state_history() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let task_id = format!("history-task-{}", Uuid::new_v4());
     
@@ -529,7 +529,7 @@ async fn test_get_task_state_history() {
 async fn test_get_task_state_history_nonexistent_returns_error() {
     // Arrange
     let repository = Arc::new(MockTaskRepository::new());
-    let service = TaskService::new(repository.clone());
+    let service = TaskService::standalone(repository.clone());
     
     let non_existent_id = format!("non-existent-{}", Uuid::new_v4());
     

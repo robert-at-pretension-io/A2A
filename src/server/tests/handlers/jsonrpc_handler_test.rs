@@ -122,7 +122,7 @@ fn is_sse_response(response: &hyper::Response<Body>) -> bool {
 async fn test_handler_returns_proper_jsonrpc_errors() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -173,7 +173,7 @@ async fn test_handler_returns_proper_jsonrpc_errors() {
 async fn test_tasks_send_long_text() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -215,7 +215,7 @@ async fn test_tasks_send_long_text() {
 async fn test_tasks_send_invalid_utf8() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -256,7 +256,7 @@ async fn test_tasks_send_invalid_utf8() {
 async fn test_tasks_send_deeply_nested_metadata() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -297,7 +297,7 @@ async fn test_tasks_send_deeply_nested_metadata() {
 async fn test_tasks_send_null_values() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -332,7 +332,7 @@ async fn test_tasks_send_null_values() {
 async fn test_tasks_send_follow_up_to_working() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -365,7 +365,7 @@ async fn test_tasks_send_follow_up_to_working() {
 async fn test_tasks_send_follow_up_to_canceled() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -395,7 +395,7 @@ async fn test_tasks_send_follow_up_to_canceled() {
 async fn test_tasks_send_follow_up_to_failed() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -425,7 +425,7 @@ async fn test_tasks_send_follow_up_to_failed() {
 async fn test_tasks_send_non_object_part_metadata() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -457,7 +457,7 @@ async fn test_tasks_send_non_object_part_metadata() {
 async fn test_tasks_send_missing_part_type() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -488,7 +488,7 @@ async fn test_tasks_send_missing_part_type() {
 async fn test_tasks_send_id_mismatch() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -535,7 +535,7 @@ async fn test_tasks_send_id_mismatch() {
 async fn test_tasks_sendsubscribe_invalid_message_structure() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -563,7 +563,7 @@ async fn test_tasks_sendsubscribe_invalid_message_structure() {
 async fn test_tasks_sendsubscribe_require_input() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -591,7 +591,7 @@ async fn test_tasks_sendsubscribe_require_input() {
 async fn test_tasks_sendsubscribe_accept_json() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -627,7 +627,7 @@ async fn test_tasks_sendsubscribe_accept_json() {
 async fn test_tasks_sendsubscribe_empty_parts() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -656,7 +656,7 @@ async fn test_tasks_sendsubscribe_empty_parts() {
 async fn test_tasks_get_submitted_state() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -683,7 +683,7 @@ async fn test_tasks_get_submitted_state() {
 async fn test_tasks_get_input_required_state() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -710,7 +710,7 @@ async fn test_tasks_get_input_required_state() {
 async fn test_tasks_get_failed_state() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -737,7 +737,7 @@ async fn test_tasks_get_failed_state() {
 async fn test_tasks_get_extra_params() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -772,7 +772,7 @@ async fn test_tasks_get_extra_params() {
 async fn test_tasks_cancel_input_required_state() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -803,7 +803,7 @@ async fn test_tasks_cancel_input_required_state() {
 async fn test_tasks_cancel_already_canceled() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -829,7 +829,7 @@ async fn test_tasks_cancel_already_canceled() {
 async fn test_tasks_cancel_non_existent() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -848,7 +848,7 @@ async fn test_tasks_cancel_non_existent() {
 async fn test_tasks_cancel_extra_params() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -883,7 +883,7 @@ async fn test_tasks_cancel_extra_params() {
 async fn test_push_notification_set_invalid_url() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -918,7 +918,7 @@ async fn test_push_notification_set_invalid_url() {
 async fn test_push_notification_set_overwrite() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -965,7 +965,7 @@ async fn test_push_notification_set_overwrite() {
 async fn test_push_notification_set_empty_auth_schemes() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -1004,7 +1004,7 @@ async fn test_push_notification_set_empty_auth_schemes() {
 async fn test_push_notification_set_null_credentials() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -1043,7 +1043,7 @@ async fn test_push_notification_set_null_credentials() {
 async fn test_push_notification_set_completed_task() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -1081,7 +1081,7 @@ async fn test_push_notification_set_completed_task() {
 async fn test_push_notification_get_no_config() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -1109,7 +1109,7 @@ async fn test_push_notification_get_no_config() {
 async fn test_push_notification_get_non_existent_task() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -1128,7 +1128,7 @@ async fn test_push_notification_get_non_existent_task() {
 async fn test_push_notification_get_extra_params() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -1162,7 +1162,7 @@ async fn test_push_notification_get_extra_params() {
 async fn test_tasks_send_endpoint() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1209,7 +1209,7 @@ async fn test_tasks_send_endpoint() {
 async fn test_tasks_get_endpoint() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1267,7 +1267,7 @@ async fn test_tasks_get_endpoint() {
 async fn test_tasks_get_nonexistent_task() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1297,7 +1297,7 @@ async fn test_tasks_get_nonexistent_task() {
 async fn test_tasks_cancel_endpoint() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1346,7 +1346,7 @@ async fn test_tasks_cancel_endpoint() {
 async fn test_tasks_sendsubscribe_endpoint() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1381,7 +1381,7 @@ async fn test_tasks_sendsubscribe_endpoint() {
 async fn test_tasks_resubscribe_endpoint() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1420,7 +1420,7 @@ async fn test_tasks_resubscribe_endpoint() {
 async fn test_tasks_pushnotification_set_endpoint() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1496,7 +1496,7 @@ async fn test_tasks_pushnotification_set_endpoint() {
 async fn test_agent_card_endpoint() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1529,7 +1529,7 @@ async fn test_agent_card_endpoint() {
 async fn test_tasks_send_invalid_message() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1565,7 +1565,7 @@ async fn test_tasks_send_invalid_message() {
 async fn test_tasks_send_empty_parts() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1602,7 +1602,7 @@ async fn test_tasks_send_empty_parts() {
 async fn test_tasks_send_invalid_part_type() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1644,7 +1644,7 @@ async fn test_tasks_send_invalid_part_type() {
 async fn test_tasks_send_malformed_metadata() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1680,7 +1680,7 @@ async fn test_tasks_send_malformed_metadata() {
 async fn test_tasks_get_invalid_id_format() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1705,7 +1705,7 @@ async fn test_tasks_get_invalid_id_format() {
 async fn test_tasks_cancel_invalid_id_format() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1730,7 +1730,7 @@ async fn test_tasks_cancel_invalid_id_format() {
 async fn test_tasks_sendsubscribe_invalid_message() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1760,7 +1760,7 @@ async fn test_tasks_sendsubscribe_invalid_message() {
 async fn test_tasks_resubscribe_invalid_id_format() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1785,7 +1785,7 @@ async fn test_tasks_resubscribe_invalid_id_format() {
 async fn test_push_notification_set_invalid_config() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1818,7 +1818,7 @@ async fn test_push_notification_set_invalid_config() {
 async fn test_push_notification_get_invalid_id() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1843,7 +1843,7 @@ async fn test_push_notification_get_invalid_id() {
 async fn test_state_history_get_invalid_id() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1872,7 +1872,7 @@ async fn test_state_history_get_invalid_id() {
 async fn test_method_mismatch() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1899,7 +1899,7 @@ async fn test_method_mismatch() {
 async fn test_incorrect_content_type() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
     
@@ -1932,7 +1932,7 @@ async fn test_incorrect_content_type() {
 async fn test_wild_concurrent_cancel_followup() {
     // Setup services with shared repo
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -2059,7 +2059,7 @@ async fn test_wild_repo_failure_mid_process() {
     });
 
     // IMPORTANT: Create TaskService with the failing repo wrapper
-    let task_service = Arc::new(TaskService::new(failing_repo));
+    let task_service = Arc::new(TaskService::standalone(failing_repo));
     // Streaming and Notification services can use the base repo if they don't save tasks mid-stream
     let streaming_service = Arc::new(StreamingService::new(base_repo.clone()));
     let notification_service = Arc::new(NotificationService::new(base_repo.clone()));
@@ -2104,7 +2104,7 @@ async fn test_wild_stream_cancel_during_setup() {
     // Let's modify the StreamingService slightly for testability (or use a mock)
     // For simplicity here, we'll assume the real service might have inherent delays.
     // This test is inherently flaky due to timing.
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -2179,7 +2179,7 @@ async fn test_wild_stream_cancel_during_setup() {
 async fn test_wild_push_notification_complex_extra() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -2246,7 +2246,7 @@ async fn test_wild_push_notification_complex_extra() {
 async fn test_wild_conflicting_mock_metadata() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -2282,7 +2282,7 @@ async fn test_wild_conflicting_mock_metadata() {
 async fn test_wild_resubscribe_immediate_cancel() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -2351,7 +2351,7 @@ async fn test_wild_resubscribe_immediate_cancel() {
 async fn test_wild_get_history_length_exceeds() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -2407,7 +2407,7 @@ async fn test_wild_get_history_length_exceeds() {
 async fn test_wild_simultaneous_create_same_id() {
     // Setup services with shared repo
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -2473,7 +2473,7 @@ async fn test_wild_simultaneous_create_same_id() {
 async fn test_wild_malformed_jsonrpc_structure() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 
@@ -2533,7 +2533,7 @@ async fn test_wild_malformed_jsonrpc_structure() {
 async fn test_wild_followup_wrong_role() {
     // Setup services
     let repository = Arc::new(MockTaskRepository::new());
-    let task_service = Arc::new(TaskService::new(repository.clone()));
+    let task_service = Arc::new(TaskService::standalone(repository.clone()));
     let streaming_service = Arc::new(StreamingService::new(repository.clone()));
     let notification_service = Arc::new(NotificationService::new(repository.clone()));
 

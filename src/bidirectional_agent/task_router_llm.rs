@@ -1,0 +1,174 @@
+//! LLM-powered task routing implementation.
+//! 
+//! This module provides a specialized TaskRouter that uses LLMs for
+//! making sophisticated routing decisions.
+
+#![cfg(feature = "bidir-local-exec")]
+
+use crate::bidirectional_agent::{
+    agent_registry::AgentRegistry,
+    task_router::{RoutingDecision, SubtaskDefinition},
+    tool_executor::ToolExecutor,
+    error::AgentError,
+    llm_routing::{RoutingAgent, LlmRoutingConfig},
+};
+use crate::types::{TaskSendParams, Message};
+use std::sync::Arc;
+use anyhow::Result;
+
+/// Enhanced TaskRouter that uses LLM-based decision making
+pub struct LlmTaskRouter {
+    /// Agent registry for delegation
+    agent_registry: Arc<AgentRegistry>,
+    
+    /// Tool executor for local execution
+    tool_executor: Arc<ToolExecutor>,
+    
+    /// LLM-based routing agent
+    routing_agent: RoutingAgent,
+}
+
+impl LlmTaskRouter {
+    /// Creates a new LLM-powered task router.
+    pub fn new(
+        agent_registry: Arc<AgentRegistry>,
+        tool_executor: Arc<ToolExecutor>,
+        llm_config: Option<LlmRoutingConfig>,
+    ) -> Self {
+        let routing_agent = RoutingAgent::new(
+            agent_registry.clone(),
+            tool_executor.clone(),
+            llm_config,
+        );
+        
+        Self {
+            agent_registry,
+            tool_executor,
+            routing_agent,
+        }
+    }
+    
+    /// Makes a routing decision based on the task.
+    pub async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError> {
+        println!("🧠 LLM-powered TaskRouter analyzing task '{}'...", params.id);
+        
+        // First check for explicit routing hints in metadata
+        if let Some(metadata) = &params.metadata {
+            if let Some(route_hint) = metadata.get("_route_to").and_then(|v| v.as_str()) {
+                println!("  Found explicit routing hint: {}", route_hint);
+                return self.handle_routing_hint(route_hint);
+            }
+        }
+        
+        // No explicit hint, use LLM for intelligent routing
+        self.routing_agent.decide(params).await
+    }
+    
+    /// Handles explicit routing hints from metadata.
+    fn handle_routing_hint(&self, hint: &str) -> Result<RoutingDecision, AgentError> {
+        match hint {
+            "local" => {
+                println!("  Routing hint: Execute locally.");
+                Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
+            },
+            "reject" => {
+                println!("  Routing hint: Reject task.");
+                Ok(RoutingDecision::Reject { 
+                    reason: "Task explicitly rejected by routing hint".to_string() 
+                })
+            },
+            _ => {
+                // Check if it's an agent ID
+                if self.agent_registry.get(hint).is_some() {
+                    println!("  Routing hint: Delegate to '{}'.", hint);
+                    Ok(RoutingDecision::Remote { agent_id: hint.to_string() })
+                } else {
+                    println!("  ⚠️ Unknown routing hint: '{}'", hint);
+                    // Fall through to LLM routing
+                    Err(AgentError::RoutingError(
+                        format!("Unknown routing hint: {}", hint)
+                    ))
+                }
+            }
+        }
+    }
+    
+    /// Checks if a task should be decomposed into subtasks.
+    #[cfg(feature = "bidir-delegate")]
+    pub async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, AgentError> {
+        self.routing_agent.should_decompose(params).await
+    }
+    
+    /// Decomposes a complex task into subtasks.
+    #[cfg(feature = "bidir-delegate")]
+    pub async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError> {
+        self.routing_agent.decompose_task(params).await
+    }
+}
+
+/// Factory for creating LLM-powered task routers
+pub struct LlmTaskRouterFactory;
+
+impl LlmTaskRouterFactory {
+    /// Creates a new LLM task router with default configuration.
+    pub fn create_default(
+        agent_registry: Arc<AgentRegistry>,
+        tool_executor: Arc<ToolExecutor>,
+    ) -> Arc<LlmTaskRouter> {
+        Arc::new(LlmTaskRouter::new(
+            agent_registry,
+            tool_executor,
+            None, // Use default LLM config
+        ))
+    }
+    
+    /// Creates a new LLM task router with custom configuration.
+    pub fn create_with_config(
+        agent_registry: Arc<AgentRegistry>,
+        tool_executor: Arc<ToolExecutor>,
+        llm_config: LlmRoutingConfig,
+    ) -> Arc<LlmTaskRouter> {
+        Arc::new(LlmTaskRouter::new(
+            agent_registry,
+            tool_executor,
+            Some(llm_config),
+        ))
+    }
+}
+
+// Provide a helper function to integrate with existing code
+pub fn create_llm_task_router(
+    agent_registry: Arc<AgentRegistry>,
+    tool_executor: Arc<ToolExecutor>,
+) -> Arc<dyn LlmTaskRouterTrait> {
+    LlmTaskRouterFactory::create_default(agent_registry, tool_executor)
+}
+
+// Trait to allow dynamic dispatch
+#[async_trait::async_trait]
+pub trait LlmTaskRouterTrait: Send + Sync + 'static {
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError>;
+    
+    #[cfg(feature = "bidir-delegate")]
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, AgentError>;
+    
+    #[cfg(feature = "bidir-delegate")]
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError>;
+}
+
+#[async_trait::async_trait]
+impl LlmTaskRouterTrait for LlmTaskRouter {
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError> {
+        self.decide(params).await
+    }
+    
+    #[cfg(feature = "bidir-delegate")]
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, AgentError> {
+        self.should_decompose(params).await
+    }
+    
+    #[cfg(feature = "bidir-delegate")]
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError> {
+        self.decompose_task(params).await
+    }
+}

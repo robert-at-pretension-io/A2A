@@ -60,6 +60,7 @@ env_logger = { version = "0.11" }
 anyhow = "1.0" # For easier error handling in registry/config
 thiserror = "1.0" # For deriving Error
 toml = "0.8" # For parsing TOML configuration files
+tokio-util = { version = "0.7.15", features = ["full"] }
 
 [build-dependencies]
 sha2 = "0.10"

@@ -51,3 +51,2261 @@ background tasks) and the more advanced logic (routing, decomposition, synthesis
 missing or exist only as placeholders. Addressing these items is necessary to fulfill the complete           
 specification described in the plan.                                                                         
 
+-----------
+
+
+  
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                High-Level Implementation Plan for the “Remaining Tasks” List                                                ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Below is a conceptual, milestone-oriented roadmap that addresses every bullet in docs/remaining_tasks.txt.                                                     
+Think of each milestone as a short PR series that leaves the codebase compiling and all existing tests green.                                                  
+
+──────────────────────────  MILESTONE 0 – Baseline Checks  ────────────────────────── • Re-run cargo test with all bidirectional features enabled              
+(--all-features).                                                                                                                                              
+• Generate a living “PLACEHOLDER.md” list of every todo!() / unimplemented!() to make sure we don’t miss hidden stubs.                                         
+
+──────────────────────────  MILESTONE 1 – Server <--> Agent Wiring  ────────────────── Task(s) addressed  → #1, #2                                             
+
+1.1 Refactor TaskService::new – Split into two constructors: • TaskService::standalone()   // legacy, no Option fields • #[cfg(feature="bidir-core")]          
+TaskService::bidirectional(...) – Remove Option<Arc<…>> in the bidirectional variant; use hard requirements.                                                   
+
+1.2 Enhance server::run_server – Accept a pre-built TaskService (instead of assembling it) and the port/bind address. – Return both a ServerHandle and a       
+ShutdownTrigger (mpsc / broadcast / CancellationToken).                                                                                                        
+
+1.3 Update BidirectionalAgent::run – Instantiate repo, router, executor, client_manager, registry, task_service then pass to run_server. – Keep all fields on  
+BidirectionalAgent so the object owns the components for graceful shutdown later.                                                                              
+
+──────────────────────────  MILESTONE 2 – Repository Extensions & Background Loops ─── Task(s) addressed  → #3, #4                                             
+
+2.1 Add TaskRepositoryExt (blanket extension trait) with • set_origin, get_origin • link_child, get_children                                                   
+
+2.2 Extend InMemoryTaskRepository – Behind #[cfg(feature="bidir-delegate")] add DashMaps for origin & relationships.                                           
+
+2.3 Inject repo into ClientManager – New field repo: Arc<dyn TaskRepositoryExt>; constructor signature changes. – run_delegated_task_poll_loop reads “active   
+delegated tasks” from side-tables and updates them.                                                                                                            
+
+2.4 Implement the placeholders – TaskFlow::set_task_origin now routes to repo.set_origin. – ResultSynthesizer::get_child_task_ids calls repo.get_children.     
+
+──────────────────────────  MILESTONE 3 – First-Class Tool Support  ────────────────── Task(s) addressed  → #5                                                 
+
+3.1 Define Tool trait in tools/mod.rs (async-trait). 3.2 Implement three concrete tools • shell_tool.rs   – spawn limited shell commands, capture stdout,      
+timeout. • http_tool.rs    – simple HTTP GET/POST wrapper via reqwest. • ai_tool.rs      – echo or delegate to existing LLM API env-flag (so tests can stub).  
+3.3 Extend ToolExecutor – Registry pattern: register_tool(Box<dyn Tool>). – Default constructor registers built-ins. 3.4 Unit-test each tool behind a          
+feature-flagged mock.                                                                                                                                          
+
+──────────────────────────  MILESTONE 4 – Smart Routing & Decomposition  ───────────── Task(s) addressed  → #6                                                 
+
+4.1 Capability matrix – Each Tool exposes capabilities() -> &[&'static str]. – AgentRegistry keeps remote x-a2a-skills → capability sets. 4.2                  
+TaskRouter::decide – Heuristic pipeline: a) Parse task hints (metadata.routing or natural-language pattern). b) If local tool covers capability ⇒ Local. c)    
+Else find best remote agent ⇒ Delegate. d) If task is judged “compound” (very long, contains “and then”) ⇒ Decompose. 4.3 Decomposition – Naïve splitter: break
+on “;” or numbered lists; produce SubtaskDefinitions. – TaskFlow creates subtasks, links them, stores parent relations. 4.4 ResultSynthesizer – Simple concat  
+of child task outputs + header; later pluggable strategy.                                                                                                      
+
+──────────────────────────  MILESTONE 5 – Configuration & Port Handling  ───────────── Task(s) addressed  → #7                                                 
+
+5.1 Extend BidirectionalAgentConfig – add bind_address + port + optional public_url. 5.2 Modify BidirectionalAgent::run – If caller passes a port, override    
+config; else default to config values. – Propagate chosen port to Agent Card generation.                                                                       
+
+──────────────────────────  MILESTONE 6 – Graceful Shutdown & Signals  ─────────────── Task(s) addressed  → #8                                                 
+
+6.1 Introduce tokio_util::sync::CancellationToken – Owned by BidirectionalAgent. 6.2 run_server listens on token; returns JoinHandle. 6.3 Background loops     
+(polling & synthesis) also take child tokens. 6.4 Implement BidirectionalAgent::shutdown() that: a) Cancels token b) Awaits server & background tasks 6.5 Hook 
+Ctrl-C (tokio::signal::ctrl_c) in main.rs example binary for clean exit.                                                                                       
+
+──────────────────────────  MILESTONE 7 – Test & Docs Hardening  ───────────────────── • Add integration test “two agents, one delegates, completes”. • Run    
+cargo test --all-features in CI matrix. • Update README with quick-start & example curl commands. • Generate rustdoc (cargo doc --all-features) and fix        
+warnings.                                                                                                                                                      
+
+
+                                                               Deliverables After All Milestones                                                               
+
+ 1 All placeholders in the “remaining tasks” list resolved.                                                                                                    
+ 2 Default feature set keeps legacy server green; --all-features enables full bidirectional mode.                                                              
+ 3 At least one integration test proving delegation + synthesis.                                                                                               
+ 4 Graceful shutdown verified by test that starts agent, sends task, then cancels.                                                                             
+
+This roadmap keeps work incremental, continuously testable, and maps one-to-one with every unchecked item in docs/remaining_tasks.txt.                         
+
+
+
+read /home/elliot/Projects/a2a-test-suite/docs/remaining_tasks.txt
+and validate the tasks listed: make sure they DO conform to the A2A standard by using your bash, search engine and scrape tools and also make sure the tasks make sense within the codebase.
+Don't change any code, just comment on the tasks and validate them.
+
+Edit
+I'll read the remaining tasks file, validate the tasks against the A2A standard, and check if they make sense within the codebase. Let me start by examining the file.
+
+
+bash
+
+
+Now I'll check the project structure to better understand the codebase:
+
+
+bash
+Request
+
+{
+  `command`: `find /home/elliot/Projects/a2a-test-suite -type f -name \"*.rs\" | grep -v target | sort`
+}
+Response
+
+Command completed with status 0
+
+STDOUT:
+/home/elliot/Projects/a2a-test-suite/build.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/agent_registry.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/client_manager.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/config.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/error.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/result_synthesis.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/task_extensions.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/task_flow.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/task_router.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/tests/core.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/tests/delegation.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/tests/local_exec.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/tests/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/tests/property.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/tool_executor.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/tools/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/types.rs
+/home/elliot/Projects/a2a-test-suite/src/client/agent_skills.rs
+/home/elliot/Projects/a2a-test-suite/src/client/artifacts.rs
+/home/elliot/Projects/a2a-test-suite/src/client/auth.rs
+/home/elliot/Projects/a2a-test-suite/src/client/cancel_task.rs
+/home/elliot/Projects/a2a-test-suite/src/client/data_operations.rs
+/home/elliot/Projects/a2a-test-suite/src/client/error_handling.rs
+/home/elliot/Projects/a2a-test-suite/src/client/errors.rs
+/home/elliot/Projects/a2a-test-suite/src/client/file_operations.rs
+/home/elliot/Projects/a2a-test-suite/src/client/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/client/push_notifications.rs
+/home/elliot/Projects/a2a-test-suite/src/client/state_history.rs
+/home/elliot/Projects/a2a-test-suite/src/client/streaming.rs
+/home/elliot/Projects/a2a-test-suite/src/client/task_batch.rs
+/home/elliot/Projects/a2a-test-suite/src/client/tests/dynamic_streaming_test.rs
+/home/elliot/Projects/a2a-test-suite/src/client/tests/error_handling_test.rs
+/home/elliot/Projects/a2a-test-suite/src/client/tests/integration_test.rs
+/home/elliot/Projects/a2a-test-suite/src/client/tests/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/client/tests/state_machine_test.rs
+/home/elliot/Projects/a2a-test-suite/src/client_tests.rs
+/home/elliot/Projects/a2a-test-suite/src/fuzzer.rs
+/home/elliot/Projects/a2a-test-suite/src/main.rs
+/home/elliot/Projects/a2a-test-suite/src/mock_server.rs
+/home/elliot/Projects/a2a-test-suite/src/property_tests.rs
+/home/elliot/Projects/a2a-test-suite/src/runner.rs
+/home/elliot/Projects/a2a-test-suite/src/schema_utils.rs
+/home/elliot/Projects/a2a-test-suite/src/server/error.rs
+/home/elliot/Projects/a2a-test-suite/src/server/handlers/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/repositories/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/repositories/task_repository.rs
+/home/elliot/Projects/a2a-test-suite/src/server/services/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/services/notification_service.rs
+/home/elliot/Projects/a2a-test-suite/src/server/services/streaming_service.rs
+/home/elliot/Projects/a2a-test-suite/src/server/services/task_service.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/handlers/jsonrpc_handler_test.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/handlers/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/integration/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/integration/server_integration_test.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/repositories/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/repositories/task_repository_test.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/services/mod.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/services/notification_service_test.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/services/streaming_service_test.rs
+/home/elliot/Projects/a2a-test-suite/src/server/tests/services/task_service_test.rs
+/home/elliot/Projects/a2a-test-suite/src/types.rs
+/home/elliot/Projects/a2a-test-suite/src/validator.rs
+
+
+STDERR:
+Let me examine the key files mentioned in the remaining tasks to better understand what needs to be implemented:
+
+
+bash
+Request
+
+{
+  `command`: `cat /home/elliot/Projects/a2a-test-suite/src/server/mod.rs`
+}
+Response
+
+Command completed with status 0
+
+STDOUT:
+pub mod handlers;
+pub mod repositories;
+pub mod services;
+
+#[cfg(test)]
+pub mod tests;
+
+mod error;
+
+use crate::types;
+use hyper::{Body, Request, Response, Server, StatusCode};
+use hyper::service::{make_service_fn, service_fn};
+use std::convert::Infallible;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+pub use error::ServerError;
+use crate::server::handlers::jsonrpc_handler;
+use crate::server::repositories::task_repository::InMemoryTaskRepository;
+use crate::server::services::task_service::TaskService;
+use crate::server::services::streaming_service::StreamingService;
+use crate::server::services::notification_service::NotificationService;
+
+// Conditionally import bidirectional components
+#[cfg(feature = "bidir-local-exec")]
+use crate::bidirectional_agent::{TaskRouter, ToolExecutor};
+#[cfg(feature = "bidir-delegate")]
+use crate::bidirectional_agent::{ClientManager, AgentRegistry};
+
+
+/// Runs the A2A server on the specified port
+pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Create repositories
+    let task_repository = Arc::new(InMemoryTaskRepository::new());
+
+    // Create services - Pass bidirectional components if features are enabled
+    let task_service = Arc::new(TaskService::new(
+        task_repository.clone(),
+        // Provide router/executor only if bidir-local-exec is enabled
+        #[cfg(feature = "bidir-local-exec")] None, // Placeholder - these should be passed in
+        #[cfg(feature = "bidir-local-exec")] None, // Placeholder
+        // Provide client_manager/registry only if bidir-delegate is enabled
+        #[cfg(feature = "bidir-delegate")] None, // Placeholder
+        #[cfg(feature = "bidir-delegate")] None, // Placeholder
+        #[cfg(feature = "bidir-delegate")] None, // Placeholder for agent_id
+    ));
+
+    let streaming_service = Arc::new(StreamingService::new(task_repository.clone()));
+    let notification_service = Arc::new(NotificationService::new(task_repository.clone()));
+
+    // Create service function
+    let service = make_service_fn(move |_| {
+        let task_svc = task_service.clone();
+        let stream_svc = streaming_service.clone();
+        let notif_svc = notification_service.clone();
+        
+        async move {
+            Ok::<_, Infallible>(service_fn(move |req| {
+                jsonrpc_handler(
+                    req,
+                    task_svc.clone(),
+                    stream_svc.clone(),
+                    notif_svc.clone()
+                )
+            }))
+        }
+    });
+    
+    // Create the server
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let server = Server::bind(&addr).serve(service);
+    
+    println!("A2A Server running at http://{}", addr);
+    server.await?;
+    
+    Ok(())
+}
+
+/// Creates and returns the agent card for this server
+pub fn create_agent_card() -> serde_json::Value {
+    // Using a serde_json::Value instead of the typed AgentCard
+    // to ensure all required fields are present and properly formatted
+    json!({
+        "name": "A2A Test Suite Reference Server",
+        "description": "A reference implementation of the A2A protocol for testing",
+        "provider": null,
+        "authentication": null,
+        "capabilities": {
+            "streaming": true,
+            "push_notifications": true,
+            "state_transition_history": true
+        },
+        "default_input_modes": ["text"],
+        "default_output_modes": ["text"],
+        "documentation_url": null,
+        "version": "1.0.0",
+        "url": "http://localhost:8081",
+        "skills": []
+    })
+}
+
+
+STDERR:
+
+bash
+
+
+
+bash
+
+
+Let's check another key file mentioned in the remaining tasks:
+
+
+bash
+
+
+Let's check some additional key files to understand the implementation better:
+
+
+bash
+
+
+Let's look at one more relevant file to understand the implementation:
+
+
+bash
+
+
+Let's look at the task_repository.rs file to understand the repository implementation:
+
+
+bash
+
+
+Let's also check if there's a task_extensions.rs file that might define the TaskRepositoryExt trait:
+
+
+bash
+
+
+Let's also look at the A2A standard to validate these tasks against it:
+
+
+brave_search
+
+
+Let's look at the official A2A GitHub repo:
+
+
+scrape_url
+
+
+
+scrape_url
+
+
+Let's try to get the specification directly from GitHub:
+
+
+bash
+
+
+Let's try to find the specification in a different way:
+
+
+brave_search
+
+
+Based on my examination of the codebase and the A2A protocol, I'll now validate the tasks listed in the remaining_tasks.txt file and ensure they conform to the A2A standard.
+
+Validation of Remaining Tasks in A2A Test Suite
+Overview
+The remaining_tasks.txt file outlines several integration points and placeholder implementations that need to be addressed to make the A2A test suite feature complete according to its bidirectional_server_plan. I'll analyze each task to validate it against the A2A standard and verify it makes sense within the context of the codebase.
+
+Task 1: Server Integration
+Tasks:
+
+Update run_server in src/server/mod.rs to accept initialized bidirectional components
+Modify BidirectionalAgent::run to pass components to run_server
+Validation:
+These tasks are valid and necessary for the A2A implementation. The A2A protocol requires proper server setup to handle client requests, and the current implementation has placeholder None values for TaskService components. The bidirectional agent needs to correctly pass its initialized components to the server to enable proper task routing and execution. This conforms to the A2A standard where servers manage task execution.
+
+Task 2: TaskService Initialization
+Task:
+
+Refactor TaskService::new constructor to remove Option types for bidirectional components
+Validation:
+This task is valid and makes sense within the codebase. Currently, the TaskService constructor accepts Option<Arc<...>> for bidirectional components, which allows initialization without required features. The proposal to use #[cfg] attributes or create different constructors would ensure that when the relevant features (bidir-local-exec, bidir-delegate) are enabled, these components are required arguments rather than optional. This reflects a more robust implementation of the A2A server side that ensures all necessary components are available when needed.
+
+Task 3: Background Polling Task Repository Integration
+Tasks:
+
+Implement the run_delegated_task_poll_loop function in ClientManager
+Update ClientManager to have access to TaskRepository
+Validation:
+These tasks are essential for the bidirectional agent implementation and conform to the A2A standard. In the A2A protocol, agents need to monitor the status of delegated tasks. The run_delegated_task_poll_loop function is currently a placeholder that lacks access to TaskRepository to find and update active delegated tasks. The proposed change would provide the ClientManager with access to TaskRepositoryExt to properly manage task state, which is a key aspect of the A2A protocol for task management.
+
+Task 4: Task Origin/Relationship Persistence
+Tasks:
+
+Implement TaskFlow::set_task_origin method
+Implement ResultSynthesizer::get_child_task_ids method
+Initialize TaskFlow and ResultSynthesizer with Arc<dyn TaskRepositoryExt>
+Validation:
+These tasks are valid and necessary for proper A2A implementation. The A2A protocol involves task delegation between agents, which requires tracking task origin and parent-child relationships between tasks. The current implementation has placeholder methods that need to be connected to the TaskRepositoryExt for proper persistence. This would enable the agent to track which tasks were delegated to other agents and combine results from multiple subtasks, which is essential for complex multi-agent workflows in the A2A standard.
+
+Task 5: Tool Implementation
+Task:
+
+Implement the actual tool logic in src/bidirectional_agent/tools/
+Validation:
+This task is valid and necessary for an A2A implementation. The A2A protocol includes capabilities for agents to execute tasks, which requires actual tool implementations. The plan mentions example tools (shell_tool.rs, http_tool.rs, ai_tool.rs), but these are not yet implemented in the provided code. Implementing these tools would enable the ToolExecutor to perform actual work beyond the basic "echo" placeholder, which aligns with A2A's focus on enabling agents to take actions.
+
+Task 6: Advanced Routing & Decomposition Logic
+Tasks:
+
+Enhance routing logic in TaskRouter::decide
+Implement more sophisticated capability matching
+Develop logic for triggering RoutingDecision::Decompose
+Implement decomposition in TaskFlow and synthesis in ResultSynthesizer
+Validation:
+These tasks are valid and align with the A2A standard's focus on agent interoperability and task management. The current routing logic is basic, and enhancing it with capability matching would allow better task delegation decisions. The decomposition logic would enable breaking complex tasks into subtasks, which can then be handled by different agents - a key feature for sophisticated multi-agent systems under the A2A protocol. The synthesis logic would combine results from these subtasks, providing a cohesive response to the original request.
+
+Task 7: Configuration and Port Binding
+Tasks:
+
+Update BidirectionalAgent::run to use port from config
+Propagate selected port to Agent Card generation
+Validation:
+These tasks are valid and important for proper A2A implementation. The A2A protocol requires agents to expose an HTTP endpoint, and the current implementation ignores the port passed to it. Using the port from the BidirectionalAgentConfig and propagating it to the Agent Card (a key component in A2A for agent discovery) ensures that clients can correctly connect to the server at the specified endpoint, which is essential for A2A's discovery mechanism.
+
+Task 8: Graceful Shutdown
+Task:
+
+Replace server_handle.abort() with proper graceful shutdown
+Implement shutdown using cancellation tokens for server and background tasks
+Validation:
+This task is valid and important for a robust A2A implementation. While not specifically mentioned in the A2A protocol documentation, proper resource management including graceful shutdown is an essential aspect of any server implementation. The current implementation uses abort(), which might lead to unfinished tasks being lost. Implementing graceful shutdown using cancellation tokens would ensure that ongoing tasks are properly handled when the server is shutting down.
+
+Milestone-Based Implementation Plan
+The high-level implementation plan organized into milestones provides a structured approach to addressing all the remaining tasks. Each milestone focuses on specific aspects of the system:
+
+Milestone 1: Server <--> Agent Wiring - Addresses tasks #1 and #2
+Milestone 2: Repository Extensions & Background Loops - Addresses tasks #3 and #4
+Milestone 3: First-Class Tool Support - Addresses task #5
+Milestone 4: Smart Routing & Decomposition - Addresses task #6
+Milestone 5: Configuration & Port Handling - Addresses task #7
+Milestone 6: Graceful Shutdown & Signals - Addresses task #8
+Milestone 7: Test & Docs Hardening - Ensures quality and documentation
+This approach is valid and well-structured, focusing on progressive enhancements while keeping the codebase in a functional state throughout the development process.
+
+Conclusion
+The tasks listed in remaining_tasks.txt are all valid and necessary for completing the implementation according to the A2A protocol. They focus on:
+
+Proper integration between server and agent components
+Robust task repository access for delegated tasks
+Task origin and relationship tracking for multi-agent workflows
+Actual tool implementations for task execution
+Advanced routing and decomposition for complex tasks
+Configuration management for proper server operation
+Graceful shutdown for resource management
+All these aspects are crucial for a complete A2A implementation that supports bidirectional agent communication, task delegation, and execution. The milestone-based implementation plan provides a clear roadmap for addressing these tasks in a structured manner.
+
+The tasks align well with the A2A protocol's focus on agent discovery, task management, and inter-agent communication, making them valid enhancements to the existing codebase.
+
+
+
+
+Please use grep to go through the project and provide a more technical explanation of what needs to be done for each task -- just at a very high level -- make sure to include the file paths in your explanation and currently existing functions/methods/structs/enums
+
+Edit
+I'll use grep to provide a more technical explanation of what needs to be done for each remaining task, including file paths and relevant code structures.
+
+
+bash
+
+
+Let me look more deeply at the specific functions that need to be modified for each task:
+
+
+bash
+
+
+
+bash
+
+
+Let me search for the run method in the BidirectionalAgent:
+
+
+bash
+
+
+Let me examine the ClientManager's poll loop and the task repository extension:
+
+
+bash
+
+
+Let's examine the task flow and result synthesis placeholders:
+
+
+bash
+
+
+Let's examine the result synthesizer:
+
+
+bash
+
+
+Let's look at the task router implementation:
+
+
+bash
+
+
+Now, let's look at the tools directory structure:
+
+
+bash
+
+
+Let's examine the tool module:
+
+
+bash
+
+
+Based on the code examination, here's a technical explanation of what needs to be done for each task:
+
+Task 1: Server Integration
+Technical Details:
+
+Files to modify:
+src/server/mod.rs: Modify run_server function signature to accept bidirectional components
+src/bidirectional_agent/mod.rs: Update BidirectionalAgent::run method (around line 109)
+Changes needed:
+
+In src/server/mod.rs, update the run_server function signature to accept pre-initialized components:
+rust
+pub async fn run_server(
+    port: u16,
+    task_repository: Arc<InMemoryTaskRepository>,
+    #[cfg(feature = "bidir-local-exec")] task_router: Arc<TaskRouter>,
+    #[cfg(feature = "bidir-local-exec")] tool_executor: Arc<ToolExecutor>,
+    #[cfg(feature = "bidir-delegate")] client_manager: Arc<ClientManager>,
+    #[cfg(feature = "bidir-delegate")] agent_registry: Arc<AgentRegistry>,
+    #[cfg(feature = "bidir-delegate")] agent_id: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+In src/bidirectional_agent/mod.rs, update the run method around line 145 to pass components to run_server:
+rust
+let server_handle = tokio::spawn(async move {
+    // Pass all initialized components to run_server
+    if let Err(e) = crate::server::run_server(
+        port,
+        self.task_repository.clone(),
+        #[cfg(feature = "bidir-local-exec")] self.task_router.clone(),
+        #[cfg(feature = "bidir-local-exec")] self.tool_executor.clone(),
+        #[cfg(feature = "bidir-delegate")] self.client_manager.clone(),
+        #[cfg(feature = "bidir-delegate")] self.agent_registry.clone(),
+        #[cfg(feature = "bidir-delegate")] self.config.self_id.clone(),
+    ).await {
+        eprintln!("❌ Server failed: {}", e);
+    }
+});
+Task 2: TaskService Initialization
+Technical Details:
+
+Files to modify:
+src/server/services/task_service.rs: Refactor TaskService::new constructor
+Changes needed:
+
+Create separate constructors for different configurations:
+rust
+// For standalone mode (no bidirectional features)
+pub fn standalone(task_repository: Arc<dyn TaskRepository>) -> Self { /* ... */ }
+
+// For bidirectional mode
+#[cfg(feature = "bidir-core")]
+pub fn bidirectional(
+    task_repository: Arc<dyn TaskRepository>,
+    #[cfg(feature = "bidir-local-exec")] task_router: Arc<TaskRouter>,
+    #[cfg(feature = "bidir-local-exec")] tool_executor: Arc<ToolExecutor>,
+    #[cfg(feature = "bidir-delegate")] client_manager: Arc<ClientManager>,
+    #[cfg(feature = "bidir-delegate")] agent_registry: Arc<AgentRegistry>,
+    #[cfg(feature = "bidir-delegate")] agent_id: String,
+) -> Self { /* ... */ }
+Task 3: Background Polling Task Repository Integration
+Technical Details:
+
+Files to modify:
+src/bidirectional_agent/client_manager.rs: Update ClientManager struct and run_delegated_task_poll_loop method
+Changes needed:
+
+Add TaskRepositoryExt field to ClientManager:
+rust
+pub struct ClientManager {
+    // Existing fields...
+    #[cfg(feature = "bidir-delegate")]
+    task_repository: Arc<dyn TaskRepositoryExt>,
+}
+Update constructor to accept task_repository:
+rust
+#[cfg(feature = "bidir-delegate")]
+pub fn new(
+    registry: Arc<AgentRegistry>, 
+    self_config: Arc<BidirectionalAgentConfig>,
+    task_repository: Arc<dyn TaskRepositoryExt>,
+) -> Result<Self> { /* ... */ }
+Implement missing code in run_delegated_task_poll_loop around line 194:
+rust
+// Find active delegated tasks
+let mut delegated_tasks: Vec<(String, String, String)> = Vec::new();
+
+// Use the task repository to find tasks with TaskOrigin::Delegated
+for origin_entry in self.task_repository.get_all_task_origins().await? {
+    if let TaskOrigin::Delegated { agent_id, remote_task_id } = &origin_entry.value() {
+        delegated_tasks.push((origin_entry.key().clone(), agent_id.clone(), remote_task_id.clone()));
+    }
+}
+Task 4: Task Origin/Relationship Persistence
+Technical Details:
+
+Files to modify:
+src/bidirectional_agent/task_flow.rs: Complete set_task_origin method (around line 287)
+src/bidirectional_agent/result_synthesis.rs: Implement get_child_task_ids method (around line 120)
+Changes needed:
+
+Update TaskFlow constructor to accept Arc<dyn TaskRepositoryExt>:
+rust
+pub fn new(
+    task_id: String,
+    agent_id: String,
+    task_repository: Arc<dyn TaskRepositoryExt>, // Change from TaskRepository
+    // Other parameters...
+) -> Self { /* ... */ }
+Implement set_task_origin method:
+rust
+async fn set_task_origin(&self, origin: TaskOrigin) -> Result<(), AgentError> {
+    // Downcast repository to TaskRepositoryExt
+    if let Some(repo_ext) = self.task_repository.as_any().downcast_ref::<dyn TaskRepositoryExt>() {
+        repo_ext.set_task_origin(&self.task_id, origin).await?;
+    } else {
+        return Err(AgentError::TaskFlowError("Repository does not implement TaskRepositoryExt".to_string()));
+    }
+    Ok(())
+}
+Update ResultSynthesizer constructor and implement get_child_task_ids:
+rust
+pub fn new(parent_task_id: String, task_repository: Arc<dyn TaskRepositoryExt>) -> Self { /* ... */ }
+
+async fn get_child_task_ids(&self) -> Result<Vec<String>, AgentError> {
+    let relationships = self.task_repository.get_task_relationships(&self.parent_task_id).await?;
+    Ok(relationships.children)
+}
+Task 5: Tool Implementation
+Technical Details:
+
+Files to create:
+src/bidirectional_agent/tools/shell_tool.rs
+src/bidirectional_agent/tools/http_tool.rs
+src/bidirectional_agent/tools/ai_tool.rs
+Files to modify:
+src/bidirectional_agent/tools/mod.rs: Uncomment tool imports
+Changes needed:
+
+Define a Tool trait in mod.rs:
+rust
+use async_trait::async_trait;
+use crate::types::Task;
+
+#[async_trait]
+pub trait Tool: Send + Sync + 'static {
+    fn name(&self) -> &'static str;
+    fn capabilities(&self) -> &[&'static str];
+    async fn execute(&self, task: &mut Task) -> Result<(), crate::bidirectional_agent::error::AgentError>;
+}
+Implement each tool as specified in the plan, for example:
+rust
+// shell_tool.rs
+pub struct ShellTool {
+    timeout_secs: u64,
+    max_output_size: usize,
+}
+
+#[async_trait]
+impl Tool for ShellTool {
+    fn name(&self) -> &'static str { "shell" }
+    fn capabilities(&self) -> &[&'static str] { &["execute_command", "run_script"] }
+    async fn execute(&self, task: &mut Task) -> Result<(), AgentError> {
+        // Implementation...
+    }
+}
+Update tool registration in ToolExecutor::new:
+rust
+pub fn new() -> Self {
+    let mut executor = Self { tools: HashMap::new() };
+    executor.register_tool(Box::new(ShellTool::new()));
+    executor.register_tool(Box::new(HttpTool::new()));
+    executor.register_tool(Box::new(AiTool::new()));
+    executor
+}
+Task 6: Advanced Routing & Decomposition Logic
+Technical Details:
+
+Files to modify:
+src/bidirectional_agent/task_router.rs: Enhance decide method (around line 55)
+src/bidirectional_agent/task_flow.rs: Implement decomposition handling
+src/bidirectional_agent/result_synthesis.rs: Enhance synthesis logic
+Changes needed:
+
+Update TaskRouter::decide method to implement capability matching:
+rust
+pub async fn decide(&self, params: &TaskSendParams) -> RoutingDecision {
+    // Check routing hints (existing logic)
+    
+    // Get capabilities needed for this task
+    let capabilities_needed = self.extract_capabilities(params);
+    
+    // Check if local tools can handle the capabilities
+    let local_capability_coverage = self.check_local_capabilities(&capabilities_needed);
+    if local_capability_coverage > 0.8 { // 80% threshold
+        return RoutingDecision::Local { tool_names: self.find_tools_for_capabilities(&capabilities_needed) };
+    }
+    
+    // Find remote agent with best capability match
+    if let Some((agent_id, _)) = self.find_remote_agent_for_capabilities(&capabilities_needed) {
+        return RoutingDecision::Remote { agent_id };
+    }
+    
+    // Decomposition check for complex tasks
+    if self.is_complex_task(params) {
+        let subtasks = self.decompose_task(params);
+        if !subtasks.is_empty() {
+            return RoutingDecision::Decompose { subtasks };
+        }
+    }
+    
+    // Fallback to rejection if can't handle
+    RoutingDecision::Reject { reason: "No local or remote capability match found".to_string() }
+}
+Implement logic to detect and decompose complex tasks:
+rust
+fn is_complex_task(&self, params: &TaskSendParams) -> bool {
+    // Check for conjunctions, numbered lists, multiple questions, etc.
+    // ...
+}
+
+fn decompose_task(&self, params: &TaskSendParams) -> Vec<SubtaskDefinition> {
+    // Split into subtasks based on patterns
+    // ...
+}
+Task 7: Configuration and Port Binding
+Technical Details:
+
+Files to modify:
+src/bidirectional_agent/mod.rs: Update run method (around line 109)
+src/bidirectional_agent/mod.rs: Update entrypoint function (around line 171)
+Changes needed:
+
+Update run method to use port from config:
+rust
+pub async fn run(&self, port: u16) -> Result<()> {
+    // Use provided port or fallback to config
+    let actual_port = if port > 0 { port } else { 
+        self.config.network.port.unwrap_or(8080) 
+    };
+    
+    println!("🔌 Starting A2A server component on port {}...", actual_port);
+    // ...
+}
+Update entry point function:
+rust
+pub async fn run(config_path: &str) -> Result<()> {
+    // Load configuration
+    let config = config::load_config(config_path)?;
+    
+    // Initialize and run the agent
+    let agent = BidirectionalAgent::new(config)?;
+    
+    // Use port from config instead of hardcoded 0
+    let port = agent.config.network.port.unwrap_or(8080);
+    agent.run(port).await
+}
+Task 8: Graceful Shutdown
+Technical Details:
+
+Files to modify:
+src/bidirectional_agent/mod.rs: Add CancellationToken and shutdown method
+Changes needed:
+
+Add CancellationToken to BidirectionalAgent struct:
+rust
+use tokio_util::sync::CancellationToken;
+
+pub struct BidirectionalAgent {
+    // Existing fields...
+    cancellation_token: CancellationToken,
+    server_handle: Option<tokio::task::JoinHandle<()>>,
+    background_handles: Vec<tokio::task::JoinHandle<()>>,
+}
+Update constructor to initialize token:
+rust
+pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
+    // Initialize components...
+    
+    Ok(Self {
+        // Existing fields...
+        cancellation_token: CancellationToken::new(),
+        server_handle: None,
+        background_handles: Vec::new(),
+    })
+}
+Update run method to store handles and pass token:
+rust
+pub async fn run(&self, port: u16) -> Result<()> {
+    // Background tasks with child tokens
+    let registry_token = self.cancellation_token.child_token();
+    let registry_handle = tokio::spawn(async move {
+        tokio::select! {
+            _ = registry_token.cancelled() => println!("Registry refresh loop canceled"),
+            _ = registry_clone.run_refresh_loop(refresh_interval) => {}
+        }
+    });
+    self.background_handles.push(registry_handle);
+    
+    // Server with token
+    let server_token = self.cancellation_token.child_token();
+    let server_handle = tokio::spawn(async move {
+        tokio::select! {
+            _ = server_token.cancelled() => println!("Server loop canceled"),
+            _ = run_server(..., server_token) => {}
+        }
+    });
+    self.server_handle = Some(server_handle);
+    
+    // Listen for Ctrl-C
+    tokio::signal::ctrl_c().await?;
+    self.shutdown().await?;
+    
+    Ok(())
+}
+Implement shutdown method:
+rust
+pub async fn shutdown(&self) -> Result<()> {
+    println!("🛑 Shutting down agent...");
+    
+    // Cancel all tasks
+    self.cancellation_token.cancel();
+    
+    // Wait for server and background tasks
+    if let Some(handle) = &self.server_handle {
+        handle.await?;
+    }
+    
+    for handle in &self.background_handles {
+        handle.await?;
+    }
+    
+    println!("✅ Agent shutdown complete");
+    Ok(())
+}
+These technical explanations provide a high-level overview of the code changes needed to implement each of the remaining tasks in the A2A test suite.
+
+
+
+
+
+For task 6, we are going to use an llm for delegation, local tool calling, etc, so make sure to come up with the functions needed (just a separate file with placeholders) but do come up with good prompts for choosing the flow
+
+Edit
+I'll create placeholder functions for task 6 with good prompts for using an LLM to handle routing decisions, tool selection, and decomposition. Let me outline what this file should contain:
+
+
+bash
+
+
+Now I'll create a placeholder file with functions for LLM-based routing:
+
+
+bash
+
+
+Now let's create an integration file to show how this LLM routing would be used within the task router:
+
+
+bash
+Request
+
+{
+  `command`: `cat > /home/elliot/Projects/a2a-test-suite/src/bidirectional_agent/task_router_llm.rs << 'EOF'
+//! LLM-powered task routing implementation.
+//! 
+//! This module provides a specialized TaskRouter that uses LLMs for
+//! making sophisticated routing decisions.
+
+#![cfg(feature = \"bidir-local-exec\")]
+
+use crate::bidirectional_agent::{
+    agent_registry::AgentRegistry,
+    task_router::{RoutingDecision, SubtaskDefinition},
+    tool_executor::ToolExecutor,
+    error::AgentError,
+    llm_routing::{RoutingAgent, LlmRoutingConfig},
+};
+use crate::types::{TaskSendParams, Message};
+use std::sync::Arc;
+use anyhow::Result;
+
+/// Enhanced TaskRouter that uses LLM-based decision making
+pub struct LlmTaskRouter {
+    /// Agent registry for delegation
+    agent_registry: Arc<AgentRegistry>,
+    
+    /// Tool executor for local execution
+    tool_executor: Arc<ToolExecutor>,
+    
+    /// LLM-based routing agent
+    routing_agent: RoutingAgent,
+}
+
+impl LlmTaskRouter {
+    /// Creates a new LLM-powered task router.
+    pub fn new(
+        agent_registry: Arc<AgentRegistry>,
+        tool_executor: Arc<ToolExecutor>,
+        llm_config: Option<LlmRoutingConfig>,
+    ) -> Self {
+        let routing_agent = RoutingAgent::new(
+            agent_registry.clone(),
+            tool_executor.clone(),
+            llm_config,
+        );
+        
+        Self {
+            agent_registry,
+            tool_executor,
+            routing_agent,
+        }
+    }
+    
+    /// Makes a routing decision based on the task.
+    pub async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError> {
+        println!(\"🧠 LLM-powered TaskRouter analyzing task '{}'...\", params.id);
+        
+        // First check for explicit routing hints in metadata
+        if let Some(metadata) = &params.metadata {
+            if let Some(route_hint) = metadata.get(\"_route_to\").and_then(|v| v.as_str()) {
+                println!(\"  Found explicit routing hint: {}\", route_hint);
+                return self.handle_routing_hint(route_hint);
+            }
+        }
+        
+        // No explicit hint, use LLM for intelligent routing
+        self.routing_agent.decide(params).await
+    }
+    
+    /// Handles explicit routing hints from metadata.
+    fn handle_routing_hint(&self, hint: &str) -> Result<RoutingDecision, AgentError> {
+        match hint {
+            \"local\" => {
+                println!(\"  Routing hint: Execute locally.\");
+                Ok(RoutingDecision::Local { tool_names: vec![\"echo\".to_string()] })
+            },
+            \"reject\" => {
+                println!(\"  Routing hint: Reject task.\");
+                Ok(RoutingDecision::Reject { 
+                    reason: \"Task explicitly rejected by routing hint\".to_string() 
+                })
+            },
+            _ => {
+                // Check if it's an agent ID
+                if self.agent_registry.get(hint).is_some() {
+                    println!(\"  Routing hint: Delegate to '{}'.\", hint);
+                    Ok(RoutingDecision::Remote { agent_id: hint.to_string() })
+                } else {
+                    println!(\"  ⚠️ Unknown routing hint: '{}'\", hint);
+                    // Fall through to LLM routing
+                    Err(AgentError::RoutingError(
+                        format!(\"Unknown routing hint: {}\", hint)
+                    ))
+                }
+            }
+        }
+    }
+    
+    /// Checks if a task should be decomposed into subtasks.
+    #[cfg(feature = \"bidir-delegate\")]
+    pub async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, AgentError> {
+        self.routing_agent.should_decompose(params).await
+    }
+    
+    /// Decomposes a complex task into subtasks.
+    #[cfg(feature = \"bidir-delegate\")]
+    pub async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError> {
+        self.routing_agent.decompose_task(params).await
+    }
+}
+
+/// Factory for creating LLM-powered task routers
+pub struct LlmTaskRouterFactory;
+
+impl LlmTaskRouterFactory {
+    /// Creates a new LLM task router with default configuration.
+    pub fn create_default(
+        agent_registry: Arc<AgentRegistry>,
+        tool_executor: Arc<ToolExecutor>,
+    ) -> Arc<LlmTaskRouter> {
+        Arc::new(LlmTaskRouter::new(
+            agent_registry,
+            tool_executor,
+            None, // Use default LLM config
+        ))
+    }
+    
+    /// Creates a new LLM task router with custom configuration.
+    pub fn create_with_config(
+        agent_registry: Arc<AgentRegistry>,
+        tool_executor: Arc<ToolExecutor>,
+        llm_config: LlmRoutingConfig,
+    ) -> Arc<LlmTaskRouter> {
+        Arc::new(LlmTaskRouter::new(
+            agent_registry,
+            tool_executor,
+            Some(llm_config),
+        ))
+    }
+}
+
+// Provide a helper function to integrate with existing code
+pub fn create_llm_task_router(
+    agent_registry: Arc<AgentRegistry>,
+    tool_executor: Arc<ToolExecutor>,
+) -> Arc<dyn LlmTaskRouterTrait> {
+    LlmTaskRouterFactory::create_default(agent_registry, tool_executor)
+}
+
+// Trait to allow dynamic dispatch
+#[async_trait::async_trait]
+pub trait LlmTaskRouterTrait: Send + Sync + 'static {
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError>;
+    
+    #[cfg(feature = \"bidir-delegate\")]
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, AgentError>;
+    
+    #[cfg(feature = \"bidir-delegate\")]
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError>;
+}
+
+#[async_trait::async_trait]
+impl LlmTaskRouterTrait for LlmTaskRouter {
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError> {
+        self.decide(params).await
+    }
+    
+    #[cfg(feature = \"bidir-delegate\")]
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, AgentError> {
+        self.should_decompose(params).await
+    }
+    
+    #[cfg(feature = \"bidir-delegate\")]
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError> {
+        self.decompose_task(params).await
+    }
+}
+EOF`
+}
+Response
+
+Command completed with status 0
+
+STDOUT:
+
+
+STDERR:
+Finally, let's create a placeholder for the actual LLM integration with a specific provider (Anthropic Claude in this case):
+
+
+bash
+
+
+I've created three new placeholder files for task 6 (advanced routing and decomposition) that use LLMs for making intelligent decisions. Here's an explanation of what I've implemented:
+
+1. LLM-based Routing and Decomposition Implementation
+Key Files Created:
+src/bidirectional_agent/llm_routing/mod.rs:
+Main module with the core LLM routing functionality
+Contains structured prompt engineering for different decision types
+Handles decision making for routing and task decomposition
+src/bidirectional_agent/task_router_llm.rs:
+Extension of the existing task router with LLM capabilities
+Integration point between existing code and LLM-based decision making
+Factory pattern for easy creation and configuration
+src/bidirectional_agent/llm_routing/claude_client.rs:
+Concrete implementation using Anthropic's Claude API
+Handles API communication and response parsing
+Extracts structured JSON from LLM outputs
+Key Functions and Components:
+LLM Router:
+decide(): Makes routing decisions based on task analysis
+should_decompose(): Determines if a task is complex enough to split
+decompose_task(): Breaks a complex task into manageable subtasks
+Result Synthesizer:
+synthesize_results(): Combines results from multiple subtasks
+Uses prompt engineering to create coherent, unified responses
+Claude Integration:
+complete(): Sends prompts to Claude and gets responses
+complete_json<T>(): Gets structured JSON responses for easy parsing
+2. Prompt Engineering
+I've designed several carefully structured prompts for different scenarios:
+
+Routing Decision Prompt:
+# Task Routing Decision
+
+## Task Description
+The user has submitted the following task:
+"{task_text}"
+
+## Available Local Capabilities
+The system has access to the following local tools/capabilities:
+{local_capabilities}
+
+## Available Remote Agents
+The system can delegate to the following agents with these capabilities:
+{remote_agents}
+
+## Instructions
+Analyze the task and decide whether to:
+1. Execute locally using available tools
+2. Delegate to a remote agent with suitable capabilities
+3. Decompose into smaller subtasks (if complex)
+4. Reject if the task cannot be handled
+
+## Routing Decision Format
+Provide your response in this JSON format:
+{json_format_example}
+Decomposition Analysis Prompt:
+# Task Complexity Analysis
+
+## Task Description
+The user has submitted the following task:
+"{task_text}"
+
+## Instructions
+Analyze whether this task should be decomposed into smaller subtasks.
+Consider these factors:
+1. Does the task contain multiple distinct operations?
+2. Does it require different tools or capabilities?
+3. Could it be parallelized into independent steps?
+4. Is it too complex to handle in a single execution?
+
+## Response Format
+Provide your answer as a simple "yes" or "no", followed by brief reasoning.
+If yes, also suggest how the task could be decomposed into 2-5 subtasks.
+Task Decomposition Prompt:
+# Task Decomposition
+
+## Task Description
+The user has submitted the following complex task:
+"{task_text}"
+
+## Available Capabilities
+The system has access to the following tools/capabilities:
+{local_capabilities}
+
+## Instructions
+Decompose this complex task into 2-5 smaller, more manageable subtasks.
+Each subtask should:
+1. Be clearly defined and focused on a specific part of the overall task
+2. Include specific input text that would be sent to that subtask
+3. Indicate which tools or capabilities would be needed
+
+## Decomposition Format
+Provide your response in this JSON format:
+{json_format_example}
+Result Synthesis Prompt:
+# Result Synthesis
+
+## Original Task
+The user requested:
+"{parent_task_text}"
+
+## Subtask Results
+{subtasks_results}
+
+## Instructions
+Synthesize these subtask results into a single, coherent response that addresses the original task.
+The synthesis should:
+1. Present a unified answer to the original request
+2. Integrate information from all subtasks logically
+3. Remove redundancies and resolve any contradictions
+4. Present the information in a clear, concise manner
+
+## Response Format
+Provide a well-formatted, coherent response that could be presented directly to the user.
+3. Integration with Existing Code
+To use this new LLM-based routing in the existing codebase, you would:
+
+Update TaskRouter instantiation in src/bidirectional_agent/mod.rs:
+rust
+// Replace existing TaskRouter with LLM-powered one
+let task_router = task_router_llm::create_llm_task_router(
+    self.agent_registry.clone(),
+    self.tool_executor.clone(),
+);
+Add configuration for LLM API in src/bidirectional_agent/config.rs:
+rust
+pub struct BidirectionalAgentConfig {
+    // Existing fields...
+    
+    /// LLM configuration for routing decisions
+    #[cfg(feature = "bidir-local-exec")]
+    pub llm_routing: Option<llm_routing::LlmRoutingConfig>,
+}
+Update task flow to use LLM-based decomposition in src/bidirectional_agent/task_flow.rs
+These placeholder files provide a complete framework for implementing advanced routing and decomposition logic using LLMs, with well-designed prompts for making intelligent decisions about task handling, decomposition, and result synthesis.
+
+
+
+
+
+Please provide specific instructions for an llm programming agent to implement these features. Be concise and direct
+
+Edit
+LLM Implementation Instructions for Advanced A2A Routing
+1. Setup LLM Routing Module
+Create directory src/bidirectional_agent/llm_routing/
+Create three files:
+mod.rs: Core routing interfaces
+claude_client.rs: Anthropic API client
+Add module declaration to src/bidirectional_agent/mod.rs
+2. Implement LlmRouter (mod.rs)
+rust
+struct LlmRouter {
+    agent_registry: Arc<AgentRegistry>,
+    tool_executor: Arc<ToolExecutor>,
+    client: LlmClient,
+}
+
+impl LlmRouter {
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision>;
+    fn create_routing_prompt(&self, task_text: &str, capabilities: &[String], agents: &[(String, Vec<String>)]) -> String;
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>>;
+}
+3. Implement Claude Client (claude_client.rs)
+rust
+struct ClaudeClient {
+    client: reqwest::Client,
+    api_key: String,
+    model: String,
+}
+
+impl ClaudeClient {
+    async fn complete(&self, prompt: &str) -> Result<String>;
+    async fn complete_json<T: DeserializeOwned>(&self, prompt: &str) -> Result<T>;
+}
+4. Extend TaskRouter Interface
+Modify src/bidirectional_agent/task_router.rs:
+Add #[cfg(feature = "llm-routing")] options
+Update decide() method to use LLM when enabled
+Add capability extraction from tasks
+5. Implement Key Prompts
+Routing Decision Prompt (in create_routing_prompt()):
+Task: "{task_text}"
+Local Tools: {capabilities}
+Remote Agents: {agents}
+
+Decide whether to:
+1. Execute locally
+2. Delegate to an agent
+3. Decompose into subtasks
+4. Reject task
+
+Return JSON: {"decision": "local|remote|decompose|reject", ...}
+Decomposition Prompt (in create_decomposition_prompt()):
+Task: "{task_text}"
+Tools: {capabilities}
+
+Decompose into 2-5 subtasks.
+Return JSON array of subtasks: [{"id": "...", "description": "...", ...}]
+6. Update TaskFlow
+Modify src/bidirectional_agent/task_flow.rs:
+Add handling for RoutingDecision::Decompose
+Implement subtask creation and linking
+Add result synthesis with LLM
+7. Update ResultSynthesizer
+Modify src/bidirectional_agent/result_synthesis.rs:
+Add synthesize_with_llm(parent_task, child_results)
+Create synthesis prompt template
+Parse synthesized response to update parent task
+8. Configuration Integration
+Add to src/bidirectional_agent/config.rs:
+rust
+pub struct LlmConfig {
+    pub api_key: String,
+    pub model: String,
+    pub routing_temperature: f32,
+}
+Update BidirectionalAgentConfig to include LLM settings
+9. Factory Pattern for Easy Integration
+rust
+pub fn create_task_router(config: &BidirectionalAgentConfig, registry: Arc<AgentRegistry>, executor: Arc<ToolExecutor>) -> Arc<dyn TaskRouterTrait> {
+    if let Some(llm_config) = &config.llm {
+        Arc::new(LlmTaskRouter::new(registry, executor, llm_config))
+    } else {
+        Arc::new(BasicTaskRouter::new(registry, executor))
+    }
+}
+10. Tests
+Create src/bidirectional_agent/llm_routing/tests.rs
+Write tests for:
+Routing decisions with mock LLM responses
+Task decomposition with predefined complex tasks
+Result synthesis with multiple subtasks
+
+
+
+
+Now write explicit instructions for the other tasks mentioned
+
+Edit
+Implementation Instructions for A2A Remaining Tasks
+Task 1: Server Integration
+Modify src/server/mod.rs:
+rust
+pub async fn run_server(
+    port: u16,
+    task_repository: Arc<InMemoryTaskRepository>,
+    #[cfg(feature = "bidir-local-exec")] task_router: Arc<TaskRouter>,
+    #[cfg(feature = "bidir-local-exec")] tool_executor: Arc<ToolExecutor>,
+    #[cfg(feature = "bidir-delegate")] client_manager: Arc<ClientManager>,
+    #[cfg(feature = "bidir-delegate")] agent_registry: Arc<AgentRegistry>,
+    #[cfg(feature = "bidir-delegate")] agent_id: String,
+) -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error + Send + Sync>> {
+    // Create and initialize services
+    let task_service = Arc::new(TaskService::bidirectional(
+        task_repository.clone(),
+        #[cfg(feature = "bidir-local-exec")] task_router,
+        #[cfg(feature = "bidir-local-exec")] tool_executor,
+        #[cfg(feature = "bidir-delegate")] client_manager,
+        #[cfg(feature = "bidir-delegate")] agent_registry,
+        #[cfg(feature = "bidir-delegate")] agent_id,
+    ));
+    
+    // Start server and return join handle
+    let server_handle = tokio::spawn(async move { /* existing server code */ });
+    Ok(server_handle)
+}
+Update BidirectionalAgent::run in src/bidirectional_agent/mod.rs:
+rust
+let server_handle = crate::server::run_server(
+    actual_port,
+    self.task_repository.clone(),
+    #[cfg(feature = "bidir-local-exec")] self.task_router.clone(),
+    #[cfg(feature = "bidir-local-exec")] self.tool_executor.clone(),
+    #[cfg(feature = "bidir-delegate")] self.client_manager.clone(),
+    #[cfg(feature = "bidir-delegate")] self.agent_registry.clone(),
+    #[cfg(feature = "bidir-delegate")] self.config.self_id.clone(),
+).await?;
+Task 2: TaskService Initialization
+Modify src/server/services/task_service.rs:
+rust
+impl TaskService {
+    // For legacy mode
+    pub fn standalone(task_repository: Arc<dyn TaskRepository>) -> Self {
+        Self {
+            task_repository,
+            #[cfg(feature = "bidir-local-exec")]
+            task_router: None,
+            #[cfg(feature = "bidir-local-exec")]
+            tool_executor: None,
+            #[cfg(feature = "bidir-delegate")]
+            client_manager: None,
+            #[cfg(feature = "bidir-delegate")]
+            agent_registry: None,
+            #[cfg(feature = "bidir-delegate")]
+            agent_id: None,
+        }
+    }
+    
+    // For bidirectional mode
+    #[cfg(feature = "bidir-core")]
+    pub fn bidirectional(
+        task_repository: Arc<dyn TaskRepository>,
+        #[cfg(feature = "bidir-local-exec")] task_router: Arc<TaskRouter>,
+        #[cfg(feature = "bidir-local-exec")] tool_executor: Arc<ToolExecutor>,
+        #[cfg(feature = "bidir-delegate")] client_manager: Arc<ClientManager>,
+        #[cfg(feature = "bidir-delegate")] agent_registry: Arc<AgentRegistry>,
+        #[cfg(feature = "bidir-delegate")] agent_id: String,
+    ) -> Self {
+        Self {
+            task_repository,
+            #[cfg(feature = "bidir-local-exec")]
+            task_router: Some(task_router),
+            #[cfg(feature = "bidir-local-exec")]
+            tool_executor: Some(tool_executor),
+            #[cfg(feature = "bidir-delegate")]
+            client_manager: Some(client_manager),
+            #[cfg(feature = "bidir-delegate")]
+            agent_registry: Some(agent_registry),
+            #[cfg(feature = "bidir-delegate")]
+            agent_id: Some(agent_id),
+        }
+    }
+}
+Task 3: Background Polling Task Repository Integration
+Update ClientManager in src/bidirectional_agent/client_manager.rs:
+rust
+pub struct ClientManager {
+    clients: Arc<DashMap<String, A2aClient>>,
+    registry: Arc<AgentRegistry>,
+    self_config: Arc<BidirectionalAgentConfig>,
+    #[cfg(feature = "bidir-delegate")]
+    task_repository: Arc<dyn TaskRepositoryExt>,
+}
+
+impl ClientManager {
+    #[cfg(feature = "bidir-delegate")]
+    pub fn new(
+        registry: Arc<AgentRegistry>, 
+        self_config: Arc<BidirectionalAgentConfig>,
+        task_repository: Arc<dyn TaskRepositoryExt>,
+    ) -> Result<Self> {
+        Ok(Self {
+            clients: Arc::new(DashMap::new()),
+            registry,
+            self_config,
+            task_repository,
+        })
+    }
+    
+    pub async fn run_delegated_task_poll_loop(&self, interval: chrono::Duration) {
+        #[cfg(feature = "bidir-delegate")]
+        {
+            loop {
+                // Find active delegated tasks
+                let mut delegated_tasks: Vec<(String, String, String)> = Vec::new();
+                
+                // Query repository for all tasks with delegation origin
+                let tasks = self.task_repository.get_tasks_by_origin_type(TaskOriginType::Delegated).await
+                    .unwrap_or_default();
+                
+                for (task_id, origin) in tasks {
+                    if let TaskOrigin::Delegated { agent_id, remote_task_id } = origin {
+                        delegated_tasks.push((task_id, agent_id, remote_task_id));
+                    }
+                }
+                
+                // Process each delegated task
+                for (local_task_id, agent_id, remote_task_id) in delegated_tasks {
+                    // Check status of remote task
+                    if let Ok(remote_task) = self.get_task_status(&agent_id, &remote_task_id).await {
+                        // Update local task with remote status
+                        if let Ok(mut local_task) = self.task_repository.get_task(&local_task_id).await {
+                            if let Some(task) = local_task {
+                                // Update status, save task
+                                // ...
+                            }
+                        }
+                    }
+                }
+                
+                sleep(interval).await;
+            }
+        }
+    }
+}
+Task 4: Task Origin/Relationship Persistence
+Implement TaskRepositoryExt methods in src/server/repositories/task_repository.rs:
+rust
+#[cfg(feature = "bidir-delegate")]
+impl TaskRepositoryExt for InMemoryTaskRepository {
+    async fn set_task_origin(&self, task_id: &str, origin: TaskOrigin) -> Result<(), ServerError> {
+        self.task_origins.insert(task_id.to_string(), origin);
+        Ok(())
+    }
+    
+    async fn get_task_origin(&self, task_id: &str) -> Result<Option<TaskOrigin>, ServerError> {
+        Ok(self.task_origins.get(task_id).map(|o| o.value().clone()))
+    }
+    
+    async fn link_tasks(&self, parent_id: &str, child_ids: &[String]) -> Result<(), ServerError> {
+        // Update parent's children
+        self.task_relationships.entry(parent_id.to_string())
+            .or_insert_with(|| TaskRelationships::default())
+            .value_mut()
+            .children.extend(child_ids.iter().cloned());
+        
+        // Update children's parent
+        for child_id in child_ids {
+            self.task_relationships.entry(child_id.clone())
+                .or_insert_with(|| TaskRelationships::default())
+                .value_mut()
+                .parent_id = Some(parent_id.to_string());
+        }
+        
+        Ok(())
+    }
+    
+    async fn get_task_relationships(&self, task_id: &str) -> Result<TaskRelationships, ServerError> {
+        Ok(self.task_relationships.get(task_id)
+            .map(|r| r.value().clone())
+            .unwrap_or_default())
+    }
+}
+Complete TaskFlow::set_task_origin in src/bidirectional_agent/task_flow.rs:
+rust
+async fn set_task_origin(&self, origin: TaskOrigin) -> Result<(), AgentError> {
+    if let Some(repo_ext) = self.task_repository.as_any().downcast_ref::<InMemoryTaskRepository>() {
+        repo_ext.set_task_origin(&self.task_id, origin).await
+            .map_err(|e| AgentError::TaskFlowError(format!("Failed to set task origin: {}", e)))?;
+    } else {
+        println!("⚠️ Cannot set task origin: repository doesn't support TaskRepositoryExt");
+    }
+    Ok(())
+}
+Complete ResultSynthesizer::get_child_task_ids in src/bidirectional_agent/result_synthesis.rs:
+rust
+async fn get_child_task_ids(&self) -> Result<Vec<String>, AgentError> {
+    if let Some(repo_ext) = self.task_repository.as_any().downcast_ref::<InMemoryTaskRepository>() {
+        let relationships = repo_ext.get_task_relationships(&self.parent_task_id).await
+            .map_err(|e| AgentError::SynthesisError(format!("Failed to get task relationships: {}", e)))?;
+        Ok(relationships.children)
+    } else {
+        println!("⚠️ Cannot get child task IDs: repository doesn't support TaskRepositoryExt");
+        Ok(vec![])
+    }
+}
+Task 5: Tool Implementation
+Create src/bidirectional_agent/tools/shell_tool.rs:
+rust
+use async_trait::async_trait;
+use crate::bidirectional_agent::{error::AgentError, tools::Tool};
+use crate::types::{Task, TaskStatus, TaskState, Message, Role, Part, TextPart};
+use tokio::process::Command;
+use tokio::time::timeout;
+use std::time::Duration;
+
+pub struct ShellTool {
+    max_execution_secs: u64,
+    allowed_commands: Vec<String>,
+}
+
+impl ShellTool {
+    pub fn new() -> Self {
+        Self {
+            max_execution_secs: 30,
+            allowed_commands: vec!["ls", "cat", "echo", "grep"].iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for ShellTool {
+    fn name(&self) -> &'static str { "shell" }
+    
+    fn capabilities(&self) -> &[&'static str] { &["run_command", "read_file", "search_text"] }
+    
+    async fn execute(&self, task: &mut Task) -> Result<(), AgentError> {
+        // Extract command from task
+        let cmd_text = extract_command_from_task(task)?;
+        
+        // Security check
+        self.validate_command(&cmd_text)?;
+        
+        // Execute with timeout
+        let result = timeout(
+            Duration::from_secs(self.max_execution_secs),
+            Command::new("sh")
+                .arg("-c")
+                .arg(&cmd_text)
+                .output()
+        ).await??;
+        
+        // Update task with result
+        let output = if result.status.success() {
+            String::from_utf8_lossy(&result.stdout).to_string()
+        } else {
+            format!("Error: {}", String::from_utf8_lossy(&result.stderr))
+        };
+        
+        task.status = TaskStatus {
+            state: TaskState::Completed,
+            timestamp: Some(chrono::Utc::now()),
+            message: Some(Message {
+                role: Role::Agent,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: format!("Shell command output:\n```\n{}\n```", output),
+                    metadata: None,
+                })],
+                metadata: None,
+            }),
+        };
+        
+        Ok(())
+    }
+}
+Create src/bidirectional_agent/tools/http_tool.rs:
+rust
+use async_trait::async_trait;
+use crate::bidirectional_agent::{error::AgentError, tools::Tool};
+use crate::types::{Task, TaskStatus, TaskState, Message, Role, Part, TextPart};
+use reqwest::Client;
+use std::time::Duration;
+
+pub struct HttpTool {
+    client: Client,
+    max_response_size: usize,
+}
+
+impl HttpTool {
+    pub fn new() -> Self {
+        Self {
+            client: Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+            max_response_size: 1024 * 1024, // 1MB
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for HttpTool {
+    fn name(&self) -> &'static str { "http" }
+    
+    fn capabilities(&self) -> &[&'static str] { &["get_url", "post_data"] }
+    
+    async fn execute(&self, task: &mut Task) -> Result<(), AgentError> {
+        // Extract URL from task
+        let url = extract_url_from_task(task)?;
+        
+        // Simple GET request
+        let response = self.client.get(&url).send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        
+        // Truncate body if needed
+        let body = if body.len() > self.max_response_size {
+            format!("{}... (truncated)", &body[..self.max_response_size])
+        } else {
+            body
+        };
+        
+        // Update task with result
+        task.status = TaskStatus {
+            state: TaskState::Completed,
+            timestamp: Some(chrono::Utc::now()),
+            message: Some(Message {
+                role: Role::Agent,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: format!("HTTP Response ({}): \n{}", status, body),
+                    metadata: None,
+                })],
+                metadata: None,
+            }),
+        };
+        
+        Ok(())
+    }
+}
+Update src/bidirectional_agent/tools/mod.rs:
+rust
+use async_trait::async_trait;
+use crate::types::Task;
+use crate::bidirectional_agent::error::AgentError;
+
+pub mod shell_tool;
+pub mod http_tool;
+
+// Re-export tools
+pub use shell_tool::ShellTool;
+pub use http_tool::HttpTool;
+
+#[async_trait]
+pub trait Tool: Send + Sync + 'static {
+    /// Returns the name of the tool
+    fn name(&self) -> &'static str;
+    
+    /// Returns the capabilities provided by this tool
+    fn capabilities(&self) -> &[&'static str];
+    
+    /// Executes the tool on the given task
+    async fn execute(&self, task: &mut Task) -> Result<(), AgentError>;
+}
+Task 7: Configuration and Port Binding
+Update BidirectionalAgentConfig in src/bidirectional_agent/config.rs:
+rust
+pub struct NetworkConfig {
+    pub bind_address: String,
+    pub port: Option<u16>,
+    pub public_url: Option<String>,
+    pub proxy_url: Option<String>,
+    pub proxy_auth: Option<(String, String)>,
+    pub ca_cert_path: Option<String>,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            bind_address: "127.0.0.1".to_string(),
+            port: Some(8080),
+            public_url: None,
+            proxy_url: None,
+            proxy_auth: None,
+            ca_cert_path: None,
+        }
+    }
+}
+Update BidirectionalAgent::run in src/bidirectional_agent/mod.rs:
+rust
+pub async fn run(&self, port: u16) -> Result<()> {
+    // Use provided port if specified, otherwise use config
+    let actual_port = if port > 0 {
+        port
+    } else if let Some(config_port) = self.config.network.port {
+        config_port
+    } else {
+        8080 // Default fallback
+    };
+    
+    println!("🔌 Starting A2A server on port {}...", actual_port);
+    
+    // Update agent card URL based on port
+    let public_url = self.config.network.public_url.clone()
+        .unwrap_or_else(|| format!("http://{}:{}", self.config.network.bind_address, actual_port));
+    
+    // Start server with components
+    // ...
+}
+Task 8: Graceful Shutdown
+Add CancellationToken to BidirectionalAgent in src/bidirectional_agent/mod.rs:
+rust
+use tokio_util::sync::CancellationToken;
+
+pub struct BidirectionalAgent {
+    // Existing fields...
+    cancellation_token: CancellationToken,
+    server_handle: Option<tokio::task::JoinHandle<()>>,
+    background_tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl BidirectionalAgent {
+    pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
+        // Initialize existing fields...
+        
+        Ok(Self {
+            // Existing fields...
+            cancellation_token: CancellationToken::new(),
+            server_handle: None,
+            background_tasks: Vec::new(),
+        })
+    }
+    
+    pub async fn run(&self, port: u16) -> Result<()> {
+        // Setup code...
+        
+        // Start background tasks with cancellation tokens
+        let registry_token = self.cancellation_token.child_token();
+        let registry_handle = tokio::spawn(async move {
+            tokio::select! {
+                _ = registry_token.cancelled() => println!("Registry task cancelled"),
+                _ = registry_clone.run_refresh_loop(refresh_interval) => {}
+            }
+        });
+        self.background_tasks.push(registry_handle);
+        
+        // Start server with cancellation token
+        let server_token = self.cancellation_token.child_token();
+        let server_handle = run_server(
+            actual_port,
+            // Pass components...
+            server_token,
+        ).await?;
+        self.server_handle = Some(server_handle);
+        
+        // Wait for Ctrl+C
+        tokio::signal::ctrl_c().await?;
+        println!("Received shutdown signal, gracefully shutting down...");
+        
+        // Call shutdown
+        self.shutdown().await?;
+        
+        Ok(())
+    }
+    
+    pub async fn shutdown(&self) -> Result<()> {
+        println!("🛑 Shutting down agent...");
+        
+        // Cancel all tasks
+        self.cancellation_token.cancel();
+        
+        // Wait for server
+        if let Some(handle) = &self.server_handle {
+            if !handle.is_finished() {
+                handle.await?;
+            }
+        }
+        
+        // Wait for background tasks
+        for handle in &self.background_tasks {
+            if !handle.is_finished() {
+                handle.await?;
+            }
+        }
+        
+        println!("✅ Shutdown complete");
+        Ok(())
+    }
+}
+Update run_server in src/server/mod.rs to accept CancellationToken:
+rust
+pub async fn run_server(
+    port: u16,
+    // Other parameters...
+    shutdown_token: CancellationToken,
+) -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error + Send + Sync>> {
+    // Setup code...
+    
+    // Create server with graceful shutdown
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let server = Server::bind(&addr).serve(service);
+    
+    // Add graceful shutdown
+    let server_with_shutdown = server.with_graceful_shutdown(async {
+        shutdown_token.cancelled().await;
+        println!("Server shutdown initiated");
+    });
+    
+    // Start server in a task
+    let handle = tokio::spawn(async move {
+        if let Err(e) = server_with_shutdown.await {
+            eprintln!("Server error: {}", e);
+        }
+        println!("Server shutdown complete");
+    });
+    
+    Ok(handle)
+}
+
+
+
+
+
+                    
+Below is a precise, actionable, and exhaustive critique of the milestone plan for resolving docs/remaining_tasks.txt.  I focus on technical feasibility,       
+testability, risk, and any gaps or hidden dependencies.                                                                                                        
+
+────────────────────────────────────────────────────────────────────────────── MILESTONE 0 – Baseline Checks                                                   
+────────────────────────────────────────────────────────────────────────────── Strengths • Forces a full-feature compilation early, flushing out cfg/feature   
+drift. • Placeholder enumeration is essential for task visibility.                                                                                             
+
+Gaps / Risks                                                                                                                                                   
+
+ 1 “Generate PLACEHOLDER.md” must be automated in CI; otherwise the list will rot.  Use cargo +nightly clippy -- -Dunimplemented to fail CI instead of a manual
+   doc.                                                                                                                                                        
+ 2 cargo test --all-features should be paired with cargo doc --no-deps --all-features to catch missing docs on public items—Rustdoc failures often reveal      
+   visibility issues introduced later.                                                                                                                         
+
+Action Items • Add a cargo clippy job with #![deny(unused)] and #![deny(unimplemented)] so new placeholders can’t slip in unnoticed. • Add a                   
+scripts/list_placeholders.rs tool to emit the markdown table; fail CI if diff is non-empty.                                                                    
+
+────────────────────────────────────────────────────────────────────────────── MILESTONE 1 – Server ↔ Agent Wiring                                             
+────────────────────────────────────────────────────────────────────────────── Strengths • Making run_server accept a pre-built TaskService decouples bootstrap
+code from the HTTP layer—good SRP.                                                                                                                             
+
+Gaps / Risks                                                                                                                                                   
+
+ 1 Moving construction responsibility into BidirectionalAgent::run means Server integration tests must also build a “standalone” TaskService. Provide a        
+   convenience factory (TaskService::standalone) or the tests will break across features.                                                                      
+ 2 Returning only ServerHandle + ShutdownTrigger ignores HTTP bind errors that happen after the async task starts (e.g. EADDRINUSE).  Surface an               
+   mpsc::Receiver<Result<(), hyper::Error>> or forward the join-error to callers.                                                                              
+
+Action Items • Expose a trait pub trait ServerSpawner { fn spawn(self) -> JoinHandle<()>; } so tests can stub it out. • Add a compile-time assertion in        
+TaskService::bidirectional so mutually exclusive feature flags (bidir-local-exec vs bidir-delegate) don’t both get built into the binary.                      
+
+────────────────────────────────────────────────────────────────────────────── MILESTONE 2 – Repository Ext & Background Loops                                 
+────────────────────────────────────────────────────────────────────────────── Strengths • DashMap side-tables are lock-free for concurrent polling—solid      
+choice. • Blanket extension trait keeps existing repo API stable.                                                                                              
+
+Gaps / Risks                                                                                                                                                   
+
+ 1 Any repo that isn’t InMemoryTaskRepository will silently fail the downcast_ref::<InMemoryTaskRepository> checks.  Provide dyn TaskRepositoryExt object      
+   safety instead of downcasting.                                                                                                                              
+ 2 Poll loop latency: naive sleep(interval) can starve tasks if polling is slower than remote agent churn.  Use tokio::time::interval to avoid drift.          
+
+Action Items • Define async fn get_tasks_by_origin_type(&self, ...) in TaskRepositoryExt to remove direct DashMap inspection. • Add metrics on polling         
+round-trip duration; expose via prometheus. • Write property tests ensuring link_tasks + get_task_relationships obey referential integrity (no orphan children,
+single parent).                                                                                                                                                
+
+────────────────────────────────────────────────────────────────────────────── MILESTONE 3 – First-Class Tool Support                                          
+────────────────────────────────────────────────────────────────────────────── Strengths • Registry pattern enables plug-ins; async-trait is the right choice. 
+
+Gaps / Risks                                                                                                                                                   
+
+ 1 Security concerns: shell tool must run under tokio::process::Command with seccomp/nsjail or at least a deny-list to avoid rm -rf /.                         
+ 2 HTTP tool needs proxy / TLS config reuse from BidirectionalAgentConfig; otherwise duplicated timeout logic proliferates.                                    
+
+Action Items • Provide a ToolContext struct (logger, temp-dir, config) passed to every execute call—future tools will need it. • Add unit tests behind         
+--all-features --features mock-tools to stub command output and HTTP responses; otherwise CI requires network.                                                 
+
+────────────────────────────────────────────────────────────────────────────── MILESTONE 4 – Smart Routing & Decomposition                                     
+────────────────────────────────────────────────────────────────────────────── Strengths • Capability matching and heuristic thresholds make routing decisions 
+explicit. • LLM-powered extensions are isolated in llm_routing—good separation.                                                                                
+
+Gaps / Risks                                                                                                                                                   
+
+ 1 LLM decisions must be deterministic for regression tests.  Provide a “record/replay” harness that serializes prompts and captures responses.                
+ 2 Prompt engineering: injecting raw user text risks prompt-injection.  Always wrap user content inside delimiters (<<< >>>) and instruct the LLM not to break 
+   out.                                                                                                                                                        
+ 3 Decomposition explosion: naive “split by ; or lists” can create thousands of subtasks.  Put a hard limit (e.g. 10) with back-pressure.                      
+
+Action Items • Add RoutingDecision::InsufficientContext to request user clarifications before delegating/exec—avoids wrong decisions from partial input. •     
+Store the chosen JSON routing decision verbatim in task metadata for auditability.                                                                             
+
+────────────────────────────────────────────────────────────────────────────── MILESTONE 5 – Configuration & Port Handling                                     
+────────────────────────────────────────────────────────────────────────────── Strengths • NetworkConfig adds proxy/CA config—future-proofing for enterprise   
+setups.                                                                                                                                                        
+
+Gaps / Risks                                                                                                                                                   
+
+ 1 Changing bind address at runtime affects WebSocket URLs returned earlier. Provide a /healthz endpoint that emits the chosen public URL for clients.         
+ 2 The plan sets default port 8080, but integration tests currently hard-code 8081.  Update tests to read ENV or config.                                       
+
+Action Items • Introduce PORT=0 ephemeral binding in tests; fetch final port via server_handle.local_addr(). • Document “firewall gotcha” in README—port 0     
+fails on some k8s probes.                                                                                                                                      
+
+────────────────────────────────────────────────────────────────────────────── MILESTONE 6 – Graceful Shutdown & Signals                                       
+────────────────────────────────────────────────────────────────────────────── Strengths • tokio_util::sync::CancellationToken is the idiomatic choice.        
+
+Gaps / Risks                                                                                                                                                   
+
+ 1 Background tasks that spawn sub-tasks (e.g. file watchers) must store their own child tokens; otherwise they leak after parent cancellation.                
+ 2 Hyper 0.14’s with_graceful_shutdown still drops inflight requests if body streaming is active.  Use graceful_shutdown_timeout = 30s plus drain_filter on    
+   LiveConnections.                                                                                                                                            
+
+Action Items • Implement a test that submits a long-running task, triggers ctrl_c, and asserts the task final state becomes canceled rather than vanishing. •  
+Provide a ShutdownReason enum surfaced in logs for observability.                                                                                              
+
+────────────────────────────────────────────────────────────────────────────── MILESTONE 7 – Test & Docs Hardening                                             
+────────────────────────────────────────────────────────────────────────────── Strengths • Two-agent integration test is mandatory proof of delegation loop.   
+
+Gaps / Risks                                                                                                                                                   
+
+ 1 CI matrix must run cargo test --features "bidir-core,bidir-local-exec,bidir-delegate,llm-routing". Otherwise cfg combinations will rot.                     
+ 2 Property tests must be migrated to proptest-derive for readability.                                                                                         
+
+Action Items • Add trybuild compile-fail tests to ensure TaskService::bidirectional signature enforces non-Option arguments under the relevant features. • Use 
+mdbook to host A2A RFC excerpts + examples; cross-link from README.                                                                                            
+
+────────────────────────────────────────────────────────────────────────────── Cross-cutting Concerns & Hidden Work                                            
+────────────────────────────────────────────────────────────────────────────── Security • All external HTTP calls (registry refresh, delegation, tools) must   
+respect proxy + custom CA to run inside corporate envs.                                                                                                        
+
+Observability • Expose Prometheus metrics: task counts by state, routing decisions, tool latencies, LLM token usage.                                           
+
+Versioning • Introduce --api-version param in agent card; bump to semver minor once bidirectional features stabilize.                                          
+
+Licensing • Verify Anthropic/GPT licenses allow storing prompts in test fixtures.                                                                              
+
+────────────────────────────────────────────────────────────────────────────── Summary The roadmap is solid but must tighten around determinism (LLM), security
+(shell tool), feature-combo test coverage, and graceful-shutdown race cases. Address the action items above to de-risk the implementation and ensure long-term 
+maintainability.                                                                                                                                               
+
+
+I'll analyze the provided critique of the milestone plan for addressing the remaining tasks in the A2A test suite implementation.
+Based on the detailed critique, here are the key technical elements that need to be addressed for each task:
+Task 1: Server Integration
+Technical Refinements:
+
+Implement a ServerSpawner trait to make the server component testable:
+
+rustpub trait ServerSpawner {
+    fn spawn(self) -> tokio::task::JoinHandle<()>;
+}
+
+Update run_server to properly surface binding errors:
+
+rustpub async fn run_server(
+    // existing parameters...
+) -> Result<(tokio::task::JoinHandle<()>, mpsc::Receiver<Result<(), hyper::Error>>), Box<dyn std::error::Error + Send + Sync>> {
+    // create error channel
+    let (err_tx, err_rx) = mpsc::channel(1);
+    
+    // handle bind errors properly
+    let server_handle = tokio::spawn(async move {
+        match Server::bind(&addr).serve(service).await {
+            Ok(_) => {},
+            Err(e) => { let _ = err_tx.send(Err(e)).await; }
+        }
+    });
+    
+    Ok((server_handle, err_rx))
+}
+Task 2: TaskService Initialization
+Technical Refinements:
+
+Add compile-time assertions for feature flag combinations:
+
+rust#[cfg(feature = "bidir-core")]
+pub fn bidirectional(
+    // parameters...
+) -> Self {
+    // Add compile-time assertion to prevent mutually exclusive features
+    #[cfg(all(feature = "bidir-local-exec", not(feature = "bidir-delegate")))]
+    compile_error!("Both bidir-local-exec and bidir-delegate must be enabled together");
+    
+    // implementation...
+}
+
+Create a standalone factory method for tests:
+
+rustpub fn standalone(task_repository: Arc<dyn TaskRepository>) -> Self {
+    Self {
+        task_repository,
+        #[cfg(feature = "bidir-local-exec")]
+        task_router: None,
+        // other fields set to None...
+    }
+}
+Task 3: Background Polling Task Repository Integration
+Technical Refinements:
+
+Use proper trait object safety instead of downcasting:
+
+rust// Add to TaskRepositoryExt
+async fn get_tasks_by_origin_type(&self, origin_type: TaskOriginType) -> Result<Vec<(String, TaskOrigin)>, ServerError>;
+
+Use interval timer to prevent drift:
+
+rustpub async fn run_delegated_task_poll_loop(&self, interval: chrono::Duration) {
+    let mut interval_timer = tokio::time::interval(Duration::from_secs(interval.num_seconds() as u64));
+    
+    loop {
+        interval_timer.tick().await; // Better than sleep() - prevents drift
+        
+        // Existing polling logic...
+        
+        // Add metrics for round-trip duration
+        let start = std::time::Instant::now();
+        // Do polling
+        let duration = start.elapsed();
+        // Record metric
+        if let Some(metrics) = &self.metrics {
+            metrics.record_poll_duration(duration);
+        }
+    }
+}
+Task 5: Tool Implementation
+Technical Refinements:
+
+Create a ToolContext struct for tool execution:
+
+rustpub struct ToolContext {
+    pub logger: Arc<dyn Logger>,
+    pub temp_dir: PathBuf,
+    pub network_config: NetworkConfig, // Reuse from agent config
+}
+
+#[async_trait]
+pub trait Tool: Send + Sync + 'static {
+    // Add context param
+    async fn execute(&self, task: &mut Task, context: &ToolContext) -> Result<(), AgentError>;
+}
+
+Add security measures for ShellTool:
+
+rust// In ShellTool
+fn validate_command(&self, cmd: &str) -> Result<(), AgentError> {
+    // Split command into parts
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.is_empty() {
+        return Err(AgentError::ToolError("Empty command".to_string()));
+    }
+    
+    // Check if command is in allowlist
+    if !self.allowed_commands.contains(&parts[0].to_string()) {
+        return Err(AgentError::ToolError(format!("Command '{}' not allowed", parts[0])));
+    }
+    
+    // Check for dangerous patterns
+    if cmd.contains("rm -rf") || cmd.contains("|") || cmd.contains(">") || cmd.contains(";") {
+        return Err(AgentError::ToolError("Potentially dangerous command pattern".to_string()));
+    }
+    
+    Ok(())
+}
+Task 6: Advanced Routing & LLM Integration
+Technical Refinements:
+
+Add protection against prompt injection:
+
+rustfn create_routing_prompt(&self, task_text: &str, capabilities: &[String]) -> String {
+    format!(
+        "Analyze this task and make a routing decision.\n\nUser task (between <<< and >>>):\n<<< {} >>>\n\nAvailable capabilities: {}\n\nReturn JSON: {{ ... }}",
+        task_text.replace(">>>", "[invalid character]"),
+        capabilities.join(", ")
+    )
+}
+
+Add recording/replay for deterministic tests:
+
+rust#[cfg(test)]
+pub struct RecordingLlmRouter {
+    inner: LlmRouter,
+    recording_path: PathBuf,
+}
+
+#[cfg(test)]
+impl RecordingLlmRouter {
+    pub fn new(inner: LlmRouter, recording_path: PathBuf) -> Self {
+        Self { inner, recording_path }
+    }
+    
+    async fn get_or_record_response(&self, prompt: &str) -> Result<String, AgentError> {
+        let prompt_hash = calculate_hash(prompt);
+        let record_file = self.recording_path.join(format!("{}.json", prompt_hash));
+        
+        if record_file.exists() {
+            // Read recorded response
+            let content = std::fs::read_to_string(&record_file)?;
+            Ok(content)
+        } else {
+            // Generate new response and record it
+            let response = self.inner.client.complete(prompt).await?;
+            std::fs::write(&record_file, &response)?;
+            Ok(response)
+        }
+    }
+}
+
+Add backpressure for decomposition:
+
+rustfn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError> {
+    // Implementation...
+    
+    // Apply hard limit to prevent explosion
+    const MAX_SUBTASKS: usize = 10;
+    if subtasks.len() > MAX_SUBTASKS {
+        subtasks.truncate(MAX_SUBTASKS);
+        println!("⚠️ Truncated subtasks to maximum of {}", MAX_SUBTASKS);
+    }
+    
+    Ok(subtasks)
+}
+Task 7: Configuration and Port Binding
+Technical Refinements:
+
+Add health endpoint that returns current binding:
+
+rustasync fn handle_health_check(
+    req: Request<Body>,
+    public_url: Arc<RwLock<String>>,
+) -> Result<Response<Body>, Infallible> {
+    let response = json!({
+        "status": "ok",
+        "public_url": public_url.read().await.clone(),
+    });
+    
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(serde_json::to_string(&response).unwrap()))
+        .unwrap())
+}
+
+Support ephemeral ports for tests:
+
+rust#[cfg(test)]
+pub async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
+    // Bind to port 0 (OS-assigned ephemeral port)
+    let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+    let server = Server::bind(&addr).serve(make_service_fn(|_| async {
+        // Test service
+    }));
+    
+    // Get the actual port assigned by OS
+    let actual_port = server.local_addr().port();
+    
+    let handle = tokio::spawn(async move {
+        server.await.unwrap();
+    });
+    
+    (actual_port, handle)
+}
+Task 8: Graceful Shutdown
+Technical Refinements:
+
+Add a ShutdownReason enum:
+
+rust#[derive(Debug, Clone, PartialEq)]
+pub enum ShutdownReason {
+    UserRequested,
+    InternalError(String),
+    Timeout,
+    ServerError(String),
+}
+
+pub async fn shutdown(&self, reason: ShutdownReason) -> Result<()> {
+    println!("🛑 Shutting down agent (reason: {:?})...", reason);
+    
+    // Cancel all tasks with timeout
+    self.cancellation_token.cancel();
+    
+    // Wait for server with timeout
+    if let Some(handle) = &self.server_handle {
+        if !handle.is_finished() {
+            match tokio::time::timeout(Duration::from_secs(30), handle).await {
+                Ok(_) => println!("Server shutdown completed"),
+                Err(_) => println!("Server shutdown timed out after 30s"),
+            }
+        }
+    }
+    
+    // Log completion
+    println!("✅ Agent shutdown complete");
+    Ok(())
+}
+
+Add a test for graceful shutdown with in-flight tasks:
+
+rust#[tokio::test]
+async fn test_graceful_shutdown_with_long_task() {
+    // Start agent
+    let agent = BidirectionalAgent::new(test_config()).unwrap();
+    let server_handle = agent.run(0).await.unwrap();
+    
+    // Submit long-running task
+    let client = reqwest::Client::new();
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tasks/send",
+        "params": {
+            "id": task_id,
+            "message": {
+                "role": "user",
+                "parts": [{
+                    "type": "text",
+                    "text": "Run a long task that takes 60 seconds"
+                }]
+            },
+            "metadata": {
+                "_mock_long_running": true
+            }
+        },
+        "id": 1
+    });
+    
+    // Send task
+    client.post(&format!("http://localhost:{}/jsonrpc", agent.server_port))
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    
+    // Allow task to start
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    
+    // Trigger shutdown
+    agent.shutdown(ShutdownReason::UserRequested).await.unwrap();
+    
+    // Verify task was properly canceled
+    let task = agent.task_repository.get_task(&task_id).await.unwrap().unwrap();
+    assert_eq!(task.status.state, TaskState::Canceled);
+}

@@ -1,10 +1,16 @@
 use crate::client::A2aClient;
 use crate::server::run_server;
 use crate::types::{TaskState, Message, Role, Part, TextPart, Task};
+use crate::server::repositories::task_repository::InMemoryTaskRepository;
+use crate::server::services::task_service::TaskService;
+use crate::server::services::streaming_service::StreamingService;
+use crate::server::services::notification_service::NotificationService;
 use std::error::Error;
+use std::sync::Arc;
 use tokio::spawn;
 use tokio::time::sleep;
 use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use serde_json::{json, Value};
 use crate::types::PushNotificationConfig;
@@ -15,7 +21,13 @@ use futures_util::StreamExt;
 // Helper to start the server on a given port
 async fn start_test_server(port: u16) {
     spawn(async move {
-        run_server(port).await.unwrap();
+        let bind_address = "127.0.0.1";
+        let repository = Arc::new(InMemoryTaskRepository::new());
+        let task_service = Arc::new(TaskService::standalone(repository.clone()));
+        let streaming_service = Arc::new(StreamingService::new(repository.clone()));
+        let notification_service = Arc::new(NotificationService::new(repository.clone()));
+        let shutdown_token = tokio_util::sync::CancellationToken::new();
+        run_server(port, bind_address, task_service, streaming_service, notification_service, shutdown_token).await.unwrap();
     });
     
     // Allow the server to start

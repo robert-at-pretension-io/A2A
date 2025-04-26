@@ -6,7 +6,7 @@
 // Only compile this module if the 'bidir-core' feature (or higher) is enabled.
 #![cfg(feature = "bidir-core")]
 
-use std::{sync::Arc, net::SocketAddr}; // Add SocketAddr
+use std::{sync::{Arc, Mutex}, net::SocketAddr}; // Add SocketAddr and Mutex
 use tokio::runtime::Runtime;
 use anyhow::{Result, Context}; // Add Context
 use tokio::task::JoinHandle; // Add JoinHandle
@@ -83,24 +83,25 @@ impl BidirectionalAgent {
     pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
         let config_arc = Arc::new(config);
         let agent_registry = Arc::new(AgentRegistry::new());
-        // Pass task repository to ClientManager constructor (will be added in Milestone 2)
-        let client_manager = Arc::new(ClientManager::new(
-            agent_registry.clone(),
-            config_arc.clone(),
-            // Placeholder for TaskRepositoryExt - will be added in Milestone 2
-            // Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new())
-        )?);
-
+        let task_repository = Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new());
+        
         // Initialize Slice 2 components if feature is enabled
         #[cfg(feature = "bidir-local-exec")]
         let tool_executor = Arc::new(ToolExecutor::new());
         #[cfg(feature = "bidir-local-exec")]
         let task_router = Arc::new(TaskRouter::new(agent_registry.clone(), tool_executor.clone()));
+        
+        let client_manager = Arc::new(ClientManager::new(
+            agent_registry.clone(),
+            config_arc.clone()
+        )?);
 
-        // Initialize Task Repository (concrete type for now)
-        let task_repository = Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new()); // Use concrete type for now
-
-        // Initialize Slice 2 components if feature is enabled
+        Ok(Self {
+            config: config_arc,
+            agent_registry,
+            client_manager,
+            task_repository, 
+            // Initialize Slice 2 components if feature is enabled
             #[cfg(feature = "bidir-local-exec")]
             tool_executor,
             #[cfg(feature = "bidir-local-exec")]
