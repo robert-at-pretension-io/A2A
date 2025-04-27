@@ -191,7 +191,7 @@ impl A2aClient {
     }
 
     /// Send a streaming request and return a stream of responses (typed error version)
-    async fn send_streaming_request_typed(&mut self, method: &str, params: Value) -> Result<StreamingResponseStream, ClientError> {
+    pub async fn send_streaming_request_typed(&mut self, method: &str, params: Value) -> Result<StreamingResponseStream, ClientError> {
         let request = json!({
             "jsonrpc": "2.0",
             "id": self.next_request_id(),

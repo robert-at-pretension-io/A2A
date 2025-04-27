@@ -7,7 +7,7 @@
 
 use crate::bidirectional_agent::{
     agent_registry::AgentRegistry,
-    task_router::{RoutingDecision, SubtaskDefinition},
+    task_router::{RoutingDecision, SubtaskDefinition, LlmTaskRouterTrait},
     tool_executor::ToolExecutor,
     error::AgentError,
     llm_routing::{RoutingAgent, LlmRoutingConfig},
@@ -144,17 +144,7 @@ pub fn create_llm_task_router(
     LlmTaskRouterFactory::create_default(agent_registry, tool_executor)
 }
 
-// Trait to allow dynamic dispatch
-#[async_trait::async_trait]
-pub trait LlmTaskRouterTrait: Send + Sync + 'static {
-    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError>;
-    
-    #[cfg(feature = "bidir-delegate")]
-    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, AgentError>;
-    
-    #[cfg(feature = "bidir-delegate")]
-    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError>;
-}
+// Use the LlmTaskRouterTrait from task_router.rs
 
 #[async_trait::async_trait]
 impl LlmTaskRouterTrait for LlmTaskRouter {
@@ -170,5 +160,83 @@ impl LlmTaskRouterTrait for LlmTaskRouter {
     #[cfg(feature = "bidir-delegate")]
     async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError> {
         self.decompose_task(params).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Message, Role, Part, TextPart};
+    use std::collections::HashMap;
+    use serde_json::json;
+
+    // Helper to create basic TaskSendParams for testing
+    fn create_test_params(id: &str, text: &str, metadata: Option<serde_json::Map<String, serde_json::Value>>) -> TaskSendParams {
+        TaskSendParams {
+            id: id.to_string(),
+            message: Message {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: text.to_string(),
+                    metadata: None,
+                })],
+                metadata: None,
+            },
+            history_length: None,
+            metadata,
+            push_notification: None,
+            session_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_routing_hint() {
+        let registry = Arc::new(AgentRegistry::new());
+        let tool_executor = Arc::new(ToolExecutor::new());
+        let router = LlmTaskRouter::new(registry.clone(), tool_executor, None);
+        
+        // Test "local" hint
+        let result = router.handle_routing_hint("local");
+        assert!(result.is_ok());
+        if let Ok(RoutingDecision::Local { tool_names }) = result {
+            assert_eq!(tool_names, vec!["echo".to_string()]);
+        } else {
+            panic!("Expected Local routing decision");
+        }
+        
+        // Test "reject" hint
+        let result = router.handle_routing_hint("reject");
+        assert!(result.is_ok());
+        if let Ok(RoutingDecision::Reject { reason }) = result {
+            assert!(reason.contains("rejected by routing hint"));
+        } else {
+            panic!("Expected Reject routing decision");
+        }
+        
+        // Test non-existent agent hint
+        let result = router.handle_routing_hint("non-existent-agent");
+        assert!(result.is_err());
+    }
+    
+    #[tokio::test]
+    async fn test_routing_with_explicit_hint() {
+        let registry = Arc::new(AgentRegistry::new());
+        let tool_executor = Arc::new(ToolExecutor::new());
+        let router = LlmTaskRouter::new(registry, tool_executor, None);
+        
+        // Create metadata with routing hint
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("_route_to".to_string(), json!("local"));
+        
+        let params = create_test_params("task1", "Test task", Some(metadata));
+        let result = router.decide(&params).await;
+        
+        assert!(result.is_ok());
+        if let Ok(RoutingDecision::Local { tool_names }) = result {
+            assert_eq!(tool_names, vec!["echo".to_string()]);
+        } else {
+            panic!("Expected Local routing decision");
+        }
     }
 }

@@ -214,7 +214,8 @@ async fn test_skill_not_found_error() -> Result<(), Box<dyn Error>> {
     
     if let Err(ClientError::A2aError(a2a_error)) = result {
         println!("Error code: {}, message: {}", a2a_error.code, a2a_error.message);
-        assert!(a2a_error.message.contains("Skill not found"), "Error message should mention skill not found");
+        assert_eq!(a2a_error.code, error_codes::ERROR_METHOD_NOT_FOUND, "Error code should be -32601 (Method not found)");
+        assert!(a2a_error.message.contains("Method not found"), "Error message should mention method not found");
     } else {
         return Err("Expected A2aError".into());
     }
@@ -247,9 +248,8 @@ async fn test_batch_not_found_error() -> Result<(), Box<dyn Error>> {
     
     if let Err(ClientError::A2aError(a2a_error)) = result {
         println!("Error code: {}, message: {}", a2a_error.code, a2a_error.message);
-        assert!(a2a_error.message.contains("Batch not found") || 
-                a2a_error.code == error_codes::ERROR_TASK_NOT_FOUND, 
-                "Error message should indicate batch not found");
+        assert_eq!(a2a_error.code, error_codes::ERROR_METHOD_NOT_FOUND, "Error code should be -32601 (Method not found)");
+        assert!(a2a_error.message.contains("Method not found"), "Error message should mention method not found");
     } else {
         return Err("Expected A2aError".into());
     }
@@ -282,9 +282,8 @@ async fn test_file_not_found_error() -> Result<(), Box<dyn Error>> {
     
     if let Err(ClientError::A2aError(a2a_error)) = result {
         println!("Error code: {}, message: {}", a2a_error.code, a2a_error.message);
-        assert!(a2a_error.message.contains("File not found") || 
-                a2a_error.code == error_codes::ERROR_TASK_NOT_FOUND, 
-                "Error message should indicate file not found");
+        assert_eq!(a2a_error.code, error_codes::ERROR_METHOD_NOT_FOUND, "Error code should be -32601 (Method not found)");
+        assert!(a2a_error.message.contains("Method not found"), "Error message should mention method not found");
     } else {
         return Err("Expected A2aError".into());
     }

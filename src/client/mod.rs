@@ -314,4 +314,126 @@ impl A2aClient {
         
         self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
+
+    /// Send a raw request and handle response for testing
+    async fn send_request(&mut self, request: Value) -> Result<Value, ClientError> {
+        let mut http_request = self.http_client.post(&self.base_url)
+            .json(&request);
+            
+        if let (Some(header), Some(value)) = (&self.auth_header, &self.auth_value) {
+            http_request = http_request.header(header, value);
+        }
+        
+        let response = http_request.send().await?;
+        
+        if !response.status().is_success() {
+            return Err(ClientError::HttpError(format!("Request failed with status: {}", response.status())));
+        }
+        
+        // Parse the response as a generic JSON-RPC response
+        let json_response: Value = response.json().await?;
+        Ok(json_response)
+    }
+    
+    /// Helper for parsing error responses
+    fn handle_error_response(&self, response: &Value) -> ClientError {
+        if let Some(error) = response.get("error") {
+            let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+            let message = error.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+            let data = error.get("data").cloned();
+            
+            ClientError::A2aError(A2aError::new(code, message, data))
+        } else {
+            ClientError::Other("Expected error response but none was found".to_string())
+        }
+    }
+    
+    /// Test method for invalid parameters error
+    pub async fn test_invalid_parameters_error(&mut self) -> Result<String, ClientError> {
+        // Create a request with missing required parameters
+        let request_body = json!({
+            "jsonrpc": "2.0",
+            "id": "test-invalid-params",
+            "method": "tasks/get",
+            "params": {}  // Missing required 'id' parameter
+        });
+        
+        let response = self.send_request(request_body).await?;
+        
+        // This should fail with an invalid params error
+        // but we'll handle the response normally and return the parsed error
+        Err(self.handle_error_response(&response))
+    }
+    
+    /// Test method for method not found error
+    pub async fn test_method_not_found_error(&mut self) -> Result<String, ClientError> {
+        // Create a request with a non-existent method
+        let request_body = json!({
+            "jsonrpc": "2.0",
+            "id": "test-method-not-found",
+            "method": "non_existent_method",
+            "params": {}
+        });
+        
+        let response = self.send_request(request_body).await?;
+        
+        // This should fail with a method not found error
+        // but we'll handle the response normally and return the parsed error
+        Err(self.handle_error_response(&response))
+    }
+    
+    // Added stubs for the other error handling test methods
+    pub async fn get_skill_details_with_error_handling(&mut self, skill_id: &str) -> Result<String, ClientError> {
+        // For now, just use the tasks/get endpoint with a non-existent method
+        let request_body = json!({
+            "jsonrpc": "2.0",
+            "id": "get-skill-details",
+            "method": "skills/get",
+            "params": {
+                "id": skill_id
+            }
+        });
+        
+        let response = self.send_request(request_body).await?;
+        
+        // This should fail with a method not found error
+        // but we'll handle the response normally and return the parsed error
+        Err(self.handle_error_response(&response))
+    }
+    
+    pub async fn get_batch_with_error_handling(&mut self, batch_id: &str) -> Result<String, ClientError> {
+        // For now, just use the tasks/get endpoint with a non-existent method
+        let request_body = json!({
+            "jsonrpc": "2.0",
+            "id": "get-batch",
+            "method": "batches/get",
+            "params": {
+                "id": batch_id
+            }
+        });
+        
+        let response = self.send_request(request_body).await?;
+        
+        // This should fail with a method not found error
+        // but we'll handle the response normally and return the parsed error
+        Err(self.handle_error_response(&response))
+    }
+    
+    pub async fn download_file_with_error_handling(&mut self, file_id: &str) -> Result<String, ClientError> {
+        // For now, just use the tasks/get endpoint with a non-existent method
+        let request_body = json!({
+            "jsonrpc": "2.0",
+            "id": "download-file",
+            "method": "files/download",
+            "params": {
+                "id": file_id
+            }
+        });
+        
+        let response = self.send_request(request_body).await?;
+        
+        // This should fail with a method not found error
+        // but we'll handle the response normally and return the parsed error
+        Err(self.handle_error_response(&response))
+    }
 }

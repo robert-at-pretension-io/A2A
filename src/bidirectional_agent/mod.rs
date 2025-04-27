@@ -25,6 +25,10 @@ pub mod tool_executor; // Keep this
 pub mod task_router; // Keep this
 #[cfg(feature = "bidir-local-exec")]
 pub mod tools; // Keep this
+#[cfg(feature = "bidir-local-exec")]
+pub mod llm_routing; // LLM-based routing module
+#[cfg(feature = "bidir-local-exec")]
+pub mod task_router_llm; // LLM task router implementation
 
 #[cfg(feature = "bidir-delegate")]
 pub mod task_flow; // Keep this
@@ -44,6 +48,10 @@ pub use error::AgentError;
 pub use tool_executor::ToolExecutor;
 #[cfg(feature = "bidir-local-exec")]
 pub use task_router::TaskRouter;
+#[cfg(feature = "bidir-local-exec")]
+pub use task_router_llm::{LlmTaskRouter, LlmTaskRouterTrait, create_llm_task_router};
+#[cfg(feature = "bidir-local-exec")]
+pub use llm_routing::{LlmRoutingConfig, RoutingAgent, SynthesisAgent};
 // Add imports for Slice 3 components
 #[cfg(feature = "bidir-delegate")]
 pub use task_flow::TaskFlow;
@@ -67,7 +75,7 @@ pub struct BidirectionalAgent {
     #[cfg(feature = "bidir-local-exec")]
     pub tool_executor: Arc<ToolExecutor>,
     #[cfg(feature = "bidir-local-exec")]
-    pub task_router: Arc<TaskRouter>,
+    pub task_router: Arc<dyn task_router_llm::LlmTaskRouterTrait>,
     // Add components for Slice 3
     // Note: TaskRepository needs to be Arc<dyn TaskRepositoryExt> potentially
     pub task_repository: Arc<crate::server::repositories::task_repository::InMemoryTaskRepository>, // Use concrete type for now
@@ -88,8 +96,33 @@ impl BidirectionalAgent {
         // Initialize Slice 2 components if feature is enabled
         #[cfg(feature = "bidir-local-exec")]
         let tool_executor = Arc::new(ToolExecutor::new());
+        
+        // Initialize task router - potentially use LLM-based routing if configured
         #[cfg(feature = "bidir-local-exec")]
-        let task_router = Arc::new(TaskRouter::new(agent_registry.clone(), tool_executor.clone()));
+        let task_router: Arc<dyn task_router_llm::LlmTaskRouterTrait> = {
+            if config.tools.use_llm_routing {
+                println!("🧠 Using LLM-powered task router");
+                // Configure LLM router with API key if available
+                let llm_config = config.tools.llm_api_key.as_ref().map(|api_key| {
+                    llm_routing::LlmRoutingConfig {
+                        api_key: api_key.clone(),
+                        model: config.tools.llm_model.clone(),
+                        ..Default::default()
+                    }
+                });
+                
+                // Create LLM task router
+                task_router_llm::LlmTaskRouterFactory::create_with_config(
+                    agent_registry.clone(),
+                    tool_executor.clone(),
+                    llm_config.unwrap_or_default() // Use default config if no API key
+                )
+            } else {
+                // Use the standard task router if LLM routing is not enabled
+                println!("📝 Using standard task router");
+                Arc::new(TaskRouter::new(agent_registry.clone(), tool_executor.clone())) as Arc<dyn task_router_llm::LlmTaskRouterTrait>
+            }
+        };
         
         let client_manager = Arc::new(ClientManager::new(
             agent_registry.clone(),

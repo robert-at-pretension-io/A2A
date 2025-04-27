@@ -179,8 +179,13 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let id_c = task_id_clone_cancel.clone();
                 async move {
                     let mut client_guard = client_clone.lock().await; // Use async lock
-                    // Use the _typed version returning ClientError
-                    client_guard.cancel_task_typed(&id_c).await?; // Await directly
+                    // Use a helper method that returns a ClientError
+                    let params = crate::types::TaskIdParams {
+                        id: id_c.to_string(),
+                        metadata: None,
+                    };
+                    let params_value = serde_json::to_value(params)?;
+                    client_guard.send_jsonrpc::<serde_json::Value>("tasks/cancel", params_value).await?;
                     Ok(())
                 }
             },
@@ -222,10 +227,25 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                 let client_clone = Arc::clone(&client_arc);
                 async move {
                     let mut client_guard = client_clone.lock().await; // Use async lock
-                    // Use the _typed version returning ClientError
-                    let mut stream = client_guard.send_task_subscribe_typed("This is a streaming test").await?; // Await directly
-                    // Optionally, try receiving one item to confirm connection
-                    let _ = stream.next().await; // Requires StreamExt trait
+                    // Create a streaming task with standard API
+                    let message = client_guard.create_text_message("This is a streaming test");
+                    
+                    let params = crate::types::TaskSendParams {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        message: message,
+                        history_length: None,
+                        metadata: None,
+                        push_notification: None,
+                        session_id: None,
+                    };
+                    
+                    let mut stream = client_guard.send_streaming_request_typed(
+                        "tasks/sendSubscribe", 
+                        serde_json::to_value(params)?
+                    ).await?;
+                    
+                    // Just check that we got a valid stream back
+                    let _ = stream.next().await;
                     Ok(())
                 }
             },
@@ -250,13 +270,28 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     let id_c = task_id_clone_set.clone();
                     async move {
                         let mut client_guard = client_clone.lock().await; // Use async lock
-                        // Use the _typed version returning ClientError
-                        client_guard.set_task_push_notification_typed(
-                            &id_c,
-                            "https://example.com/webhook", // Mock webhook URL
-                            Some("Bearer"),
-                            Some("test-token")
-                        ).await?; // Await directly
+                        // Use a direct jsonrpc call instead of helper method
+                        let auth_info = crate::types::AuthenticationInfo {
+                            schemes: vec!["Bearer".to_string()],
+                            credentials: None,
+                            extra: serde_json::Map::new(),
+                        };
+                        
+                        let config = crate::types::PushNotificationConfig {
+                            url: "https://example.com/webhook".to_string(),
+                            authentication: Some(auth_info),
+                            token: Some("test-token".to_string()),
+                        };
+                        
+                        let params = crate::types::TaskPushNotificationConfig {
+                            id: id_c.to_string(),
+                            push_notification_config: config
+                        };
+                        
+                        client_guard.send_jsonrpc::<serde_json::Value>(
+                            "tasks/pushNotification/set", 
+                            serde_json::to_value(params)?
+                        ).await?;
                         Ok(())
                     }
                 },
@@ -273,8 +308,16 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
                     let id_c = task_id_clone_get.clone();
                     async move {
                         let mut client_guard = client_clone.lock().await; // Use async lock
-                        // Use the _typed version returning ClientError
-                        client_guard.get_task_push_notification_typed(&id_c).await?; // Await directly
+                        // Use a direct jsonrpc call instead of helper method
+                        let params = crate::types::TaskIdParams {
+                            id: id_c.to_string(),
+                            metadata: None
+                        };
+                        
+                        client_guard.send_jsonrpc::<serde_json::Value>(
+                            "tasks/pushNotification/get", 
+                            serde_json::to_value(params)?
+                        ).await?;
                         Ok(())
                     }
                 },

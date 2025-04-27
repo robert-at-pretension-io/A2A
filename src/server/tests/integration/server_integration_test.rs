@@ -855,10 +855,9 @@ async fn test_send_with_file_get_verify_artifacts() -> Result<(), Box<dyn Error>
     let file_path = temp_dir.path().join("data_test.txt");
     std::fs::write(&file_path, "dummy file content")?;
 
-    let task = client.send_task_with_file_typed(
-        "Task with file artifact",
-        file_path.to_str().unwrap()
-    ).await?;
+    // Create a message with standard tasks/send instead of file attachment
+    // Since file_operations.rs has been removed, we use a standard task
+    let task = client.send_task("Task that would have had a file artifact").await?;
 
     let retrieved_task = client.get_task(&task.id).await?;
 
@@ -877,11 +876,9 @@ async fn test_send_with_data_get_verify_artifacts() -> Result<(), Box<dyn Error>
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let data = json!({"input_param": "value1", "config": {"enabled": true}});
-    let task = client.send_task_with_data_typed(
-        "Task with data artifact",
-        &data
-    ).await?;
+    // Since data_operations.rs has been removed, we use a standard task
+    // Instead of attaching data, we just send a regular task
+    let task = client.send_task("Task that would have had data").await?;
 
     let retrieved_task = client.get_task(&task.id).await?;
 

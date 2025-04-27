@@ -27,10 +27,10 @@ pub enum RoutingDecision {
 #[cfg(feature = "bidir-delegate")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubtaskDefinition {
-    pub id_suffix: String, // Suffix to append to parent task ID
+    pub id: String, // Full ID for the subtask
     pub description: String, // Description or prompt for the subtask
-    pub required_capabilities: Vec<String>, // Capabilities needed for this subtask
-    // Add other fields like dependencies, specific parameters if needed
+    pub input_message: crate::types::Message, // Input message for the subtask
+    pub tools_needed: Vec<String>, // Tools needed for this subtask
 }
 
 
@@ -40,6 +40,18 @@ pub struct TaskRouter {
     agent_registry: Arc<AgentRegistry>,
     tool_executor: Arc<ToolExecutor>,
     // Add routing policy/config later
+}
+
+// Forward declaration of LlmTaskRouterTrait to avoid circular dependency
+#[async_trait::async_trait]
+pub trait LlmTaskRouterTrait: Send + Sync + 'static {
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::bidirectional_agent::error::AgentError>;
+    
+    #[cfg(feature = "bidir-delegate")]
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, crate::bidirectional_agent::error::AgentError>;
+    
+    #[cfg(feature = "bidir-delegate")]
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, crate::bidirectional_agent::error::AgentError>;
 }
 
 impl TaskRouter {
@@ -100,6 +112,97 @@ impl TaskRouter {
     #[cfg(not(feature = "bidir-delegate"))]
     fn check_task_complexity(&self, _params: &TaskSendParams) {
         // Do nothing when bidir-delegate feature is not enabled
+    }
+}
+
+// Implement LlmTaskRouterTrait for TaskRouter to allow for polymorphic usage
+#[async_trait::async_trait]
+impl LlmTaskRouterTrait for TaskRouter {
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::bidirectional_agent::error::AgentError> {
+        // The standard TaskRouter doesn't return a Result<>, so wrap it
+        Ok(self.decide(params).await)
+    }
+    
+    #[cfg(feature = "bidir-delegate")]
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, crate::bidirectional_agent::error::AgentError> {
+        // Simple heuristic implementation
+        use crate::types::Part;
+        
+        let is_complex = params.message.parts.iter().any(|p| {
+            if let Part::TextPart(tp) = p {
+                tp.text.contains(" and ") || 
+                tp.text.contains(",") || 
+                tp.text.contains(";") ||
+                tp.text.split_whitespace().count() > 30
+            } else {
+                false
+            }
+        });
+        
+        Ok(is_complex)
+    }
+    
+    #[cfg(feature = "bidir-delegate")]
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, crate::bidirectional_agent::error::AgentError> {
+        // Simple implementation that breaks the task into two parts
+        use crate::types::{Message, Role, Part, TextPart};
+        
+        let text = params.message.parts.iter()
+            .filter_map(|p| {
+                if let Part::TextPart(tp) = p {
+                    Some(tp.text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        
+        // Very simplistic split - in a real implementation we'd use more sophisticated logic
+        let midpoint = text.len() / 2;
+        let mut split_point = midpoint;
+        for (i, c) in text.char_indices().skip(midpoint) {
+            if c == '.' || c == '!' || c == '?' || c == '\n' {
+                split_point = i + 1;
+                break;
+            }
+        }
+        
+        let part1 = text[..split_point].trim().to_string();
+        let part2 = text[split_point..].trim().to_string();
+        
+        let subtasks = vec![
+            SubtaskDefinition {
+                id: format!("{}-sub1", params.id),
+                description: "First part of the task".to_string(),
+                input_message: Message {
+                    role: Role::User,
+                    parts: vec![Part::TextPart(TextPart {
+                        type_: "text".to_string(),
+                        text: part1,
+                        metadata: None,
+                    })],
+                    metadata: None,
+                },
+                tools_needed: vec!["echo".to_string()],
+            },
+            SubtaskDefinition {
+                id: format!("{}-sub2", params.id),
+                description: "Second part of the task".to_string(),
+                input_message: Message {
+                    role: Role::User,
+                    parts: vec![Part::TextPart(TextPart {
+                        type_: "text".to_string(),
+                        text: part2,
+                        metadata: None,
+                    })],
+                    metadata: None,
+                },
+                tools_needed: vec!["echo".to_string()],
+            },
+        ];
+        
+        Ok(subtasks)
     }
 }
 

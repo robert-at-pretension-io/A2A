@@ -17,8 +17,8 @@ use crate::types::{
     Part, TextPart, FilePart, DataPart, FileContent, Artifact, Role, Message,
     TaskStatus, TaskState
 };
-// Removed unused base64 import
-// use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+// Add the base64 import back as it's used below
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{Utc, DateTime};
 
 // Task information storage for the mock server
@@ -1633,7 +1633,44 @@ fn generate_mock_data_artifact(task_id: &str, index: usize, is_last: bool) -> (A
     (artifact, artifact_update, id)
 }
 
-// Removed unused generate_mock_file_artifact function
+/// Generate a file artifact for streaming
+fn generate_mock_file_artifact(task_id: &str, index: usize, is_last: bool) -> (Artifact, Value, u64) {
+    let file_content = FileContent {
+        bytes: Some(BASE64.encode("This is a mock file attachment from the A2A test server")),
+        uri: None,
+        mime_type: Some("text/plain".to_string()),
+        name: Some("mock_file.txt".to_string()),
+    };
+    
+    let file_part = FilePart {
+        type_: "file".to_string(),
+        file: file_content,
+        metadata: None,
+    };
+    
+    let artifact = Artifact {
+        parts: vec![Part::FilePart(file_part)],
+        index: index as i64,
+        append: None,
+        name: Some(format!("file_artifact_{}", index)),
+        description: Some(format!("Mock file artifact #{}", index)),
+        last_chunk: Some(is_last),
+        metadata: None,
+    };
+    
+    // Create JSON-RPC response with this artifact
+    let id = rand::random::<u64>();
+    let artifact_update = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "id": task_id,
+            "artifact": artifact.clone()
+        }
+    });
+    
+    (artifact, artifact_update, id)
+}
 
 /// Asynchronously simulate a task's lifecycle with different states
 /// 

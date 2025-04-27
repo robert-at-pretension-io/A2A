@@ -35,8 +35,24 @@ pub struct BidirectionalAgentConfig {
 #[cfg(feature = "bidir-local-exec")]
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct ToolConfigs {
+    /// Whether to use LLM-based routing
+    #[serde(default)]
+    pub use_llm_routing: bool,
+    
+    /// API key for LLM service
+    pub llm_api_key: Option<String>,
+    
+    /// LLM model to use for routing decisions
+    #[serde(default = "default_llm_model")]
+    pub llm_model: String,
+    
+    /// Other tool-specific configurations
     #[serde(flatten)]
     pub specific_configs: HashMap<String, Value>, // Allows arbitrary tool configs
+}
+
+fn default_llm_model() -> String {
+    "claude-3-haiku-20240307".to_string()
 }
 
 /// Authentication configuration.
