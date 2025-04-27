@@ -59,13 +59,22 @@ cargo run -- client stream-task --url "http://localhost:8080" --message "Stream 
 
 ## Features
 
-- **Core Protocol Implementation**: Implements standard A2A methods (`/.well-known/agent.json`, `/tasks`, `/tasks/{id}`, `/tasks/{id}/stream`, `/tasks/{id}/cancel`).
+- **Official A2A Protocol Methods**: This test suite focuses *exclusively* on validating the official A2A protocol methods as defined in the specification. The supported methods are:
+    - Agent Card Discovery: `GET /.well-known/agent.json`
+    - `tasks/send`: Create or update a task.
+    - `tasks/get`: Retrieve task status and results.
+    - `tasks/cancel`: Cancel an ongoing task.
+    - `tasks/sendSubscribe`: Create a task and subscribe to streaming updates via Server-Sent Events (SSE).
+    - `tasks/resubscribe`: Reconnect to an existing task's SSE stream.
+    - `tasks/pushNotification/set`: Configure a webhook URL for push notifications.
+    - `tasks/pushNotification/get`: Retrieve the current push notification configuration.
+    **Note:** No other methods or non-standard extensions are implemented or tested by this suite.
 - **Authentication**: Supports standard HTTP authentication mechanisms like Bearer tokens.
-- **Streaming**: Real-time task updates via Server-Sent Events.
-- **Structured Data**: Exchange JSON data within message parts.
-- **Push Notifications**: Basic support for configuring push notifications (optional A2A feature).
-- **Bidirectional Operation**: Includes an agent that can act as both client and server, enabling testing of peer-to-peer agent interactions.
-- **Comprehensive Testing**: Includes schema validation, property-based testing, and integration tests for core protocol features.
+- **Streaming**: Real-time task updates via Server-Sent Events (SSE) for `tasks/sendSubscribe` and `tasks/resubscribe`.
+- **Structured Data**: Exchange JSON data within message parts according to the schema.
+- **Push Notifications**: Basic support for configuring and retrieving push notification settings (`tasks/pushNotification/set`, `tasks/pushNotification/get`).
+- **Bidirectional Operation**: Includes an agent that can act as both client and server, enabling testing of peer-to-peer agent interactions using the official methods.
+- **Comprehensive Testing**: Includes schema validation, property-based testing, and integration tests specifically for the official protocol features listed above.
 
 ## Bidirectional Agent Architecture
 
