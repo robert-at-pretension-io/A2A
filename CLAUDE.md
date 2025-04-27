@@ -10,10 +10,10 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 **IMPORTANT: THIS PROJECT MUST ALWAYS FOLLOW TEST-DRIVEN DEVELOPMENT**
 
 - Write tests before implementing features
-- Run `cargo build` often to verify the feature is building
+- Run `RUSTFLAGS="-A warnings" cargo build` often to verify the feature is building (ALWAYS use `RUSTFLAGS="-A warnings"`)
 - Implement features "slowly" and meticulously
 - Always verify tests pass before considering work complete
-- Ensure builds work with `cargo test && cargo build` before submitting changes
+- Ensure builds work with `RUSTFLAGS="-A warnings" cargo test && RUSTFLAGS="-A warnings" cargo build` before submitting changes (ALWAYS use `RUSTFLAGS="-A warnings"`)
 - Never skip testing or make untested changes
 - Implement features iteratively: small, testable units
 - Keep the `start_server_and_test_client.sh` script updated with new features for end-to-end testing
@@ -27,11 +27,10 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 ## Build & Test Commands
 - Generate schema types: `cargo run --quiet -- config generate-types`
 - Set schema version: `cargo run --quiet -- config set-schema-version [version]`
-- Build: `cargo build --quiet`
-- Build (no warnings): `RUSTFLAGS="-A warnings" cargo build`
+- Build (ALWAYS use RUSTFLAGS): `RUSTFLAGS="-A warnings" cargo build --quiet`
 - Run: `cargo run --quiet -- [subcommand]`
-- Test all: `cargo test --quiet`
-- Test single: `cargo test --quiet [test_name]`
+- Test all (ALWAYS use RUSTFLAGS): `RUSTFLAGS="-A warnings" cargo test --quiet`
+- Test single (ALWAYS use RUSTFLAGS): `RUSTFLAGS="-A warnings" cargo test --quiet [test_name]`
 - Property tests: `cargo run --quiet -- test --cases [number]`
 - Validate: `cargo run --quiet -- validate --file [path]`
 - Mock server: `cargo run --quiet -- server --port [port]`
@@ -62,7 +61,7 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
   - List skills: `cargo run --quiet -- client list-skills --url [url] --tags [optional_tags]`
   - Get skill details: `cargo run --quiet -- client get-skill-details --url [url] --id [skill_id]`
   - Invoke skill: `cargo run --quiet -- client invoke-skill --url [url] --id [skill_id] --message [text] --input-mode [optional_mode] --output-mode [optional_mode] [--metadata '{"_mock_duration_ms": 3000}']`
-- **REQUIRED VERIFICATION**: Always run `RUSTFLAGS="-A warnings" cargo test && cargo build` before finalizing changes
+- **REQUIRED VERIFICATION**: Always run `RUSTFLAGS="-A warnings" cargo test && RUSTFLAGS="-A warnings" cargo build` before finalizing changes (ALWAYS use `RUSTFLAGS="-A warnings"`)
 
 ## Code Style Guidelines
 - Follow standard Rust formatting with 4-space indentation
@@ -130,9 +129,9 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
    - Document the feature in `src/client/README.md` with examples
    - Update `start_server_and_test_client.sh` if your feature requires special setup or teardown
 
-6. **Parallel Testing Tip**: Use `--test-threads=1` for tests that use the mock server to avoid port conflicts:
+6. **Parallel Testing Tip**: Use `--test-threads=1` for tests that use the mock server to avoid port conflicts (remember RUSTFLAGS!):
    ```
-   cargo test -- --test-threads=1
+   RUSTFLAGS="-A warnings" cargo test -- --test-threads=1
    ```
 
 7. **Debugging Tips**:
