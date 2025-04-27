@@ -7,7 +7,7 @@ mod client;
 mod schema_utils; // Add this line
 mod runner; // Add the runner module
 mod server; // Add the reference server module
-// Re-enable bidirectional_agent module
+// Add bidirectional_agent module conditionally
 #[cfg(feature = "bidir-core")]
 pub mod bidirectional_agent;
 #[cfg(test)]
@@ -230,7 +230,7 @@ fn main() {
         // Handle the new BidirectionalAgent command
         #[cfg(feature = "bidir-core")]
         Commands::BidirectionalAgent { config } => {
-            println!("🚀 Attempting to start Bidirectional A2A Agent...");
+            println!("🚀 Attempting to start Bidirectional A2A Agent (Feature: bidir-core)...");
             // Create a runtime for the async agent
             let rt = tokio::runtime::Runtime::new().unwrap();
             // Run the agent using the updated function from the bidirectional_agent module

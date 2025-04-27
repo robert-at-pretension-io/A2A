@@ -5,9 +5,11 @@ edition = "2021"
 
 [features]
 default = []
-bidir-core = []
-bidir-local-exec = ["bidir-core"]
-bidir-delegate = ["bidir-local-exec"]
+# Bidirectional Agent Features (Incremental)
+bidir-core = ["dep:tokio", "dep:dashmap", "dep:async-trait", "dep:anyhow", "dep:thiserror", "dep:toml", "dep:log", "dep:env_logger", "dep:tokio-util"]
+bidir-local-exec = ["bidir-core"] # Depends on core features
+bidir-delegate = ["bidir-local-exec"] # Depends on local execution features
+# Fuzzing Feature
 fuzzing = ["dep:libfuzzer-sys"]
 
 [dependencies]
@@ -38,7 +40,7 @@ chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2.3", features = ["serde"] }
 
 # For client implementation
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"], default-features = false } # Enable rustls-tls
 mockito = "1.2"
 futures = "0.3"
 futures-util = "0.3"
@@ -52,15 +54,18 @@ tempfile = "3.10" # For creating temporary files/dirs in tests
 # serde_json is already a dependency
 once_cell = "1.17"
 sha2 = "0.10"
-async-trait = { version = "0.1.88" }
-http = "1.3.1"
-dashmap = { version = "5" }
-log = { version = "0.4" }
-env_logger = { version = "0.11" }
-anyhow = "1.0" # For easier error handling in registry/config
-thiserror = "1.0" # For deriving Error
-toml = "0.8" # For parsing TOML configuration files
-tokio-util = { version = "0.7.15", features = ["full"] }
+http = "1.3.1" # Changed from 0.2 to 1.3.1
+
+# Bidirectional Agent Dependencies (Optional)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"], optional = true } # Added sync, time, signal
+dashmap = { version = "5", optional = true }
+async-trait = { version = "0.1.88", optional = true }
+log = { version = "0.4", optional = true }
+env_logger = { version = "0.11", optional = true }
+anyhow = { version = "1.0", optional = true }
+thiserror = { version = "1.0", optional = true }
+toml = { version = "0.8", optional = true }
+tokio-util = { version = "0.7.15", features = ["full"], optional = true } # Make optional
 
 [build-dependencies]
 sha2 = "0.10"
