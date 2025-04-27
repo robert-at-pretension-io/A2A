@@ -6,23 +6,22 @@ A comprehensive testing framework for the Agent-to-Agent (A2A) protocol, enablin
 
 The A2A protocol establishes a standard way for AI agents to communicate, supporting:
 
-- Task-based interactions with structured state management
-- Rich media exchange (text, data, files)
+- Task-based interactions with structured state management (Submit, Get, Cancel, Stream)
+- Standard data exchange (text, JSON data)
 - Streaming updates via Server-Sent Events
-- Authentication using standard HTTP mechanisms
-- Push notifications for asynchronous operations
-- Agent capability discovery and skill invocation
+- Authentication using standard HTTP mechanisms (e.g., Bearer tokens)
+- Push notifications for asynchronous operations (optional)
+- Agent capability discovery via `.well-known/agent.json`
 
-This test suite provides tools to validate implementations and ensure protocol compliance.
+This test suite provides tools to validate implementations against the official A2A protocol specification and ensure compliance.
 
 ## Components
 
-- **Validator**: Validate A2A messages against the JSON schema
-- **Property Tests**: Generate and test random A2A messages
-- **Mock Server**: A reference implementation for testing clients
-- **Client Implementation**: A complete A2A client
-- **Fuzzer**: Test robustness against malformed inputs
-- **Bidirectional Agent**: An agent that can act as both client and server
+- **Validator**: Validate A2A messages against the official JSON schema.
+- **Property Tests**: Generate and test random valid A2A messages based on the schema.
+- **Mock Server**: A reference A2A server implementation for testing clients.
+- **Client Implementation**: A compliant A2A client implementation.
+- **Bidirectional Agent**: An agent implementation capable of acting as both an A2A client and server, facilitating testing of agent-to-agent interactions.
 
 ## Usage
 
@@ -56,33 +55,26 @@ cargo run -- client get-task --url "http://localhost:8080" --id "task-123"
 
 # Stream task updates
 cargo run -- client stream-task --url "http://localhost:8080" --message "Stream updates"
-
-# Send a task with a file
-cargo run -- client send-task-with-file --url "http://localhost:8080" --message "Process this" --file-path "data.csv"
 ```
 
 ## Features
 
-- **Complete Protocol Support**: Implements all required and optional A2A endpoints
-- **Authentication**: Bearer tokens, API keys, and other standard mechanisms
-- **Streaming**: Real-time updates via Server-Sent Events
-- **File Handling**: Upload, download, and process files
-- **Structured Data**: Exchange JSON data alongside text
-- **Push Notifications**: Configure webhooks for asynchronous updates
-- **Batching**: Group related tasks together
-- **Agent Skills**: Discover and invoke agent-specific capabilities
-- **Bidirectional Operation**: Support for agents that both consume and provide A2A services
-- **Comprehensive Testing**: Validation, property tests, fuzzing, and integration tests
+- **Core Protocol Implementation**: Implements standard A2A methods (`/.well-known/agent.json`, `/tasks`, `/tasks/{id}`, `/tasks/{id}/stream`, `/tasks/{id}/cancel`).
+- **Authentication**: Supports standard HTTP authentication mechanisms like Bearer tokens.
+- **Streaming**: Real-time task updates via Server-Sent Events.
+- **Structured Data**: Exchange JSON data within message parts.
+- **Push Notifications**: Basic support for configuring push notifications (optional A2A feature).
+- **Bidirectional Operation**: Includes an agent that can act as both client and server, enabling testing of peer-to-peer agent interactions.
+- **Comprehensive Testing**: Includes schema validation, property-based testing, and integration tests for core protocol features.
 
 ## Bidirectional Agent Architecture
 
-The bidirectional agent implementation supports:
+The bidirectional agent implementation demonstrates how an agent can function as both a client and a server within the A2A protocol. Key aspects include:
 
-1. **Agent Discovery**: Automatic discovery and caching of agent capabilities
-2. **Local & Remote Execution**: Intelligent routing of tasks to local tools or remote agents
-3. **Task Delegation**: Offloading tasks to specialized remote agents
-4. **Result Synthesis**: Combining results from multiple sub-tasks
-5. **Polling & Monitoring**: Tracking delegated task status
+1.  **Agent Discovery**: Discovering other agents via their `agent.json` card and caching their information.
+2.  **Client Role**: Acting as a client to send tasks to other agents.
+3.  **Server Role**: Acting as a server to receive and process tasks from other agents.
+4.  **Delegated Task Management**: Basic mechanisms for tracking tasks delegated to other agents (associating local task IDs with remote ones).
 
 ## Development
 
@@ -106,4 +98,4 @@ cargo test client::streaming::tests
 
 ## Project Status
 
-This project is under active development. The core A2A protocol implementation is complete, with full client features and mock server functionality. The bidirectional agent capabilities are being progressively implemented, with current support for agent discovery, client management, and delegated task monitoring.
+This project provides a test suite focused on the standard A2A protocol. The core client, server, validator, and property testing components implement the official specification. The bidirectional agent demonstrates how to combine client and server roles for agent-to-agent communication, including agent discovery and basic management of delegated tasks. Non-standard extensions (like file handling, batching, skills) have been removed to maintain focus on protocol compliance testing.
