@@ -6,27 +6,31 @@ use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
 
-// Conditionally import bidirectional components
+// Conditionally import bidirectional components and types
 #[cfg(feature = "bidir-local-exec")]
-use crate::bidirectional_agent::{TaskRouter, ToolExecutor};
-#[cfg(feature = "bidir-delegate")] // Guard TaskFlow usage
-use crate::bidirectional_agent::task_flow;
-#[cfg(feature = "bidir-local-exec")]
-use crate::bidirectional_agent::task_router::RoutingDecision;
+use crate::bidirectional_agent::{
+    task_router::{TaskRouter, RoutingDecision, LlmTaskRouterTrait}, // Import trait
+    tool_executor::ToolExecutor,
+};
+#[cfg(feature = "bidir-delegate")]
+use crate::bidirectional_agent::{
+    task_flow::TaskFlow, // Keep TaskFlow import guarded
+    ClientManager, AgentRegistry, // Import Slice 3 components
+};
 
 
 pub struct TaskService {
     task_repository: Arc<dyn TaskRepository>,
-    // Add fields for bidirectional components, conditionally compiled
+    // Use the LlmTaskRouterTrait for polymorphism
     #[cfg(feature = "bidir-local-exec")]
-    task_router: Option<Arc<TaskRouter>>, // Option<> allows initialization without these features
+    task_router: Option<Arc<dyn LlmTaskRouterTrait>>,
     #[cfg(feature = "bidir-local-exec")]
     tool_executor: Option<Arc<ToolExecutor>>,
     // Add components needed by TaskFlow if TaskService orchestrates it
     #[cfg(feature = "bidir-delegate")]
-    client_manager: Option<Arc<crate::bidirectional_agent::ClientManager>>,
+    client_manager: Option<Arc<ClientManager>>,
     #[cfg(feature = "bidir-delegate")]
-    agent_registry: Option<Arc<crate::bidirectional_agent::AgentRegistry>>,
+    agent_registry: Option<Arc<AgentRegistry>>,
     #[cfg(feature = "bidir-delegate")]
     agent_id: Option<String>, // ID of the agent running this service
 }
@@ -54,13 +58,12 @@ impl TaskService {
     #[cfg(feature = "bidir-core")] // Guard the whole function
     pub fn bidirectional(
         task_repository: Arc<dyn TaskRepository>,
-        #[cfg(feature = "bidir-local-exec")] task_router: Arc<TaskRouter>,
+        // Accept the trait object for router
+        #[cfg(feature = "bidir-local-exec")] task_router: Arc<dyn LlmTaskRouterTrait>,
         #[cfg(feature = "bidir-local-exec")] tool_executor: Arc<ToolExecutor>,
         // Add Slice 3 components
-        #[cfg(feature = "bidir-delegate")] client_manager: Option<Arc<crate::bidirectional_agent::ClientManager>>,
-        #[cfg(feature = "bidir-delegate")] agent_registry: Option<Arc<crate::bidirectional_agent::AgentRegistry>>,
-        #[cfg(feature = "bidir-delegate")] client_manager: Arc<crate::bidirectional_agent::ClientManager>,
-        #[cfg(feature = "bidir-delegate")] agent_registry: Arc<crate::bidirectional_agent::AgentRegistry>,
+        #[cfg(feature = "bidir-delegate")] client_manager: Arc<ClientManager>,
+        #[cfg(feature = "bidir-delegate")] agent_registry: Arc<AgentRegistry>,
         #[cfg(feature = "bidir-delegate")] agent_id: String,
     ) -> Self {
         // Compile-time check for feature consistency (example)
@@ -117,72 +120,81 @@ impl TaskService {
         // --- Routing and Execution Logic (Slice 2 & 3) ---
         #[cfg(feature = "bidir-local-exec")]
         {
-            // Ensure all necessary components are available for the active features
             if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
-                 // Add checks for Slice 3 components if that feature is enabled
-                 #[cfg(feature = "bidir-delegate")]
-                 if self.client_manager.is_none() || self.agent_registry.is_none() || self.agent_id.is_none() {
-                      // Handle missing components needed for delegation
-                      eprintln!("❌ Configuration Error: Missing components required for bidir-delegate feature.");
-                       task.status.state = TaskState::Failed;
-                       task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Agent configuration error: Missing delegation components.".to_string(), metadata: None })], metadata: None });
-                 } else {
-                    // Make routing decision based on incoming params
-                    let decision = router.decide(&params).await;
-                    println!("Routing decision for task {}: {:?}", task.id, decision);
+                // Make routing decision based on incoming params
+                match router.decide(&params).await {
+                    Ok(decision) => {
+                        println!("Routing decision for task {}: {:?}", task.id, decision);
 
-                    // Use TaskFlow to handle the decision if delegation is enabled
-                    #[cfg(feature = "bidir-delegate")]
-                    {
-                        let flow = TaskFlow::new(
-                            task.id.clone(),
-                            self.agent_id.clone().unwrap(), // Safe unwrap due to check above
-                            self.task_repository.clone(),
-                            self.client_manager.clone().unwrap(), // Safe unwrap
-                            executor.clone(),
-                            self.agent_registry.clone().unwrap(), // Safe unwrap
-                        );
-                        if let Err(e) = flow.process_decision(decision).await {
-                             println!("Task flow processing failed for task {}: {}", task.id, e);
-                             // Update task status to Failed if flow fails
-                             // Note: Flow might have already updated status, refetch needed?
-                             let mut current_task = self.task_repository.get_task(&task.id).await?.unwrap_or(task); // Refetch or use current
-                             current_task.status.state = TaskState::Failed;
-                             current_task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task processing failed: {}", e), metadata: None })], metadata: None });
-                             task = current_task; // Update the task variable
-                        } else {
-                             // Flow succeeded, refetch the task to get the final state set by the flow
-                             task = self.task_repository.get_task(&task.id).await?.unwrap_or(task);
-                        }
-                    }
-
-                    // Fallback to Slice 2 logic if delegation is not enabled
-                    #[cfg(not(feature = "bidir-delegate"))]
-                    {
-                        match decision {
-                            RoutingDecision::Local { tool_names: _ } => {
-                                if let Err(e) = executor.execute_task_locally(&mut task).await {
-                                     println!("Local execution failed for task {}: {}", task.id, e);
+                        // Use TaskFlow to handle the decision if delegation is enabled
+                        #[cfg(feature = "bidir-delegate")]
+                        {
+                            // Ensure all components for delegation are present
+                            if let (Some(cm), Some(reg), Some(agent_id)) =
+                                (&self.client_manager, &self.agent_registry, &self.agent_id)
+                            {
+                                let flow = TaskFlow::new(
+                                    task.id.clone(),
+                                    agent_id.clone(),
+                                    self.task_repository.clone(),
+                                    cm.clone(),
+                                    executor.clone(),
+                                    reg.clone(),
+                                );
+                                if let Err(e) = flow.process_decision(decision).await {
+                                    println!("Task flow processing failed for task {}: {}", task.id, e);
+                                    // Update task status to Failed if flow fails
+                                    let mut current_task = self.task_repository.get_task(&task.id).await?.unwrap_or(task);
+                                    current_task.status.state = TaskState::Failed;
+                                    current_task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task processing failed: {}", e), metadata: None })], metadata: None });
+                                    task = current_task;
                                 } else {
-                                     println!("Local execution successful for task {}", task.id);
+                                    // Flow succeeded, refetch the task to get the final state
+                                    task = self.task_repository.get_task(&task.id).await?.unwrap_or(task);
                                 }
+                            } else {
+                                // Handle missing components needed for delegation
+                                eprintln!("❌ Configuration Error: Missing components required for bidir-delegate feature.");
+                                task.status.state = TaskState::Failed;
+                                task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Agent configuration error: Missing delegation components.".to_string(), metadata: None })], metadata: None });
                             }
-                            RoutingDecision::Remote { agent_id } => {
-                                 println!("Task {} marked for delegation to agent '{}' (Feature 'bidir-delegate' not enabled)", task.id, agent_id);
-                                 task.status.state = TaskState::Failed; // Fail if delegation needed but feature disabled
-                                 task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Delegation required but feature not enabled.".to_string(), metadata: None })], metadata: None });
-                            }
-                            RoutingDecision::Reject { reason } => {
-                                 println!("Task {} rejected: {}", task.id, reason);
-                                 task.status.state = TaskState::Failed;
-                                 task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task rejected: {}", reason), metadata: None })], metadata: None });
+                        }
+
+                        // Fallback to Slice 2 logic if delegation is not enabled
+                        #[cfg(not(feature = "bidir-delegate"))]
+                        {
+                            match decision {
+                                RoutingDecision::Local { tool_names: _ } => { // Ignore tool_names for now
+                                    if let Err(e) = executor.execute_task_locally(&mut task).await {
+                                        println!("Local execution failed for task {}: {}", task.id, e);
+                                    } else {
+                                        println!("Local execution successful for task {}", task.id);
+                                    }
+                                }
+                                RoutingDecision::Remote { agent_id } => {
+                                    println!("Task {} marked for delegation to agent '{}' (Feature 'bidir-delegate' not enabled)", task.id, agent_id);
+                                    task.status.state = TaskState::Failed;
+                                    task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Delegation required but feature not enabled.".to_string(), metadata: None })], metadata: None });
+                                }
+                                RoutingDecision::Reject { reason } => {
+                                    println!("Task {} rejected: {}", task.id, reason);
+                                    task.status.state = TaskState::Failed;
+                                    task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task rejected: {}", reason), metadata: None })], metadata: None });
+                                }
+                                // Decomposition case is handled by the cfg(feature = "bidir-delegate") block above
                             }
                         }
                     }
-                 } // End else block for component check
+                    Err(e) => {
+                        // Handle routing error
+                        println!("Routing failed for task {}: {}", task.id, e);
+                        task.status.state = TaskState::Failed;
+                        task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task routing failed: {}", e), metadata: None })], metadata: None });
+                    }
+                }
             } else {
-                // Fallback to default processing if router/executor not available (shouldn't happen if features enabled)
-                 println!("Router/Executor not available, using default processing for task {}", task.id);
+                // Fallback to default processing if router/executor not available
+                println!("Router/Executor not available, using default processing for task {}", task.id);
                 self.process_task_content(&mut task, Some(params.message)).await?;
             }
         }
@@ -190,7 +202,6 @@ impl TaskService {
         // Default processing if bidir-local-exec feature is not enabled
         #[cfg(not(feature = "bidir-local-exec"))]
         {
-            // Process the task (simplified implementation for reference server)
             self.process_task_content(&mut task, Some(params.message)).await?;
         }
         // --- End Routing and Execution Logic ---

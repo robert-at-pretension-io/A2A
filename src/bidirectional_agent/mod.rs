@@ -324,6 +324,7 @@ pub mod client_manager;
 pub mod error;
 pub mod types;
 
+// Slice 2: Local Execution & Routing
 #[cfg(feature = "bidir-local-exec")]
 pub mod tool_executor;
 #[cfg(feature = "bidir-local-exec")]
@@ -331,10 +332,11 @@ pub mod task_router;
 #[cfg(feature = "bidir-local-exec")]
 pub mod tools;
 #[cfg(feature = "bidir-local-exec")]
-pub mod llm_routing;
+pub mod llm_routing; // LLM-based routing module
 #[cfg(feature = "bidir-local-exec")]
-pub mod task_router_llm;
+pub mod task_router_llm; // LLM task router implementation
 
+// Slice 3: Delegation & Synthesis
 #[cfg(feature = "bidir-delegate")]
 pub mod task_flow;
 #[cfg(feature = "bidir-delegate")]
