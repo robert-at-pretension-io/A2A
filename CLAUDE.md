@@ -120,10 +120,10 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
    2. Add the module to `client/mod.rs`
    3. Implement client methods and data structures
    4. Update the mock server in `mock_server.rs` to support the feature
-   5. Run tests (`cargo test --quiet`) and iterate until passing (GREEN)
+   5. Run tests (`RUSTFLAGS="-A warnings" cargo test --quiet`) and iterate until passing (GREEN) (ALWAYS use `RUSTFLAGS="-A warnings"`)
 
 5. **Validation and Refinement**:
-   - Verify with `RUSTFLAGS="-A warnings" cargo test && cargo build`
+   - Verify with `RUSTFLAGS="-A warnings" cargo test && RUSTFLAGS="-A warnings" cargo build` (ALWAYS use `RUSTFLAGS="-A warnings"`)
    - Add CLI commands in `main.rs` if needed
    - Update CLAUDE.md with new commands and module descriptions
    - Document the feature in `src/client/README.md` with examples
