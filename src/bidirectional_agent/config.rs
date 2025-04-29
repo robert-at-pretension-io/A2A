@@ -1,6 +1,6 @@
-//! Configuration structures for the Bidirectional Agent.
+/// Configuration structures for the Bidirectional Agent.
 
-#![cfg(feature = "bidir-core")]
+#[cfg(feature = "bidir-core")]
 
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path};
@@ -195,9 +195,9 @@ mod tests {
         assert!(load_result.unwrap_err().to_string().contains("'self_id' cannot be empty"));
     }
 }
-//! Configuration structures for the Bidirectional Agent.
+/// Configuration structures for the Bidirectional Agent.
 
-#![cfg(feature = "bidir-core")]
+#[cfg(feature = "bidir-core")]
 
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path};
