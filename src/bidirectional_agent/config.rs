@@ -28,6 +28,10 @@ pub struct BidirectionalAgentConfig {
     #[cfg(feature = "bidir-local-exec")]
     #[serde(default)]
     pub tools: ToolConfigs,
+    /// Agent directory configuration. Included if 'bidir-core' is enabled.
+    #[cfg(feature = "bidir-core")]
+    #[serde(default)]
+    pub directory: DirectoryConfig,
     // Add fields for routing policy etc. in later slices
 }
 
@@ -158,6 +162,13 @@ mod tests {
             [tools]
             shell_allowed_commands = ["ls", "echo"] # Example tool config
             http_max_redirects = 5
+
+            [directory] # Add directory config section
+            db_path = "/var/lib/myagent/directory.sqlite"
+            verification_interval_minutes = 10
+            max_failures_before_inactive = 5
+            backoff_seconds = 30
+            health_endpoint_path = "/api/v1/status"
         "#;
         let config: BidirectionalAgentConfig = toml::from_str(config_str).unwrap();
         assert_eq!(config.self_id, "agent2");
@@ -174,6 +185,16 @@ mod tests {
             assert!(config.tools.specific_configs.contains_key("shell_allowed_commands"));
             assert!(config.tools.specific_configs.contains_key("http_max_redirects"));
             assert_eq!(config.tools.specific_configs["http_max_redirects"], Value::Integer(5));
+        }
+
+        // Assert directory config is loaded correctly
+        #[cfg(feature = "bidir-core")]
+        {
+            assert_eq!(config.directory.db_path, "/var/lib/myagent/directory.sqlite");
+            assert_eq!(config.directory.verification_interval_minutes, 10);
+            assert_eq!(config.directory.max_failures_before_inactive, 5);
+            assert_eq!(config.directory.backoff_seconds, 30);
+            assert_eq!(config.directory.health_endpoint_path, "/api/v1/status");
         }
     }
 
@@ -193,6 +214,45 @@ mod tests {
         let load_result = load_config(file_path.to_str().unwrap());
         assert!(load_result.is_err());
         assert!(load_result.unwrap_err().to_string().contains("'self_id' cannot be empty"));
+    }
+}
+
+
+#[cfg(feature = "bidir-core")]
+/// Configuration specific to the Agent Directory feature.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(default)] // Makes the whole [directory] section optional in TOML
+pub struct DirectoryConfig {
+    /// Path to the SQLite database file. Can be relative (to CWD) or absolute.
+    pub db_path: String,
+    /// Default interval (in minutes) between successful agent verification checks.
+    /// Actual checks depend on `next_probe_at`.
+    pub verification_interval_minutes: u64,
+    /// Timeout (in seconds) for HTTP requests made during agent verification (HEAD/GET).
+    pub request_timeout_seconds: u64,
+    /// Number of *consecutive* verification failures required to mark an agent as inactive.
+    pub max_failures_before_inactive: u32,
+    /// Base duration (in seconds) for exponential backoff after the *first* failure.
+    /// The delay before the next check will be `backoff_seconds * 2^(failures - 1)`.
+    pub backoff_seconds: u64,
+    /// Optional path (e.g., "/health", "/status") appended to the agent's base URL
+    /// for the GET request fallback during liveness checks. If empty, uses the base URL.
+    pub health_endpoint_path: String,
+}
+
+#[cfg(feature = "bidir-core")]
+impl Default for DirectoryConfig {
+    fn default() -> Self {
+        Self {
+            // Default to storing DB in a 'data' subdirectory relative to executable CWD.
+            // Ensure this directory exists or can be created.
+            db_path: "data/agent_directory.db".to_string(),
+            verification_interval_minutes: 15,
+            request_timeout_seconds: 10,
+            max_failures_before_inactive: 3, // Mark inactive after 3 consecutive failures
+            backoff_seconds: 60, // Start with 1 minute backoff after first failure
+            health_endpoint_path: "/health".to_string(), // Common default health check path
+        }
     }
 }
 /// Configuration structures for the Bidirectional Agent.
@@ -239,6 +299,8 @@ impl Default for BidirectionalAgentConfig {
             network: NetworkConfig::default(),
             #[cfg(feature = "bidir-local-exec")]
             tools: ToolConfigs::default(),
+            #[cfg(feature = "bidir-core")]
+            directory: DirectoryConfig::default(), // Add default directory config
         }
     }
 }
@@ -375,6 +437,8 @@ mod tests {
         assert_eq!(config.network.port, Some(8080)); // Check default port
         #[cfg(feature = "bidir-local-exec")]
         assert!(config.tools.specific_configs.is_empty());
+        #[cfg(feature = "bidir-core")]
+        assert_eq!(config.directory.db_path, "data/agent_directory.db"); // Check default dir path
     }
 
     #[test]

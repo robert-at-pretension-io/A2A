@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = []
 # Bidirectional Agent Features (Incremental)
-bidir-core = ["dep:anyhow", "dep:thiserror", "dep:toml", "dep:log", "dep:env_logger"]
+bidir-core = ["dep:anyhow", "dep:thiserror", "dep:toml", "dep:log", "dep:env_logger", "dep:sqlx", "dep:tokio-util"] # Add sqlx and tokio-util here
 bidir-local-exec = ["bidir-core"] # Depends on core features
 bidir-delegate = ["bidir-local-exec"] # Depends on local execution features
 # Fuzzing Feature
@@ -34,6 +34,9 @@ colored = "2.0" # For colored output in runner
 arbitrary = { version = "1.1", features = ["derive"] }
 libfuzzer-sys = { version = "0.4", optional = true }
 rand = "0.8.5"
+
+# For Agent Directory (SQLite)
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio", "macros", "chrono", "json"], optional = true } # Optional based on bidir-core
 
 # A2A-specific dependencies
 chrono = { version = "0.4", features = ["serde"] }
@@ -65,8 +68,13 @@ env_logger = { version = "0.11", optional = true }
 anyhow = { version = "1.0", optional = true }
 thiserror = { version = "1.0", optional = true }
 toml = { version = "0.8", optional = true }
-tokio-util = { version = "0.7.15", features = ["full"] } # Made non-optional
+tokio-util = { version = "0.7", features = ["sync"], optional = true } # Add sync feature, make optional based on bidir-core
 
 [build-dependencies]
 sha2 = "0.10"
 # reqwest and serde_json are no longer needed *only* here
+
+[dev-dependencies] # Add dev-dependencies section if it doesn't exist
+tempfile = "3.10" # Already present in main dependencies, but good practice for test-only utils
+mockito = "1.2" # Already present in main dependencies
+tokio-test = "0.4" # For blocking on async calls in tests if needed
