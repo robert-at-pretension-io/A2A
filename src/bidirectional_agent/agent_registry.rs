@@ -29,20 +29,44 @@ pub struct AgentRegistry {
     /// Map from agent ID (or URL if ID not known yet) to cached info.
     pub agents: Arc<DashMap<String, CachedAgentInfo>>,
     /// HTTP client for discovery.
+    // Consider making this Arc<reqwest::Client> if needed elsewhere or for easier cloning
     http_client: reqwest::Client,
+    /// Reference to the persistent agent directory. Included if 'bidir-core' is enabled.
+    #[cfg(feature = "bidir-core")]
+    agent_directory: Arc<crate::bidirectional_agent::agent_directory::AgentDirectory>,
 }
 
+// Conditional compilation for AgentRegistry implementation based on features
 #[cfg(feature = "bidir-core")]
 impl AgentRegistry {
-    /// Creates a new, empty agent registry.
-    pub fn new() -> Self {
+    /// Creates a new agent registry. Requires AgentDirectory if 'bidir-core' is enabled.
+    pub fn new(#[cfg(feature = "bidir-core")] agent_directory: Arc<crate::bidirectional_agent::agent_directory::AgentDirectory>) -> Self {
+        // TODO: Consider pre-loading cache from directory here or lazily on first access.
+        // For now, cache starts empty and populates on discovery/refresh.
+
         Self {
             agents: Arc::new(DashMap::new()),
-            // Consider making client configurable later
+            // TODO: Configure client (timeout, proxy) based on BidirectionalAgentConfig.network
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(30)) // Example timeout
                 .build()
                 .expect("Failed to build HTTP client for registry"),
+            // Store the directory if the feature is enabled
+            #[cfg(feature = "bidir-core")]
+            agent_directory,
+        }
+    }
+
+    // If bidir-core is NOT enabled, provide a constructor that doesn't need AgentDirectory
+    #[cfg(not(feature = "bidir-core"))]
+    pub fn new() -> Self {
+         Self {
+            agents: Arc::new(DashMap::new()),
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("Failed to build HTTP client for registry"),
+            // No agent_directory field when feature is off
         }
     }
 
@@ -68,8 +92,16 @@ impl AgentRegistry {
             last_checked: Utc::now(),
         };
 
-        self.agents.insert(agent_id, cache_info);
-        Ok(())
+        self.agents.insert(agent_id.clone(), cache_info);
+
+        // Also add/update in the persistent directory if the feature is enabled
+        #[cfg(feature = "bidir-core")]
+        {
+            self.agent_directory.add_agent(&agent_id, url, Some(card)).await
+                .context("Failed to add agent to persistent directory")?;
+        }
+
+        Ok(()) // Discover returns Result<()> now
     }
 
     /// Retrieves cached information for a specific agent by its ID (usually its name).
@@ -126,38 +158,68 @@ impl AgentRegistry {
     pub async fn run_refresh_loop(&self, interval: Duration) {
         println!("🕰️ Starting agent registry refresh loop (interval: {:?})", interval);
         // Convert chrono::Duration to std::time::Duration
-        let std_duration = std::time::Duration::from_secs(interval.num_seconds() as u64);
+        let std_interval = interval.to_std()
+            .context("Invalid refresh interval duration")?; // Handle potential conversion error
+
         loop {
-            tokio::time::sleep(std_duration).await;
-            println!("🔄 Running periodic agent refresh...");
-            let agent_ids: Vec<String> = self.agents.iter().map(|e| e.key().clone()).collect();
-            for agent_id in agent_ids {
-                match self.refresh_agent_info(&agent_id).await {
-                    Ok(updated) => {
-                        if updated {
-                            println!("  ✅ Refreshed agent: {}", agent_id);
-                        } else {
-                             println!("  ℹ️ Agent checked, no changes: {}", agent_id);
+            tokio::time::sleep(std_interval).await;
+            log::info!(target: "agent_registry", "Running periodic agent info refresh...");
+
+            // Determine the list of agents to refresh
+            #[cfg(feature = "bidir-core")]
+            let agents_to_refresh_result = self.agent_directory.get_active_agents().await;
+            #[cfg(not(feature = "bidir-core"))]
+            let agents_to_refresh_result: Result<Vec<(String, String)>> = Ok(self.agents.iter().map(|e| (e.key().clone(), e.value().card.url.clone())).collect());
+
+
+            match agents_to_refresh_result {
+                Ok(agents_to_refresh) => {
+                    log::debug!(target: "agent_registry", count = agents_to_refresh.len(), "Refreshing agent details");
+                    for (agent_id, _url) in agents_to_refresh {
+                        // Use spawn to refresh concurrently? Maybe not, could overload network/rate limits.
+                        // Refresh sequentially for now.
+                        match self.refresh_agent_info(&agent_id).await {
+                            Ok(updated) => {
+                                if updated {
+                                    log::info!(target: "agent_registry", agent_id = %agent_id, "Refreshed agent card details");
+                                } else {
+                                    log::debug!(target: "agent_registry", agent_id = %agent_id, "Agent card checked, no changes");
                         }
                     },
-                    Err(e) => {
-                        println!("  ⚠️ Failed to refresh agent {}: {}", agent_id, e);
-                        // Consider adding logic to mark agent as potentially stale or unreachable
                     }
+                },
+                Err(e) => {
+                    #[cfg(feature = "bidir-core")]
+                    log::error!(target: "agent_registry", error = ?e, "Failed to get active agents from directory for refresh loop");
+                    #[cfg(not(feature = "bidir-core"))]
+                     log::error!(target: "agent_registry", error = ?e, "Failed to get agents from internal cache for refresh loop");
                 }
             }
-             println!("🔄 Periodic agent refresh complete.");
+            log::info!(target: "agent_registry", "Periodic agent info refresh cycle complete.");
         }
+        // The loop is infinite, so this part is unreachable unless cancellation is added.
+        // Consider adding CancellationToken handling here as well.
+        // Ok(())
     }
 }
 
 #[cfg(all(test, feature = "bidir-core"))]
 mod tests {
+// Tests need bidir-core enabled to run AgentDirectory dependent tests
+#[cfg(all(test, feature = "bidir-core"))]
+pub(crate) mod tests { // Make module public within crate for reuse in other tests
     use super::*;
-    use mockito::Server; // Add mockito import
-    use crate::types::{AgentCapabilities, AgentSkill}; // Import necessary types
+    use crate::bidirectional_agent::{
+        agent_directory::AgentDirectory,
+        config::DirectoryConfig,
+    };
+    use mockito::Server;
+    use crate::types::{AgentCapabilities, AgentSkill, AgentCard}; // Import AgentCard
+    use tempfile::tempdir;
+    use std::sync::Arc; // Import Arc
 
-    fn create_mock_agent_card(name: &str, url: &str) -> AgentCard {
+    // Make helper public within crate
+    pub(crate) fn create_mock_agent_card(name: &str, url: &str) -> AgentCard {
          AgentCard {
             name: name.to_string(),
             description: Some(format!("Mock agent {}", name)),
@@ -181,10 +243,27 @@ mod tests {
         }
     }
 
+    // Helper to create a test registry linked to a real temp AgentDirectory DB
+    // Make helper public within crate
+    pub(crate) async fn create_test_registry_with_real_dir() -> (AgentRegistry, Arc<AgentDirectory>) {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_registry_dir.db");
+        let dir_config = DirectoryConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            // Use short timeouts/intervals for testing if needed, otherwise defaults are fine
+            ..Default::default()
+        };
+        let directory = Arc::new(AgentDirectory::new(&dir_config).await.expect("Failed to create test AgentDirectory"));
+        let registry = AgentRegistry::new(directory.clone());
+        (registry, directory)
+    }
+
+
     #[tokio::test]
-    async fn test_discover_and_get_agent() {
+    async fn test_discover_adds_to_registry_and_directory() {
+        let (registry, directory) = create_test_registry_with_real_dir().await; // Use helper
         let mut server = Server::new_async().await;
-        let agent_name = "test-agent-1";
+        let agent_name = "test-agent-discover";
         let mock_card = create_mock_agent_card(agent_name, &server.url());
 
         let _m = server.mock("GET", "/.well-known/agent.json")
@@ -200,74 +279,95 @@ mod tests {
         let cached_info = registry.get(agent_name);
         assert!(cached_info.is_some());
         assert_eq!(cached_info.unwrap().card.name, agent_name);
+
+        // Assert directory persistence
+        let dir_info = directory.get_agent_info(agent_name).await.expect("Agent not found in directory");
+        assert_eq!(dir_info["url"], server.url());
+        assert_eq!(dir_info["status"], "active"); // Should be added as active
     }
 
      #[tokio::test]
-    async fn test_discover_failure() {
+    async fn test_discover_http_failure() {
+        let (registry, _directory) = create_test_registry_with_real_dir().await; // Use helper
         let mut server = Server::new_async().await;
+        // Mock server to return error
         let _m = server.mock("GET", "/.well-known/agent.json")
-            .with_status(404)
+            .with_status(500) // Simulate server error
             .create_async().await;
 
-        let registry = AgentRegistry::new();
         let result = registry.discover(&server.url()).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to get agent card"));
+        assert!(result.is_err(), "Discovery should fail on HTTP error");
+        // Check the error message includes context about fetching the card
+        let err_string = result.unwrap_err().to_string();
+        assert!(err_string.contains("Failed to get agent card from"), "Error message mismatch: {}", err_string);
+        assert!(err_string.contains("status code 500"), "Error message should mention status code: {}", err_string);
     }
 
     #[tokio::test]
-    async fn test_refresh_agent_info_updated() {
+    async fn test_refresh_agent_info_updates_cache() {
+        let (registry, _directory) = create_test_registry_with_real_dir().await; // Use helper
         let mut server = Server::new_async().await;
-        let agent_name = "refresh-agent";
-        let initial_url = server.url(); // URL for initial discovery
-        let mock_card_v1 = create_mock_agent_card(agent_name, &initial_url);
-        mock_card_v1.version = "1.0".to_string(); // Ensure version is set
+        let agent_name = "refresh-agent-cache";
+        let initial_url = server.url();
 
-        // Mock for initial discovery
-        let m1 = server.mock("GET", "/.well-known/agent.json")
+        // Initial discovery mock (v1.0)
+        let mut card_v1 = create_mock_agent_card(agent_name, &initial_url);
+        card_v1.version = "1.0".to_string();
+        let m_discover = server.mock("GET", "/.well-known/agent.json")
             .with_status(200)
-            .with_body(serde_json::to_string(&mock_card_v1).unwrap())
+            .with_body(serde_json::to_string(&card_v1).unwrap())
             .create_async().await;
 
-        let registry = AgentRegistry::new();
         registry.discover(&initial_url).await.unwrap();
-        m1.assert_async().await; // Verify initial discovery happened
+        m_discover.assert_async().await; // Ensure discovery mock was hit
 
-        // Prepare updated card for refresh
-        let mut mock_card_v2 = mock_card_v1.clone();
-        mock_card_v2.version = "2.0".to_string(); // Change version for update
-
-        // Mock for refresh discovery (same endpoint, different response)
-         let m2 = server.mock("GET", "/.well-known/agent.json")
+        // Refresh mock (v2.0)
+        let mut card_v2 = create_mock_agent_card(agent_name, &initial_url); // URL is the same
+        card_v2.version = "2.0".to_string();
+        let m_refresh = server.mock("GET", "/.well-known/agent.json")
             .with_status(200)
-            .with_body(serde_json::to_string(&mock_card_v2).unwrap())
-            .create_async().await; // Create a *new* mock for the same path
+            .with_body(serde_json::to_string(&card_v2).unwrap())
+            .create_async().await; // Create *new* mock for the same path
 
-        // Act: Refresh the agent
-        let refreshed = registry.refresh_agent_info(agent_name).await.unwrap();
+        // Act: Refresh the agent info
+        let refresh_result = registry.refresh_agent_info(agent_name).await;
+        assert!(refresh_result.is_ok(), "Refresh failed: {:?}", refresh_result.err());
+        assert!(refresh_result.unwrap(), "Refresh should report changes (version updated)");
+        m_refresh.assert_async().await; // Ensure refresh mock was hit
 
-        // Assert: Check if refresh reported an update and verify new version
-        assert!(refreshed); // Should report true as card changed
-        let updated_info = registry.get(agent_name).unwrap();
-        assert_eq!(updated_info.card.version, "2.0");
-        m2.assert_async().await; // Verify refresh mock was called
+        // Assert: Check cache has the updated version
+        let cached_info = registry.get(agent_name).expect("Agent not found in cache after refresh");
+        assert_eq!(cached_info.card.version, "2.0");
+
+        // Note: This test only verifies the registry's cache update.
+        // The AgentDirectory update happens during the *initial* discover via add_agent.
+        // Refreshing info in the registry doesn't automatically update the directory's stored card JSON.
+        // A separate mechanism or policy would be needed if the directory's card needs frequent updates.
     }
 
-     #[tokio::test]
+    #[tokio::test]
     async fn test_refresh_agent_info_no_change() {
+        let (registry, _directory) = create_test_registry_with_real_dir().await; // Use helper
         let mut server = Server::new_async().await;
         let agent_name = "no-change-agent";
-        let mock_card = create_mock_agent_card(agent_name, &server.url());
+        let card_v1 = create_mock_agent_card(agent_name, &server.url());
 
-        // Mock for both discovery and refresh (same response)
+        // Mock endpoint - expect it to be called twice (discover + refresh)
         let m = server.mock("GET", "/.well-known/agent.json")
             .with_status(200)
-            .with_body(serde_json::to_string(&mock_card).unwrap())
-            .expect(2) // Expect it to be called twice (discovery + refresh)
+            .with_body(serde_json::to_string(&card_v1).unwrap())
+            .expect(2) // IMPORTANT: Expect 2 calls
             .create_async().await;
 
-        let registry = AgentRegistry::new();
+        // Discover initially
         registry.discover(&server.url()).await.unwrap();
 
-        // Act: Refresh
-        let refreshed = registry.refresh_agent_info(agent_name).await.unwrap();
+        // Refresh
+        let refresh_result = registry.refresh_agent_info(agent_name).await;
+        assert!(refresh_result.is_ok(), "Refresh failed: {:?}", refresh_result.err());
+        assert!(!refresh_result.unwrap(), "Refresh should report no changes");
+
+        // Verify mock was called twice
+        m.assert_async().await;
+    }
+}

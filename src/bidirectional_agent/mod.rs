@@ -106,10 +106,25 @@ pub struct BidirectionalAgent {
 
 #[cfg(feature = "bidir-core")]
 impl BidirectionalAgent {
-    /// Creates a new BidirectionalAgent instance.
-    pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
+    /// Creates a new BidirectionalAgent instance. (Async because AgentDirectory::new is async).
+    pub async fn new(config: BidirectionalAgentConfig) -> Result<Self> {
         let config_arc = Arc::new(config);
+
+        // Initialize AgentDirectory first (requires config.directory)
+        #[cfg(feature = "bidir-core")]
+        let agent_directory = Arc::new(AgentDirectory::new(&config_arc.directory).await
+            .context("Failed to initialize Agent Directory")?);
+
+        // Initialize AgentRegistry, passing the directory if the feature is enabled
+        #[cfg(feature = "bidir-core")]
+        let agent_registry = Arc::new(AgentRegistry::new(agent_directory.clone()));
+        // If bidir-core is not enabled, AgentRegistry might need a different constructor or be stubbed.
+        // Assuming for now that if AgentRegistry exists, bidir-core is enabled.
+        // If AgentRegistry is used without bidir-core, this needs adjustment:
+        #[cfg(not(feature = "bidir-core"))]
         let agent_registry = Arc::new(AgentRegistry::new());
+
+
         // Use the concrete InMemoryTaskRepository from the server module
         let task_repository = Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new());
 
@@ -156,9 +171,11 @@ impl BidirectionalAgent {
 
         Ok(Self {
             config: config_arc,
-            agent_registry,
-            client_manager,
-            task_repository,
+            agent_registry, // Store registry
+            client_manager, // Store client manager
+            #[cfg(feature = "bidir-core")]
+            agent_directory, // Store agent directory
+            task_repository, // Store task repository
             // Initialize Slice 2 components if feature is enabled
             #[cfg(feature = "bidir-local-exec")]
             tool_executor,
@@ -202,6 +219,27 @@ impl BidirectionalAgent {
         // Use std::sync::Mutex correctly
         self.background_tasks.lock().expect("Mutex poisoned").push(registry_handle);
         println!("✅ Started agent registry refresh loop.");
+
+        // Start agent directory verification loop if feature is enabled
+        #[cfg(feature = "bidir-core")]
+        {
+            let directory_clone = self.agent_directory.clone();
+            let directory_token = self.cancellation_token.child_token();
+            let directory_handle = tokio::spawn(async move {
+                // Pass the token to the loop function
+                if let Err(e) = directory_clone.run_verification_loop(directory_token).await {
+                    // Use log::error instead of println for errors
+                    log::error!(
+                        target = "agent_directory", // Log target for filtering
+                        error = ?e,
+                        "Directory verification loop exited with error"
+                    );
+                }
+            });
+            self.background_tasks.lock().expect("Mutex poisoned").push(directory_handle);
+            println!("✅ Started agent directory verification loop.");
+        }
+
 
         #[cfg(feature = "bidir-delegate")]
         {
@@ -328,8 +366,11 @@ mod tests {
             // Tools config is only needed if bidir-local-exec is enabled
             #[cfg(feature = "bidir-local-exec")]
             tools: config::ToolConfigs::default(),
+            #[cfg(feature = "bidir-core")]
+            directory: config::DirectoryConfig::default(),
         };
-        let agent_result = BidirectionalAgent::new(config);
+        // BidirectionalAgent::new is async, use block_on for test
+        let agent_result = tokio_test::block_on(BidirectionalAgent::new(config));
         assert!(agent_result.is_ok());
         let agent = agent_result.unwrap();
         // Check core components exist
