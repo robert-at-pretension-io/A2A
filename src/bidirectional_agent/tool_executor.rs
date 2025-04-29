@@ -27,46 +27,58 @@ pub enum ToolError {
     ExecutionFailed(String, String),
     #[error("Tool configuration error for '{0}': {1}")]
     ConfigError(String, String),
+    #[error("Input/Output Error during tool execution: {0}")] // Add IO Error variant if tools interact with FS etc.
+    IoError(String),
 }
 
-// Implement conversion to AgentError
-impl From<ToolError> for AgentError {
-    fn from(error: ToolError) -> Self {
-        AgentError::ToolError(error.to_string())
+// Implement conversion from std::io::Error
+impl From<std::io::Error> for ToolError {
+    fn from(e: std::io::Error) -> Self {
+        ToolError::IoError(e.to_string())
     }
 }
 
 
-/// Trait for tools that can be executed by the agent.
-#[async_trait]
-pub trait Tool: Send + Sync + 'static {
-    /// Returns the unique name of the tool.
-    fn name(&self) -> &str;
-    /// Returns a description of what the tool does.
-    fn description(&self) -> &str;
-    /// Executes the tool with the given parameters.
-    /// Parameters are typically derived from the task message parts.
-    async fn execute(&self, params: Value) -> Result<Value, ToolError>;
-    /// Returns a list of capabilities this tool provides (e.g., "shell_command", "http_request").
-    fn capabilities(&self) -> &[&'static str];
+// Implement conversion to AgentError
+impl From<ToolError> for AgentError {
+    fn from(error: ToolError) -> Self {
+        // Provide more context in the AgentError if possible
+        AgentError::ToolError(format!("Tool execution failed: {}", error))
+    }
 }
 
-/// Manages and executes available tools.
+/// Manages and executes available local tools.
 #[derive(Clone)]
 pub struct ToolExecutor {
+    // Store tools in an Arc<HashMap> for thread-safe sharing and cloning.
+    // Use Box<dyn Tool> for dynamic dispatch.
     tools: Arc<HashMap<String, Box<dyn Tool>>>,
 }
 
 impl ToolExecutor {
-    /// Creates a new ToolExecutor and registers built-in tools.
-    pub fn new() -> Self {
+    /// Creates a new ToolExecutor and registers available tools.
+    /// Requires AgentDirectory if the directory tool is enabled.
+    pub fn new(
+        #[cfg(feature = "bidir-core")] // Only require directory if feature is enabled
+        agent_directory: Arc<AgentDirectory>
+    ) -> Self {
         let mut tools: HashMap<String, Box<dyn Tool>> = HashMap::new();
 
-        // Register built-in tools (implementations will be added later)
-        // Example:
-        // let shell_tool = crate::bidirectional_agent::tools::shell_tool::ShellTool::new();
-        // tools.insert(shell_tool.name().to_string(), Box::new(shell_tool));
-        println!("🔧 ToolExecutor initialized. (Tool registration placeholder)");
+        // Register standard tools
+        let shell_tool = crate::bidirectional_agent::tools::ShellTool::new();
+        tools.insert(shell_tool.name().to_string(), Box::new(shell_tool));
+
+        let http_tool = crate::bidirectional_agent::tools::HttpTool::new();
+        tools.insert(http_tool.name().to_string(), Box::new(http_tool));
+
+        // Register the DirectoryTool conditionally
+        #[cfg(feature = "bidir-core")]
+        {
+            let directory_tool = crate::bidirectional_agent::tools::DirectoryTool::new(agent_directory);
+            tools.insert(directory_tool.name().to_string(), Box::new(directory_tool));
+        }
+
+        log::info!(target: "tool_executor", "Initialized with tools: {:?}", tools.keys());
 
         Self {
             tools: Arc::new(tools),
