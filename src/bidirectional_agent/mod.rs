@@ -16,6 +16,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 #[cfg(feature = "bidir-core")]
 use std::sync::Mutex as StdMutex; // Use std Mutex for handles
+#[cfg(feature = "bidir-core")]
+use url::Url; // Add import for Url
 
 // Public submodules (conditionally compiled based on features)
 #[cfg(feature = "bidir-core")]
