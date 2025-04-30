@@ -273,9 +273,13 @@ impl LlmTaskRouterTrait for TaskRouter {
 mod tests {
     use super::*;
     use crate::bidirectional_agent::config::BidirectionalAgentConfig;
-    use crate::types::{Message, Role, Part, TextPart}; // Import necessary types 
+    // Import necessary types including Value, ToolCall, ToolCallPart
+    use crate::types::{Message, Role, Part, TextPart, ToolCall, ToolCallPart, Value}; 
     use std::collections::HashMap;
     use serde_json::json;
+    // Import the test helper conditionally
+    #[cfg(feature = "bidir-core")]
+    use crate::bidirectional_agent::agent_registry::tests::create_test_registry_with_real_dir;
 
     // Helper to create basic TaskSendParams
     fn create_test_params(id: &str, text: &str, metadata: Option<serde_json::Map<String, serde_json::Value>>) -> TaskSendParams {
