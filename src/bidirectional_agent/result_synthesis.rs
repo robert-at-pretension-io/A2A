@@ -2,7 +2,7 @@
 
 #![cfg(feature = "bidir-delegate")]
 
-use crate::types::{Task, Artifact, Message, Part, TextPart, Role};
+use crate::types::{Task, Artifact, Message, Part, TextPart, Role, TaskState}; // Import TaskState
 use crate::server::repositories::task_repository::TaskRepository;
 use crate::bidirectional_agent::error::AgentError;
 use std::sync::Arc;

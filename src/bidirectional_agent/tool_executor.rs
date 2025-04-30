@@ -8,7 +8,8 @@ use crate::{
         tools::Tool, // Import the Tool trait from the tools module
 
     },
-    types::{Task, TaskState, TaskStatus, Message, Role, Part, TextPart, Artifact}, // Ensure Artifact is imported
+    // Import ToolCall and ToolCallPart
+    types::{Task, TaskState, TaskStatus, Message, Role, Part, TextPart, Artifact, ToolCall, ToolCallPart},
 };
 
 #[cfg(feature = "bidir-core")] // Conditionally import AgentDirectory

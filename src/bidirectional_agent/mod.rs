@@ -67,9 +67,9 @@ pub use agent_directory::AgentDirectory; // Re-export AgentDirectory
 #[cfg(feature = "bidir-local-exec")]
 pub use tool_executor::ToolExecutor;
 #[cfg(feature = "bidir-local-exec")]
-pub use task_router::TaskRouter; // Keep standard router
+pub use task_router::{TaskRouter, LlmTaskRouterTrait}; // Export standard router and the trait from task_router
 #[cfg(feature = "bidir-local-exec")]
-pub use task_router_llm::{LlmTaskRouter, LlmTaskRouterTrait, create_llm_task_router}; // Keep LLM router
+pub use task_router_llm::{LlmTaskRouter, create_llm_task_router}; // Export LLM router implementation and factory
 #[cfg(feature = "bidir-local-exec")]
 pub use llm_routing::{LlmRoutingConfig, RoutingAgent, SynthesisAgent};
 // Add imports for Slice 3 components
