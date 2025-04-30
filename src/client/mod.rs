@@ -23,7 +23,7 @@ pub mod error_handling; // Add specialized error handling module with new functi
 use errors::{ClientError, A2aError};
 
 /// A2A Client for interacting with A2A-compatible servers
-#[derive(Clone)]
+#[derive(Clone, Debug)] // Add Debug derive
 pub struct A2aClient {
     http_client: ReqwestClient,
     base_url: String,

@@ -11,8 +11,9 @@ use crate::bidirectional_agent::{
     agent_registry::AgentRegistry,
     config::BidirectionalAgentConfig,
     error::AgentError, // Use AgentError for internal errors
-    types::TaskOrigin, // Import TaskOrigin
 };
+#[cfg(feature = "bidir-delegate")] // Guard TaskOrigin import
+use crate::bidirectional_agent::types::TaskOrigin;
 #[cfg(feature = "bidir-core")]
 use dashmap::DashMap;
 #[cfg(feature = "bidir-core")]
@@ -192,9 +193,17 @@ impl ClientManager {
 
     /// Periodically polls the status of delegated tasks.
     /// This should be run in a background task managed by the main agent loop.
+    #[cfg(feature = "bidir-delegate")] // Guard this function with the delegate feature
     pub async fn run_delegated_task_poll_loop(&self, interval: chrono::Duration) {
         println!("🕰️ Starting delegated task polling loop (interval: {:?})", interval);
-        let std_interval = Duration::from_secs(interval.num_seconds() as u64); // Convert to std::time::Duration
+        let std_interval = match interval.to_std() {
+            Ok(d) => d,
+            Err(_) => {
+                log::error!(target: "client_manager", "Invalid polling interval duration: {:?}", interval);
+                // Default to a reasonable interval like 30 seconds if conversion fails
+                Duration::from_secs(30)
+            }
+        };
 
         loop {
             sleep(std_interval).await;
@@ -318,7 +327,8 @@ mod tests {
         let config = Arc::new(BidirectionalAgentConfig {
             self_id: "test".to_string(), base_url: "".to_string(), discovery: vec![],
             auth: AuthConfig { client_credentials, ..Default::default() },
-            network: NetworkConfig::default(),
+            #[cfg(feature = "bidir-core")] directory: Default::default(),
+            #[cfg(feature = "bidir-local-exec")] tools: Default::default(),
         });
         let manager = ClientManager::new(registry, config).unwrap();
 
@@ -355,6 +365,8 @@ mod tests {
             self_id: "test".to_string(), base_url: "".to_string(), discovery: vec![],
             auth: AuthConfig { client_credentials, ..Default::default() },
             network: NetworkConfig::default(),
+            #[cfg(feature = "bidir-core")] directory: Default::default(),
+            #[cfg(feature = "bidir-local-exec")] tools: Default::default(),
         });
         let manager = ClientManager::new(registry, config).unwrap();
 
@@ -373,6 +385,8 @@ mod tests {
             discovery: vec![],
             auth: AuthConfig::default(),
             network: NetworkConfig::default(),
+            #[cfg(feature = "bidir-core")] directory: Default::default(),
+            #[cfg(feature = "bidir-local-exec")] tools: Default::default(),
         });
         let manager = ClientManager::new(registry, config).unwrap();
 

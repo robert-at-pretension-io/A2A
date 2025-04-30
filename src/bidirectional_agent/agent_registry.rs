@@ -44,8 +44,8 @@ impl AgentRegistry {
     pub fn add_test_agent(&self, agent_id: &str, url: &str) {
         // Add the agent to the in-memory cache
         let cache_info = crate::bidirectional_agent::agent_registry::CachedAgentInfo {
-            url: url.to_string(),
-            card: None,
+            // url field removed, URL is inside card
+            card: create_mock_agent_card(agent_id, url), // Provide a mock card
             last_checked: chrono::Utc::now(),
         };
         self.agents.insert(agent_id.to_string(), cache_info);
@@ -169,9 +169,15 @@ impl AgentRegistry {
     /// This should be run in a background task.
     pub async fn run_refresh_loop(&self, interval: Duration) {
         println!("🕰️ Starting agent registry refresh loop (interval: {:?})", interval);
-        // Convert chrono::Duration to std::time::Duration
-        let std_interval = interval.to_std()
-            .context("Invalid refresh interval duration")?; // Handle potential conversion error
+        // Convert chrono::Duration to std::time::Duration, handle error explicitly
+        let std_interval = match interval.to_std() {
+             Ok(d) => d,
+             Err(e) => {
+                 log::error!(target: "agent_registry", "Invalid refresh interval duration: {:?}. Error: {}. Using default 5 minutes.", interval, e);
+                 // Use a default interval if conversion fails
+                 std::time::Duration::from_secs(300)
+             }
+         };
 
         loop {
             tokio::time::sleep(std_interval).await;
@@ -281,7 +287,9 @@ pub(crate) mod tests { // Make module public within crate for reuse in other tes
             .with_body(serde_json::to_string(&mock_card).unwrap())
             .create_async().await;
 
-        let registry = AgentRegistry::new();
+        // Need directory for AgentRegistry::new when bidir-core is enabled
+        let (_registry, directory) = create_test_registry_with_real_dir().await;
+        let registry = AgentRegistry::new(directory.clone()); // Pass directory
         let result = registry.discover(&server.url()).await;
         assert!(result.is_ok());
 

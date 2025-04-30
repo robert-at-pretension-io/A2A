@@ -74,8 +74,10 @@ pub use task_router::{TaskRouter, LlmTaskRouterTrait}; // Export standard router
 #[cfg(feature = "bidir-local-exec")]
 pub use task_router_llm::{LlmTaskRouter, create_llm_task_router}; // Export LLM router implementation and factory
 #[cfg(feature = "bidir-local-exec")]
-pub use llm_routing::{LlmRoutingConfig, RoutingAgent, SynthesisAgent};
+pub use llm_routing::{LlmRoutingConfig, RoutingAgent}; // SynthesisAgent is gated by bidir-delegate
 // Add imports for Slice 3 components
+#[cfg(feature = "bidir-delegate")]
+pub use llm_routing::SynthesisAgent; // Import SynthesisAgent only when delegate is enabled
 #[cfg(feature = "bidir-delegate")]
 pub use task_flow::TaskFlow;
 #[cfg(feature = "bidir-delegate")]
@@ -238,8 +240,8 @@ impl BidirectionalAgent {
                 if let Err(e) = directory_clone.run_verification_loop(directory_token).await {
                     // Use log::error instead of println for errors
                     log::error!(
-                        target = "agent_directory", // Log target for filtering
-                        error = ?e,
+                        target: "agent_directory", // Log target for filtering
+                        error = ?e, // Use structured logging field
                         "Directory verification loop exited with error"
                     );
                 }
@@ -288,7 +290,8 @@ impl BidirectionalAgent {
             streaming_service,
             notification_service,
             server_token, // Pass shutdown token
-        ).await.context("Failed to start A2A server")?;
+        ).await
+         .map_err(|e| anyhow::anyhow!("Failed to start A2A server: {}", e))?; // Use map_err and anyhow!
         // Use std::sync::Mutex correctly
         *self.server_handle.lock().expect("Mutex poisoned") = Some(server_handle);
         println!("✅ A2A Server started.");

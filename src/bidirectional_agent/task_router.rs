@@ -6,8 +6,9 @@ use crate::bidirectional_agent::types::{ToolCall, ToolCallPart, ExtendedPart};
 // Import AgentRegistry and ToolExecutor
 use crate::bidirectional_agent::agent_registry::AgentRegistry;
 use crate::bidirectional_agent::tool_executor::ToolExecutor;
-use crate::types::{TaskSendParams, Role, Part, TextPart};
+use crate::types::{TaskSendParams, Role, Part, TextPart, Message}; // Import Message
 use std::sync::Arc;
+use std::collections::HashMap; // Import HashMap
 use serde_json::{json, Value}; // Import Value
 
 /// Represents the decision made by the TaskRouter.
@@ -188,22 +189,53 @@ impl LlmTaskRouterTrait for TaskRouter {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::bidirectional_agent::config::BidirectionalAgentConfig;
-    use crate::types::{Message, Role, Part, TextPart}; 
-    use std::collections::HashMap;
-    use serde_json::json;
-    use serde_json::Value;
-    // Import the test helper conditionally
-    #[cfg(feature = "bidir-core")]
-    use crate::bidirectional_agent::agent_registry::tests::create_test_registry_with_real_dir;
+// --- Test Helpers (moved outside the tests module) ---
 
-    // Helper to create basic TaskSendParams
-    fn create_test_params(id: &str, text: &str, metadata: Option<serde_json::Map<String, serde_json::Value>>) -> TaskSendParams {
-        TaskSendParams {
-            id: id.to_string(),
+// Helper to create basic TaskSendParams
+fn create_test_params(id: &str, text: &str, metadata: Option<serde_json::Map<String, serde_json::Value>>) -> TaskSendParams {
+    TaskSendParams {
+        id: id.to_string(),
+        message: Message {
+            role: Role::User,
+            parts: vec![Part::TextPart(TextPart {
+                type_: "text".to_string(),
+                text: text.to_string(),
+                metadata: None,
+            })],
+            metadata: None,
+        },
+        history_length: None,
+        metadata,
+        push_notification: None,
+        session_id: None,
+    }
+}
+
+// Helper to create a test router
+async fn setup_test_router() -> TaskRouter {
+    // If bidir-core feature is enabled, use the directory version
+    #[cfg(feature = "bidir-core")]
+    {
+        // Use the correct helper from agent_registry tests
+        let (registry, directory) = crate::bidirectional_agent::agent_registry::tests::create_test_registry_with_real_dir().await;
+        let executor = Arc::new(ToolExecutor::new(directory));
+        TaskRouter::new(registry, executor)
+    }
+
+    // If bidir-core is not enabled, use version without directory
+    #[cfg(not(feature = "bidir-core"))]
+    {
+         let registry = Arc::new(AgentRegistry::new()); // Needs Arc::new
+         let executor = Arc::new(ToolExecutor::new()); // Needs Arc::new
+         TaskRouter::new(registry, executor)
+    }
+}
+
+// Helper to create test params that mention the directory
+#[cfg(feature = "bidir-core")]
+fn create_test_directory_params(id: &str, action: &str, filter: &str) -> TaskSendParams {
+    TaskSendParams {
+        id: id.to_string(),
             message: Message {
                 role: Role::User,
                 parts: vec![Part::TextPart(TextPart {
@@ -261,13 +293,59 @@ mod tests {
             push_notification: None,
             session_id: None,
         }
+}
+
+// Helper to create TaskSendParams with a ToolCallPart using ToolCall struct
+#[cfg(feature = "bidir-core")]
+fn create_tool_call_struct_task_params(id: &str, tool_call: ToolCall, metadata: Option<serde_json::Map<String, Value>>) -> TaskSendParams {
+    TaskSendParams {
+        id: id.to_string(),
+        message: Message {
+            role: Role::User,
+            parts: vec![Part::TextPart(TextPart {
+                type_: "text".to_string(),
+                text: format!("Call directory tool with action: {}",
+                        serde_json::to_string(&tool_call).unwrap_or_default()),
+                metadata: None,
+            })],
+            metadata: None,
+        },
+        history_length: None,
+        metadata,
+        push_notification: None,
+        session_id: None,
     }
-    
-    // Helper to create TaskSendParams with a ToolCallPart using ToolCall struct
+}
+
+// Helper function to convert HashMap to serde_json::Map for testing
+fn hashmap_to_json_map(map: HashMap<String, serde_json::Value>) -> serde_json::Map<String, serde_json::Value> {
+    let mut json_map = serde_json::Map::new();
+    for (k, v) in map {
+        json_map.insert(k, v);
+    }
+    json_map
+}
+
+
+// --- Tests Module ---
+#[cfg(test)]
+mod tests {
+    use super::*; // Import items from parent module, including helpers
+    use crate::bidirectional_agent::config::BidirectionalAgentConfig;
+    // No need to re-import types already imported above
+    // use crate::types::{Message, Role, Part, TextPart};
+    // No need to re-import HashMap
+    // use std::collections::HashMap;
+    use serde_json::json;
+    use serde_json::Value;
+    // Import the test helper conditionally
     #[cfg(feature = "bidir-core")]
-    fn create_tool_call_struct_task_params(id: &str, tool_call: ToolCall, metadata: Option<serde_json::Map<String, Value>>) -> TaskSendParams {
-        TaskSendParams {
-            id: id.to_string(),
+    use crate::bidirectional_agent::agent_registry::tests::create_test_registry_with_real_dir;
+
+
+    #[tokio::test]
+    async fn test_routing_default_to_local_echo() {
+        let router = setup_test_router().await;
             message: Message {
                 role: Role::User,
                 parts: vec![Part::TextPart(TextPart {

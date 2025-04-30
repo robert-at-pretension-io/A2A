@@ -164,8 +164,8 @@ impl AgentDirectory {
         .with_context(|| format!("Failed to add/update agent '{}' in directory", agent_id))?;
 
         log::info!(
-            target = "agent_directory",
-            "Added/updated agent '{}' in directory with URL {} (status: active)", 
+            target: "agent_directory",
+            "Added/updated agent '{}' in directory with URL {} (status: active)",
             agent_id, url
         );
         Ok(())
@@ -322,13 +322,13 @@ impl AgentDirectory {
 
                 if new_status_enum == AgentStatus::Inactive && current_status_enum == AgentStatus::Active {
                     log::warn!(
-                        target = "agent_directory",
+                        target: "agent_directory",
                         "Agent '{}' marked as inactive after {} consecutive failures. Status code: {:?}, Next check: {}",
                         agent.agent_id, self.max_failures_before_inactive, failure_code, next_probe_time
                     );
                 } else {
                     log::warn!(
-                        target = "agent_directory",
+                        target: "agent_directory",
                         "Agent '{}' verification failed. Failures: {}, Status code: {:?}, Status: {:?}, Next check: {}",
                         agent.agent_id, new_failure_count, failure_code, new_status_enum, next_probe_time
                     );
@@ -445,19 +445,19 @@ impl AgentDirectory {
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
-                    log::info!(target = "agent_directory", "Agent directory verification loop cancelled.");
+                    log::info!(target: "agent_directory", "Agent directory verification loop cancelled.");
                     break;
                 }
                 _ = interval_timer.tick() => {
-                    log::debug!(target = "agent_directory", "Running scheduled agent verification task...");
+                    log::debug!(target: "agent_directory", "Running scheduled agent verification task...");
                     // Spawn verification in a separate task to avoid blocking the loop timer if verification takes long
                     let self_clone = self.clone();
                     tokio::spawn(async move {
                         if let Err(e) = self_clone.verify_agents().await {
                             log::error!(
-                                target = "agent_directory",
-                                "Agent verification run failed within loop: {:?}",
-                                e
+                                target: "agent_directory",
+                                error = ?e, // Use structured logging field
+                                "Agent verification run failed within loop"
                             );
                         }
                     });
@@ -486,9 +486,10 @@ impl AgentDirectory {
 
         // Log metrics (replace with actual metrics system later)
         log::info!(
-            target = "agent_directory",
-            "Agent directory metrics updated: {} active agents, {} inactive agents",
-            active_count, inactive_count
+            target: "agent_directory",
+            active_agents = active_count,
+            inactive_agents = inactive_count,
+            "Agent directory metrics updated"
         );
 
         // TODO: Expose these via a metrics endpoint (e.g., Prometheus)

@@ -194,7 +194,7 @@ mod tests {
         {
             assert!(config.tools.specific_configs.contains_key("shell_allowed_commands"));
             assert!(config.tools.specific_configs.contains_key("http_max_redirects"));
-            assert_eq!(config.tools.specific_configs["http_max_redirects"], Value::Integer(5));
+            assert_eq!(config.tools.specific_configs["http_max_redirects"], Value::Number(5.into())); // Use Value::Number
         }
 
         // Assert directory config is loaded correctly

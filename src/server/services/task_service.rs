@@ -164,11 +164,11 @@ impl TaskService {
                         #[cfg(not(feature = "bidir-delegate"))]
                         {
                             match decision {
-                                RoutingDecision::Local { tool_names: _ } => { // Ignore tool_names for now
-                                    if let Err(e) = executor.execute_task_locally(&mut task).await {
+                                RoutingDecision::Local { tool_names } => { // Capture tool_names
+                                    if let Err(e) = executor.execute_task_locally(&mut task, &tool_names).await { // Pass tool_names
                                         println!("Local execution failed for task {}: {}", task.id, e);
                                     } else {
-                                        println!("Local execution successful for task {}", task.id);
+                                        println!("Local execution successful for task {} using tools: {:?}", task.id, tool_names);
                                     }
                                 }
                                 RoutingDecision::Remote { agent_id } => {

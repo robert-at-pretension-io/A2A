@@ -85,12 +85,14 @@ impl RoutingAgent {
         // TODO: Add actual LLM-based routing logic
         
         println!("🧠 Making routing decision for '{}' based on capabilities", params.id);
-        
+
         // 1. Check if the task matches any tool capability
-        let tools: Vec<String> = self.tool_executor.get_tool_names().unwrap_or_default();
+        // Access the tools map directly from the executor
+        let tools: Vec<String> = self.tool_executor.tools.keys().cloned().collect();
         if !tools.is_empty() {
             // If we have tools, use the first one
             // This is a simplistic approach; a real implementation would match task to capabilities
+            // TODO: Implement better tool matching logic
             return Ok(RoutingDecision::Local { tool_names: vec![tools[0].clone()] });
         }
         
