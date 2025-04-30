@@ -205,7 +205,15 @@ impl ToolExecutor {
                     state: TaskState::Completed,
                     timestamp: Some(chrono::Utc::now()),
                     // Provide a confirmation message from the agent
-                    message: Some(Message::agent(&format!("Local execution with tool '{}' completed.", tool_name))),
+                    message: Some(Message { // Use struct initialization
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            text: format!("Local execution with tool '{}' completed.", tool_name),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    }),
                 };
                 Ok(())
             }
@@ -216,7 +224,15 @@ impl ToolExecutor {
                     state: TaskState::Failed,
                     timestamp: Some(chrono::Utc::now()),
                      // Provide an error message from the agent
-                    message: Some(Message::agent(&format!("Local execution failed: {}", tool_error))),
+                    message: Some(Message { // Use struct initialization
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            text: format!("Local execution failed: {}", tool_error),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    }),
                 };
                 // Convert ToolError to AgentError before returning
                 Err(tool_error.into())
