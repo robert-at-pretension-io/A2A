@@ -97,8 +97,9 @@ impl AgentRegistry {
             Err(e) => {
                 // Extract status code if available from the ClientError
                 let status_code_info = match &e {
-                    crate::client::errors::ClientError::ReqwestError(re) => {
-                        re.status().map(|s| format!(" (status code {})", s.as_u16()))
+                    // Use the new ReqwestError variant and extract the stored status code
+                    crate::client::errors::ClientError::ReqwestError { msg: _, status_code } => {
+                        status_code.map(|s| format!(" (status code {})", s))
                     }
                     crate::client::errors::ClientError::A2aError(ae) => {
                         // A2aError might wrap HTTP errors indirectly, but let's focus on ReqwestError for now
