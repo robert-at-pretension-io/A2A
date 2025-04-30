@@ -63,6 +63,7 @@ pub use agent_registry::AgentRegistry;
 pub use client_manager::ClientManager;
 #[cfg(feature = "bidir-core")]
 pub use error::AgentError;
+pub use types::{ToolCall, ToolCallPart, ExtendedPart};
 #[cfg(feature = "bidir-core")]
 pub use agent_directory::AgentDirectory; // Re-export AgentDirectory
 // Add imports for Slice 2 components

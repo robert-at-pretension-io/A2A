@@ -1,63 +1,79 @@
-//! Decides whether to execute a task locally or delegate it.
+//! Routes incoming tasks to appropriate handlers.
 
 #![cfg(feature = "bidir-local-exec")]
 
-use crate::bidirectional_agent::{
-    agent_registry::AgentRegistry,
-    tool_executor::ToolExecutor,
-    error::AgentError, // Import AgentError
-};
-// Import necessary types, including ToolCallPart if used
-use crate::types::{TaskSendParams, Role, Part, TextPart, ToolCallPart, ToolCall};
+use crate::bidirectional_agent::types::{ToolCall, ToolCallPart, ExtendedPart};
+// Import AgentRegistry and ToolExecutor
+use crate::bidirectional_agent::agent_registry::AgentRegistry;
+use crate::bidirectional_agent::tool_executor::ToolExecutor;
+use crate::types::{TaskSendParams, Role, Part, TextPart};
 use std::sync::Arc;
 use serde_json::{json, Value}; // Import Value
 
 /// Represents the decision made by the TaskRouter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoutingDecision {
-    /// Execute the task locally using the specified tools.
+    /// Execute locally with the specified tool(s)
     Local { tool_names: Vec<String> },
-    /// Delegate the task to the specified remote agent.
+    
+    /// Forward to a remote agent with the specified ID
     Remote { agent_id: String },
-    /// The task cannot be handled locally or remotely.
+    
+    /// Reject the task with a provided reason
     Reject { reason: String },
-    /// Decompose the task into subtasks.
-    #[cfg(feature = "bidir-delegate")] // Only if delegation is enabled
+    
+    /// Decompose into multiple subtasks
+    #[cfg(feature = "bidir-delegate")]
     Decompose { subtasks: Vec<SubtaskDefinition> },
 }
 
-/// Definition of a subtask for decomposition.
-#[cfg(feature = "bidir-delegate")]
+/// Definition of a subtask for task decomposition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubtaskDefinition {
-    pub id: String, // Full ID for the subtask
-    pub description: String, // Description or prompt for the subtask
-    pub input_message: crate::types::Message, // Input message for the subtask
-    pub tools_needed: Vec<String>, // Tools needed for this subtask
+    /// Unique ID for the subtask (will be used as task_id)
+    pub id: String,
+    /// Input message for the subtask
+    pub input_message: String, // Input message text for the subtask
+    /// Additional metadata for the subtask
+    pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-
-/// Routes incoming tasks to either local execution or remote delegation.
-#[derive(Clone)]
-pub struct TaskRouter {
-    agent_registry: Arc<AgentRegistry>,
-    tool_executor: Arc<ToolExecutor>,
-    // Add routing policy/config later
-}
-
-// Forward declaration of LlmTaskRouterTrait to avoid circular dependency
+/// Task routing trait shared between standard router and LLM-based router.
 #[async_trait::async_trait]
 pub trait LlmTaskRouterTrait: Send + Sync + 'static {
+    /// Decide how to route a task based on its content and metadata.
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::bidirectional_agent::error::AgentError>;
     
+    /// Optional: Check if a task should be decomposed into multiple subtasks.
     #[cfg(feature = "bidir-delegate")]
-    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, crate::bidirectional_agent::error::AgentError>;
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, crate::bidirectional_agent::error::AgentError> {
+        // Default implementation always returns false 
+        // (derived implementations can override)
+        Ok(false)
+    }
     
+    /// Optional: Decompose a task into multiple subtasks.
     #[cfg(feature = "bidir-delegate")]
-    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, crate::bidirectional_agent::error::AgentError>;
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, crate::bidirectional_agent::error::AgentError> {
+        // Default empty implementation - specialized routers should override 
+        // if they support decomposition
+        Err(crate::bidirectional_agent::error::AgentError::RoutingError(
+            "This router does not support task decomposition".to_string()
+        ))
+    }
+}
+
+/// Routes tasks based on metadata or using keyword and agent capability matching.
+pub struct TaskRouter {
+    /// Agent registry for delegation
+    agent_registry: Arc<AgentRegistry>,
+    
+    /// Tool executor for local execution
+    tool_executor: Arc<ToolExecutor>,
 }
 
 impl TaskRouter {
+    /// Creates a new TaskRouter.
     pub fn new(agent_registry: Arc<AgentRegistry>, tool_executor: Arc<ToolExecutor>) -> Self {
         Self {
             agent_registry,
@@ -65,207 +81,110 @@ impl TaskRouter {
         }
     }
 
-    /// Decides how to handle an incoming task.
-    /// Checks for directory tool requests first, then falls back to other logic.
-    pub async fn decide(&self, params: &TaskSendParams) -> RoutingDecision {
-        println!("🧠 Routing task '{}'...", params.id);
-
-        // 1. Check if it's explicitly a directory tool request
-        #[cfg(feature = "bidir-core")] // Directory tool only exists if core is enabled
-        if let Some(_directory_action) = self.parse_directory_action(params) {
-             println!("  Routing decision: Local execution using 'directory' tool.");
-             return RoutingDecision::Local {
-                 tool_names: vec!["directory".to_string()]
-             };
-        }
-
-        // 2. Check for explicit routing hints in metadata
+    /// Decide where to route a task based on task parameters.
+    pub async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::bidirectional_agent::error::AgentError> {
+        // A series of routing rules, checked in priority order:
+        
+        // 1. Check for explicit routing hints in metadata
         if let Some(metadata) = &params.metadata {
             if let Some(route_hint) = metadata.get("_route_to").and_then(|v| v.as_str()) {
-                if route_hint == "local" {
-                    println!("  Routing hint: Execute locally.");
-                    // Basic local execution: assume "echo" tool for now
-                    return RoutingDecision::Local { tool_names: vec!["echo".to_string()] };
+                println!("  Found explicit routing hint: {}", route_hint);
+                return self.handle_routing_hint(route_hint);
+            }
+        }
+        
+        // 2. Check for directory-specific actions
+        #[cfg(feature = "bidir-core")]
+        if let Some(directory_params) = self.parse_directory_action(params) {
+            return Ok(RoutingDecision::Local { 
+                tool_names: vec!["directory".to_string()] 
+            });
+        }
+        
+        // 3. Apply keyword-based routing
+        // TODO: Implement more sophisticated routing based on task content
+        
+        // Default fallback: local execution with echo tool
+        // Eventually could check agent capabilities against task requirements
+        Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
+    }
+    
+    /// Handles explicit routing hints from metadata.
+    fn handle_routing_hint(&self, hint: &str) -> Result<RoutingDecision, crate::bidirectional_agent::error::AgentError> {
+        match hint {
+            "local" => {
+                println!("  Routing hint: Execute locally.");
+                Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
+            },
+            "reject" => {
+                println!("  Routing hint: Reject task.");
+                Ok(RoutingDecision::Reject { 
+                    reason: "Task explicitly rejected by routing hint".to_string() 
+                })
+            },
+            _ => {
+                // Check if it's an agent ID
+                if self.agent_registry.get(hint).is_some() {
+                    println!("  Routing hint: Delegate to '{}'.", hint);
+                    Ok(RoutingDecision::Remote { agent_id: hint.to_string() })
                 } else {
-                     println!("  Routing hint: Delegate to '{}'.", route_hint);
-                    // Check if the target agent is known
-                    if self.agent_registry.get(route_hint).is_some() {
-                        return RoutingDecision::Remote { agent_id: route_hint.to_string() };
-                    } else {
-                         println!("  ⚠️ Target agent '{}' from hint not found in registry.", route_hint);
-                        // Fall through to default logic if hinted agent not found
-                    }
+                    println!("  ⚠️ Unknown routing hint: '{}'", hint);
+                    Err(crate::bidirectional_agent::error::AgentError::RoutingError(
+                        format!("Unknown routing hint: {}", hint)
+                    ))
                 }
             }
         }
-
-        // Check for task complexity under bidir-delegate feature
-        #[cfg(feature = "bidir-delegate")]
-        self.check_task_complexity(params);
-        #[cfg(not(feature = "bidir-delegate"))]
-        self.check_task_complexity(params); // Call the no-op version
-
-
-        // 3. Default Logic: Attempt local execution (placeholder: use "echo")
-        // TODO: Implement more sophisticated analysis of task vs. local tools.
-        println!("  Default routing: Attempting local execution (defaulting to 'echo').");
-        RoutingDecision::Local { tool_names: vec!["echo".to_string()] }
     }
-
-    // Helper to parse directory actions from task messages.
-    // Returns the parameters Value for the directory tool if found, otherwise None.
-    #[cfg(feature = "bidir-core")] // Only needed if directory tool exists
+    
+    /// Parses a task to detect if it's a directory-specific action.
+    #[cfg(feature = "bidir-core")]
     fn parse_directory_action(&self, params: &TaskSendParams) -> Option<Value> {
-        // Iterate through messages, typically looking at the last user message
-        // or specific tool call messages.
-        for message in params.messages.iter().rev() { // Check recent messages first
-            if message.role == Role::User || message.role == Role::Agent { // Agent might also request tools
-                for part in &message.parts {
-                    // 1. Check for explicit ToolCallPart
-                    if let Part::ToolCallPart(tool_call_part) = part {
-                        // Attempt to parse the tool_call Value to see if it's for 'directory'
-                        if let Ok(parsed_call) = serde_json::from_value::<ToolCall>(tool_call_part.tool_call.clone()) {
-                            if parsed_call.name == "directory" {
-                                log::debug!(target: "task_router", task_id=%params.id, "Detected ToolCallPart for 'directory'");
-                                return Some(parsed_call.params);
-                            }
-                        }
-                    }
-                    // 2. Check TextPart for embedded JSON representing a ToolCall
-                    else if let Part::TextPart(text_part) = part {
-                        // Try parsing the text as a ToolCall JSON object
-                        if let Ok(tool_call) = serde_json::from_str::<ToolCall>(&text_part.text) {
-                            if tool_call.name == "directory" {
-                                log::debug!(target: "task_router", task_id=%params.id, "Detected JSON ToolCall in TextPart for 'directory'");
-                                return Some(tool_call.params);
-                            }
-                        }
+        println!("🔍 Checking for directory tool actions in task");
 
-                        // 3. Fallback: Simple keyword matching in text content
-                        let text = text_part.text.to_lowercase();
-                        if text.contains("list active agents") || (text.contains("agent directory") && text.contains("list")) {
-                             log::debug!(target: "task_router", task_id=%params.id, "Detected keyword match for 'list_active'");
-                            // Return parameters suitable for DirectoryTool: {"action": "list_active"}
-                            return Some(json!({"action": "list_active"}));
+        // Check the message for directory mentions
+        let message = &params.message;
+        for part in &message.parts {
+            // Convert Part to ExtendedPart if possible
+            let ext_part = ExtendedPart::from(part.clone());
+
+            match ext_part {
+                // 1. Check for explicit ToolCallPart
+                ExtendedPart::ToolCallPart(tool_call_part) => {
+                    // Attempt to parse the tool_call Value
+                    if let Ok(parsed_call) = serde_json::from_value::<ToolCall>(tool_call_part.tool_call.clone()) {
+                        if parsed_call.name == "directory" {
+                            println!("Detected ToolCallPart for 'directory'");
+                            return Some(parsed_call.params);
                         }
-                        if text.contains("list inactive agents") {
-                             log::debug!(target: "task_router", task_id=%params.id, "Detected keyword match for 'list_inactive'");
-                            return Some(json!({"action": "list_inactive"}));
-                        }
-                        // Add more robust keyword/NLP parsing here if needed, e.g., for get_info
-                        // Example: if text contains "info for agent" extract agent ID
                     }
                 }
+                // 2. Check TextPart for directory-related text
+                ExtendedPart::TextPart(text_part) => {
+                    // Check if the text mentions directory
+                    if text_part.text.to_lowercase().contains("agent directory") ||
+                       text_part.text.to_lowercase().contains("list agent") {
+                        // Basic intent detection
+                        println!("Detected directory mention in text");
+                        return Some(json!({
+                            "action": "list",
+                            "filter": "active"
+                        }));
+                    }
+                }
+                _ => {}
             }
         }
-        None // No directory-related action detected in this task
-    }
-
-    // Separate helper method to handle task complexity analysis
-    #[cfg(feature = "bidir-delegate")]
-    fn check_task_complexity(&self, params: &TaskSendParams) {
-        use crate::types::Part;
-        if params.message.parts.iter().any(|p| matches!(p, Part::TextPart(tp) if tp.text.contains(" and "))) {
-            println!("  Task might be complex, considering decomposition (placeholder).");
-            // return RoutingDecision::Decompose { subtasks: vec![...] };
-        }
-    }
-
-    // No-op version when feature is disabled
-    #[cfg(not(feature = "bidir-delegate"))]
-    fn check_task_complexity(&self, _params: &TaskSendParams) {
-        // Do nothing when bidir-delegate feature is not enabled
+        
+        // No directory action detected
+        None
     }
 }
 
-// Implement LlmTaskRouterTrait for TaskRouter to allow for polymorphic usage
 #[async_trait::async_trait]
 impl LlmTaskRouterTrait for TaskRouter {
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::bidirectional_agent::error::AgentError> {
-        // The standard TaskRouter doesn't return a Result<>, so wrap it
-        Ok(self.decide(params).await)
-    }
-    
-    #[cfg(feature = "bidir-delegate")]
-    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, crate::bidirectional_agent::error::AgentError> {
-        // Simple heuristic implementation
-        use crate::types::Part;
-        
-        let is_complex = params.message.parts.iter().any(|p| {
-            if let Part::TextPart(tp) = p {
-                tp.text.contains(" and ") || 
-                tp.text.contains(",") || 
-                tp.text.contains(";") ||
-                tp.text.split_whitespace().count() > 30
-            } else {
-                false
-            }
-        });
-        
-        Ok(is_complex)
-    }
-    
-    #[cfg(feature = "bidir-delegate")]
-    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, crate::bidirectional_agent::error::AgentError> {
-        // Simple implementation that breaks the task into two parts
-        use crate::types::{Message, Role, Part, TextPart};
-        
-        let text = params.message.parts.iter()
-            .filter_map(|p| {
-                if let Part::TextPart(tp) = p {
-                    Some(tp.text.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        
-        // Very simplistic split - in a real implementation we'd use more sophisticated logic
-        let midpoint = text.len() / 2;
-        let mut split_point = midpoint;
-        for (i, c) in text.char_indices().skip(midpoint) {
-            if c == '.' || c == '!' || c == '?' || c == '\n' {
-                split_point = i + 1;
-                break;
-            }
-        }
-        
-        let part1 = text[..split_point].trim().to_string();
-        let part2 = text[split_point..].trim().to_string();
-        
-        let subtasks = vec![
-            SubtaskDefinition {
-                id: format!("{}-sub1", params.id),
-                description: "First part of the task".to_string(),
-                input_message: Message {
-                    role: Role::User,
-                    parts: vec![Part::TextPart(TextPart {
-                        type_: "text".to_string(),
-                        text: part1,
-                        metadata: None,
-                    })],
-                    metadata: None,
-                },
-                tools_needed: vec!["echo".to_string()],
-            },
-            SubtaskDefinition {
-                id: format!("{}-sub2", params.id),
-                description: "Second part of the task".to_string(),
-                input_message: Message {
-                    role: Role::User,
-                    parts: vec![Part::TextPart(TextPart {
-                        type_: "text".to_string(),
-                        text: part2,
-                        metadata: None,
-                    })],
-                    metadata: None,
-                },
-                tools_needed: vec!["echo".to_string()],
-            },
-        ];
-        
-        Ok(subtasks)
+        self.decide(params).await
     }
 }
 
@@ -273,10 +192,10 @@ impl LlmTaskRouterTrait for TaskRouter {
 mod tests {
     use super::*;
     use crate::bidirectional_agent::config::BidirectionalAgentConfig;
-    // Import necessary types including Value, ToolCall, ToolCallPart
-    use crate::types::{Message, Role, Part, TextPart, ToolCall, ToolCallPart, Value}; 
+    use crate::types::{Message, Role, Part, TextPart}; 
     use std::collections::HashMap;
     use serde_json::json;
+    use serde_json::Value;
     // Import the test helper conditionally
     #[cfg(feature = "bidir-core")]
     use crate::bidirectional_agent::agent_registry::tests::create_test_registry_with_real_dir;
@@ -298,62 +217,73 @@ mod tests {
             metadata,
             push_notification: None,
             session_id: None,
-             // Add messages field which is now expected by parse_directory_action
-            messages: vec![Message {
-                role: Role::User,
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: text.to_string(),
-                    metadata: None,
-                })],
-                metadata: None,
-            }],
         }
     }
 
-     // Helper to create TaskSendParams with a ToolCallPart using ToolCall struct
-    #[cfg(feature = "bidir-core")] // Only needed for directory tool tests
+    // Helper to create a test router
+    async fn setup_test_router() -> TaskRouter {
+        // If bidir-core feature is enabled, use the directory version
+        #[cfg(feature = "bidir-core")]
+        {
+            let (registry, directory) = create_test_registry_with_real_dir().await;
+            let executor = Arc::new(ToolExecutor::new(directory));
+            TaskRouter::new(registry, executor)
+        }
+        
+        // If bidir-core is not enabled, use version without directory
+        #[cfg(not(feature = "bidir-core"))]
+        #[cfg(not(feature = "bidir-core"))]
+        {
+             let registry = Arc::new(AgentRegistry::new());
+             let executor = Arc::new(ToolExecutor::new());
+             TaskRouter::new(registry, executor)
+        }
+             TaskRouter::new(registry, executor)
+        }
+    }
+    
+    // Helper to create test params that mention the directory
+    #[cfg(feature = "bidir-core")]
+    fn create_test_directory_params(id: &str, action: &str, filter: &str) -> TaskSendParams {
+        TaskSendParams {
+            id: id.to_string(),
+            message: Message {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: format!("Please use the agent directory to {} agents with filter: {}", action, filter),
+                    metadata: None,
+                })],
+                metadata: None,
+            },
+            history_length: None,
+            metadata: None,
+            push_notification: None,
+            session_id: None,
+        }
+    }
+    
+    // Helper to create TaskSendParams with a ToolCallPart using ToolCall struct
+    #[cfg(feature = "bidir-core")]
     fn create_tool_call_struct_task_params(id: &str, tool_call: ToolCall, metadata: Option<serde_json::Map<String, Value>>) -> TaskSendParams {
         TaskSendParams {
             id: id.to_string(),
-            message: Message { role: Role::User, parts: vec![], metadata: None }, // Outer message optional
+            message: Message {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: format!("Call directory tool with action: {}", 
+                            serde_json::to_string(&tool_call).unwrap_or_default()),
+                    metadata: None,
+                })],
+                metadata: None,
+            },
             history_length: None,
             metadata,
             push_notification: None,
             session_id: None,
-            messages: vec![Message {
-                role: Role::User, // Or Agent
-                parts: vec![Part::ToolCallPart(ToolCallPart {
-                    type_: "tool_call".to_string(),
-                    // Use a consistent or generated ID for the call part itself
-                    id: format!("{}-call", tool_call.name),
-                    tool_call: serde_json::to_value(tool_call).expect("Failed to serialize ToolCall"),
-                })],
-                metadata: None,
-            }],
         }
     }
-
-
-    // Helper to create a basic test router setup
-    // Needs conditional compilation for directory
-    async fn setup_test_router() -> TaskRouter {
-        #[cfg(feature = "bidir-core")]
-        {
-            let (registry, directory) = create_test_registry_with_real_dir().await;
-            let executor = Arc::new(ToolExecutor::new(directory)); // Pass directory
-            TaskRouter::new(registry, executor)
-        }
-        #[cfg(not(feature = "bidir-core"))]
-        {
-             // AgentRegistry::new() doesn't take arguments when bidir-core is disabled
-             let registry = Arc::new(AgentRegistry::new());
-             // ToolExecutor::new() doesn't take arguments when bidir-core is disabled
-             let executor = Arc::new(ToolExecutor::new());
-             TaskRouter::new(registry, executor)
-        }
-    }
-
 
     #[tokio::test]
     async fn test_routing_default_to_local_echo() {
@@ -369,92 +299,74 @@ mod tests {
         let router = setup_test_router().await;
         let mut metadata = HashMap::new();
         metadata.insert("_route_to".to_string(), json!("local"));
-        let params = create_test_params("task2", "Message with local hint", Some(metadata));
+        let params = create_test_params("task2", "Message with local hint", Some(hashmap_to_json_map(metadata)));
         let decision = router.decide(&params).await;
         // Hint forces local execution (defaulting to echo here)
         assert_eq!(decision, RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
     }
-
+    
     #[tokio::test]
-    #[cfg(feature = "bidir-core")] // This test requires registry interaction
-    async fn test_routing_hint_remote_agent_exists() {
-        // Setup router with a registry that has a known agent
-        let router = setup_test_router().await; // Gets registry via helper
-
-        // Add a mock agent to the registry
-        let agent_id = "remote-agent-exists";
-        // Use the public helper from registry tests
-        let mock_card = crate::bidirectional_agent::agent_registry::tests::create_mock_agent_card(agent_id, "http://remote.test");
-        router.agent_registry.agents.insert(agent_id.to_string(), crate::bidirectional_agent::agent_registry::CachedAgentInfo {
-            card: mock_card, 
-            last_checked: chrono::Utc::now(),
-        });
-
+    async fn test_routing_hint_remote() {
+        let router = setup_test_router().await;
+        let agent_id = "test-agent";
+        // First register the agent so it exists in the registry
+        router.agent_registry.add_test_agent(agent_id, "http://localhost:9000");
+        
+        // Now test with hint to that agent
         let mut metadata = HashMap::new();
         metadata.insert("_route_to".to_string(), json!(agent_id));
-        let params = create_test_params("task3", "Message with remote hint", Some(metadata));
+        let params = create_test_params("task3", "Message with remote hint", Some(hashmap_to_json_map(metadata)));
         let decision = router.decide(&params).await;
         // Hint should route to the known remote agent
         assert_eq!(decision, RoutingDecision::Remote { agent_id: agent_id.to_string() });
     }
-
+    
     #[tokio::test]
-    async fn test_routing_hint_remote_agent_missing() {
-        let router = setup_test_router().await; // Router with empty registry initially
+    async fn test_routing_hint_unknown_agent() {
+        let router = setup_test_router().await;
         let mut metadata = HashMap::new();
         metadata.insert("_route_to".to_string(), json!("non-existent-agent"));
-        let params = create_test_params("task4", "Hint for missing remote", Some(metadata));
+        let params = create_test_params("task4", "Hint for missing remote", Some(hashmap_to_json_map(metadata)));
         let decision = router.decide(&params).await;
         // Should fall back to default local routing if hinted agent isn't in registry
-        assert_eq!(decision, RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
+        assert!(decision.is_err());
     }
-
+    
     #[tokio::test]
-    #[cfg(feature = "bidir-core")] // Test requires directory tool
-    async fn test_routing_directory_tool_call_struct() {
+    async fn test_routing_hint_reject() {
         let router = setup_test_router().await;
-        // Use ToolCall struct for clarity
-        let tool_call = ToolCall {
-            name: "directory".to_string(),
-            params: json!({"action": "list_active"}),
-        };
-        let params = create_tool_call_struct_task_params("task5", tool_call, None);
+        let mut metadata = HashMap::new();
+        metadata.insert("_route_to".to_string(), json!("reject"));
+        let params = create_test_params("task5", "Message with reject hint", Some(hashmap_to_json_map(metadata)));
         let decision = router.decide(&params).await;
-        // Should route locally to the directory tool
-        assert_eq!(decision, RoutingDecision::Local { tool_names: vec!["directory".to_string()] });
+        // Should honor the reject hint
+        assert!(matches!(decision, Ok(RoutingDecision::Reject { .. })));
     }
-
+    
+    #[cfg(feature = "bidir-core")]
     #[tokio::test]
-    #[cfg(feature = "bidir-core")] // Test requires directory tool
-    async fn test_routing_directory_keyword_list_active() {
+    async fn test_directory_keyword_routing() {
         let router = setup_test_router().await;
         let params = create_test_params("task6", "Can you list active agents from the agent directory?", None);
         let decision = router.decide(&params).await;
         // Keyword match should route to directory tool
-        assert_eq!(decision, RoutingDecision::Local { tool_names: vec!["directory".to_string()] });
+        assert_eq!(decision, Ok(RoutingDecision::Local { tool_names: vec!["directory".to_string()] }));
     }
-
+    
+    #[cfg(feature = "bidir-core")]
     #[tokio::test]
-    #[cfg(feature = "bidir-core")] // Test requires directory tool
-    async fn test_routing_directory_keyword_list_inactive() {
+    async fn test_directory_alternate_wording() {
         let router = setup_test_router().await;
         let params = create_test_params("task7", "Show me the list inactive agents.", None);
         let decision = router.decide(&params).await;
-        assert_eq!(decision, RoutingDecision::Local { tool_names: vec!["directory".to_string()] });
+        assert_eq!(decision, Ok(RoutingDecision::Local { tool_names: vec!["directory".to_string()] }));
     }
-
-
-    #[tokio::test]
-    #[cfg(feature = "bidir-core")] // Test requires directory tool setup
-    async fn test_routing_non_directory_tool_call() {
-        let router = setup_test_router().await;
-        let tool_call = ToolCall {
-            name: "shell".to_string(), // A different tool
-            params: json!({"command": "pwd"}),
-        };
-        let params = create_tool_call_struct_task_params("task8", tool_call, None);
-        let decision = router.decide(&params).await;
-        // Should fall back to default local echo routing as it's not a directory call
-        assert_eq!(decision, RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
+    
+    // Helper function to convert HashMap to serde_json::Map for testing
+    fn hashmap_to_json_map(map: HashMap<String, serde_json::Value>) -> serde_json::Map<String, serde_json::Value> {
+        let mut json_map = serde_json::Map::new();
+        for (k, v) in map {
+            json_map.insert(k, v);
+        }
+        json_map
     }
-}

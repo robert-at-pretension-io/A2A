@@ -39,6 +39,18 @@ pub struct AgentRegistry {
 // Conditional compilation for AgentRegistry implementation based on features
 #[cfg(feature = "bidir-core")]
 impl AgentRegistry {
+
+    #[cfg(test)]
+    pub fn add_test_agent(&self, agent_id: &str, url: &str) {
+        // Add the agent to the in-memory cache
+        let cache_info = crate::bidirectional_agent::agent_registry::CachedAgentInfo {
+            url: url.to_string(),
+            card: None,
+            last_checked: chrono::Utc::now(),
+        };
+        self.agents.insert(agent_id.to_string(), cache_info);
+    }
+
     /// Creates a new agent registry. Requires AgentDirectory if 'bidir-core' is enabled.
     pub fn new(#[cfg(feature = "bidir-core")] agent_directory: Arc<crate::bidirectional_agent::agent_directory::AgentDirectory>) -> Self {
         // TODO: Consider pre-loading cache from directory here or lazily on first access.
@@ -88,7 +100,7 @@ impl AgentRegistry {
         println!("  ℹ️ Discovered agent '{}' at {}", agent_id, url);
 
         let cache_info = CachedAgentInfo {
-            card,
+            card: card.clone(),
             last_checked: Utc::now(),
         };
 
@@ -145,7 +157,7 @@ impl AgentRegistry {
         } else {
             println!("  ✨ Agent card for '{}' updated.", agent_id);
             let new_cache_info = CachedAgentInfo {
-                card: new_card,
+                card: new_card.clone(),
                 last_checked: Utc::now(),
             };
             self.agents.insert(agent_id.to_string(), new_cache_info);
@@ -174,25 +186,25 @@ impl AgentRegistry {
 
             match agents_to_refresh_result {
                 Ok(agents_to_refresh) => {
-                    log::debug!(target: "agent_registry", count = agents_to_refresh.len(), "Refreshing agent details");
+                    log::debug!(target: "agent_registry", "Refreshing {} agent details", agents_to_refresh.len());
                     for (agent_id, _url) in agents_to_refresh {
                         // Use spawn to refresh concurrently? Maybe not, could overload network/rate limits.
                         // Refresh sequentially for now.
                         match self.refresh_agent_info(&agent_id).await {
                             Ok(updated) => {
                                 if updated {
-                                    log::info!(target: "agent_registry", agent_id = %agent_id, "Refreshed agent card details");
+                                    log::info!(target: "agent_registry", "Refreshed agent card details for {}", agent_id);
                                 } else {
-                                    log::debug!(target: "agent_registry", agent_id = %agent_id, "Agent card checked, no changes");
+                                    log::debug!(target: "agent_registry", "Agent card checked for {}, no changes", agent_id);
                         }
                     },
                     }
-                },
+                }},
                 Err(e) => {
                     #[cfg(feature = "bidir-core")]
-                    log::error!(target: "agent_registry", error = ?e, "Failed to get active agents from directory for refresh loop");
+                    log::error!(target: "agent_registry", "Failed to get active agents from directory for refresh loop: {:?}", e);
                     #[cfg(not(feature = "bidir-core"))]
-                     log::error!(target: "agent_registry", error = ?e, "Failed to get agents from internal cache for refresh loop");
+                     log::error!(target: "agent_registry", "Failed to get agents from internal cache for refresh loop: {:?}", e);
                 }
             }
             log::info!(target: "agent_registry", "Periodic agent info refresh cycle complete.");
@@ -203,9 +215,6 @@ impl AgentRegistry {
     }
 }
 
-#[cfg(all(test, feature = "bidir-core"))]
-mod tests {
-// Tests need bidir-core enabled to run AgentDirectory dependent tests
 #[cfg(all(test, feature = "bidir-core"))]
 pub(crate) mod tests { // Make module public within crate for reuse in other tests
     use super::*;

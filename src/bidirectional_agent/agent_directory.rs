@@ -165,9 +165,8 @@ impl AgentDirectory {
 
         log::info!(
             target = "agent_directory",
-            agent_id = %agent_id,
-            url = %url,
-            "Added/updated agent in directory (status: active)"
+            "Added/updated agent '{}' in directory with URL {} (status: active)", 
+            agent_id, url
         );
         Ok(())
     }
@@ -245,7 +244,7 @@ impl AgentDirectory {
             return Ok(());
         }
 
-        log::info!(target: "agent_directory", count = agents_to_verify.len(), "Verifying agents due for check...");
+        log::info!(target: "agent_directory", "Verifying {} agents due for check...", agents_to_verify.len());
 
         for agent in agents_to_verify {
             let is_alive = self.is_agent_alive(&agent.url).await;
@@ -275,11 +274,11 @@ impl AgentDirectory {
                 if current_status_enum == AgentStatus::Inactive {
                     log::info!(
                         target = "agent_directory",
-                        agent_id = %agent.agent_id,
-                        "Agent reactivated after being inactive"
+                        "Agent '{}' reactivated after being inactive",
+                        agent.agent_id
                     );
                 } else {
-                     log::debug!(target: "agent_directory", agent_id = %agent.agent_id, "Agent verified successfully (still active)");
+                     log::debug!(target: "agent_directory", "Agent '{}' verified successfully (still active)", agent.agent_id);
                 }
             } else {
                 // Agent failed verification: Increment failures, update status if threshold reached, schedule next check with backoff
@@ -324,20 +323,14 @@ impl AgentDirectory {
                 if new_status_enum == AgentStatus::Inactive && current_status_enum == AgentStatus::Active {
                     log::warn!(
                         target = "agent_directory",
-                        agent_id = %agent.agent_id,
-                        failures = new_failure_count,
-                        status_code = failure_code,
-                        next_check = %next_probe_time,
-                        "Agent marked as inactive after {} consecutive failures", self.max_failures_before_inactive
+                        "Agent '{}' marked as inactive after {} consecutive failures. Status code: {:?}, Next check: {}",
+                        agent.agent_id, self.max_failures_before_inactive, failure_code, next_probe_time
                     );
                 } else {
                     log::warn!(
                         target = "agent_directory",
-                        agent_id = %agent.agent_id,
-                        failures = new_failure_count,
-                        status_code = failure_code,
-                        next_check = %next_probe_time,
-                        "Agent verification failed (status: {:?})", new_status_enum
+                        "Agent '{}' verification failed. Failures: {}, Status code: {:?}, Status: {:?}, Next check: {}",
+                        agent.agent_id, new_failure_count, failure_code, new_status_enum, next_probe_time
                     );
                 }
             }
@@ -368,17 +361,17 @@ impl AgentDirectory {
 
                 // Fallback to GET only for specific non-success codes
                 if status == StatusCode::METHOD_NOT_ALLOWED || status == StatusCode::NOT_IMPLEMENTED {
-                    log::debug!(target: "agent_directory", url=%url, status=%status, "HEAD failed, trying GET fallback");
+                    log::debug!(target: "agent_directory", "HEAD failed for URL {}, status code {}, trying GET fallback", url, status);
                     return self.try_get_request(url).await;
                 }
 
                 // Other HEAD errors (4xx, 5xx) indicate failure
-                log::debug!(target: "agent_directory", url=%url, status=%status, "HEAD failed, agent considered inactive");
+                log::debug!(target: "agent_directory", "HEAD failed for URL {}, status code {}, agent considered inactive", url, status);
                 false
             },
             Err(e) => {
                 // Network or other error during HEAD request
-                log::debug!(target: "agent_directory", url=%url, error=%e, "HEAD request error, trying GET fallback");
+                log::debug!(target: "agent_directory", "HEAD request error for URL {}: {}, trying GET fallback", url, e);
                 // Store a generic error code (e.g., -1) if no status code available
                  *self.last_failure_code.lock().unwrap() = Some(-1);
                 self.try_get_request(url).await
@@ -399,7 +392,7 @@ impl AgentDirectory {
             url.to_string() // Use original URL if no health path
         };
 
-        log::debug!(target: "agent_directory", url=%health_url, "Attempting GET request for liveness check");
+        log::debug!(target: "agent_directory", "Attempting GET request to {} for liveness check", health_url);
 
         // 2. Try GET request with Range header
         match self.client.get(&health_url)
@@ -420,15 +413,15 @@ impl AgentDirectory {
                 drop(code_guard); // Release mutex lock
 
                 if is_success {
-                     log::debug!(target: "agent_directory", url=%health_url, status=%status, "GET fallback successful");
+                     log::debug!(target: "agent_directory", "GET fallback to {} successful, status: {}", health_url, status);
                 } else {
-                     log::debug!(target: "agent_directory", url=%health_url, status=%status, "GET fallback failed");
+                     log::debug!(target: "agent_directory", "GET fallback to {} failed, status: {}", health_url, status);
                 }
                 is_success
             },
             Err(e) => {
                 // Network or other error during GET request
-                log::debug!(target: "agent_directory", url=%health_url, error=%e, "GET request failed");
+                log::debug!(target: "agent_directory", "GET request to {} failed: {}", health_url, e);
                  // Update failure code only if HEAD didn't already set one
                 let mut code_guard = self.last_failure_code.lock().unwrap();
                 if code_guard.is_none() {
@@ -442,7 +435,7 @@ impl AgentDirectory {
 
     /// Runs the periodic agent verification loop until cancellation.
     pub async fn run_verification_loop(self: Arc<Self>, cancel_token: CancellationToken) -> Result<()> {
-        log::info!(target: "agent_directory", interval = ?self.verification_interval, "Starting agent verification loop...");
+        log::info!(target: "agent_directory", "Starting agent verification loop with interval {:?}...", self.verification_interval);
         // Use interval_at to start the first tick immediately
         let mut interval_timer = tokio::time::interval_at(
             tokio::time::Instant::now(), // Start immediately
@@ -463,8 +456,8 @@ impl AgentDirectory {
                         if let Err(e) = self_clone.verify_agents().await {
                             log::error!(
                                 target = "agent_directory",
-                                error = ?e,
-                                "Agent verification run failed within loop"
+                                "Agent verification run failed within loop: {:?}",
+                                e
                             );
                         }
                     });
@@ -494,9 +487,8 @@ impl AgentDirectory {
         // Log metrics (replace with actual metrics system later)
         log::info!(
             target = "agent_directory",
-            active_agents = active_count,
-            inactive_agents = inactive_count,
-            "Agent directory metrics updated"
+            "Agent directory metrics updated: {} active agents, {} inactive agents",
+            active_count, inactive_count
         );
 
         // TODO: Expose these via a metrics endpoint (e.g., Prometheus)
