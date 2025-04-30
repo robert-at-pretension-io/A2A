@@ -223,7 +223,8 @@ mod tests {
 
         let load_result = load_config(file_path.to_str().unwrap());
         assert!(load_result.is_err());
-        assert!(load_result.unwrap_err().to_string().contains("'self_id' cannot be empty"));
+        // Check for the error message from the TOML deserializer when a field is missing
+        assert!(load_result.unwrap_err().to_string().contains("missing field `self_id`"));
     }
 }
 

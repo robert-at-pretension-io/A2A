@@ -474,7 +474,8 @@ mod tests {
             Some(Part::TextPart(text_part)) => &text_part.text,
             _ => panic!("Expected TextPart in message"),
         };
-        assert!(agent_msg.contains("Tool not found"));
+        // The error message includes quotes around the tool name
+        assert!(agent_msg.contains("Tool \\\"unknown\\\" not found"), "Error message mismatch: {}", agent_msg);
         assert!(task.artifacts.is_none());
     }
 

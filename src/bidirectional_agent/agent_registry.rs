@@ -88,14 +88,36 @@ impl AgentRegistry {
     pub async fn discover(&self, url: &str) -> Result<()> {
         println!("  🔍 Attempting discovery for: {}", url);
         // Use a temporary A2aClient just for fetching the card
-        // We don't need authentication for the .well-known endpoint typically
         let temp_client = A2aClient::new(url);
 
-        let card = temp_client.get_agent_card().await
-            .with_context(|| format!("Failed to get agent card from {}", url))?;
+        let card_result = temp_client.get_agent_card().await;
 
-        // Use agent name as ID if possible, otherwise fall back to URL
-        let agent_id = card.name.clone(); // Use name as the primary identifier
+        let card = match card_result {
+            Ok(card) => card,
+            Err(e) => {
+                // Extract status code if available from the ClientError
+                let status_code_info = match &e {
+                    crate::client::errors::ClientError::ReqwestError(re) => {
+                        re.status().map(|s| format!(" (status code {})", s.as_u16()))
+                    }
+                    crate::client::errors::ClientError::A2aError(ae) => {
+                        // A2aError might wrap HTTP errors indirectly, but let's focus on ReqwestError for now
+                        // You could potentially add more logic here if A2aError needs specific handling
+                        None
+                    }
+                    _ => None,
+                };
+                // Include status code in the context message if found
+                return Err(e).context(format!(
+                    "Failed to get agent card from {}{}",
+                    url,
+                    status_code_info.unwrap_or_default() // Append status code info or empty string
+                ));
+            }
+        };
+
+        // Use agent name as ID if possible
+        let agent_id = card.name.clone();
 
         println!("  ℹ️ Discovered agent '{}' at {}", agent_id, url);
 
@@ -261,25 +283,28 @@ pub(crate) mod tests { // Make module public within crate for reuse in other tes
         }
     }
 
-    // Helper to create a test registry linked to a real temp AgentDirectory DB
+    // Helper to create a test registry linked to a real temp AgentDirectory DB.
+    // Returns the TempDir guard to keep the directory alive for the test duration.
     // Make helper public within crate
-    pub(crate) async fn create_test_registry_with_real_dir() -> (AgentRegistry, Arc<AgentDirectory>) {
-        let temp_dir = tempdir().unwrap();
+    pub(crate) async fn create_test_registry_with_real_dir() -> (AgentRegistry, Arc<AgentDirectory>, tempfile::TempDir) {
+        let temp_dir = tempdir().expect("Failed to create temp directory for test DB");
         let db_path = temp_dir.path().join("test_registry_dir.db");
         let dir_config = DirectoryConfig {
-            db_path: db_path.to_string_lossy().to_string(),
+            db_path: db_path.to_string_lossy().to_string(), // Use path from temp_dir
             // Use short timeouts/intervals for testing if needed, otherwise defaults are fine
             ..Default::default()
         };
         let directory = Arc::new(AgentDirectory::new(&dir_config).await.expect("Failed to create test AgentDirectory"));
         let registry = AgentRegistry::new(directory.clone());
-        (registry, directory)
+        // Return the temp_dir guard along with registry and directory
+        (registry, directory, temp_dir)
     }
 
 
     #[tokio::test]
     async fn test_discover_adds_to_registry_and_directory() {
-        let (registry, directory) = create_test_registry_with_real_dir().await; // Use helper
+        // Keep the temp_dir guard alive for the duration of the test
+        let (registry, directory, _temp_dir_guard) = create_test_registry_with_real_dir().await;
         let mut server = Server::new_async().await;
         let agent_name = "test-agent-discover";
         let mock_card = create_mock_agent_card(agent_name, &server.url());
@@ -288,27 +313,29 @@ pub(crate) mod tests { // Make module public within crate for reuse in other tes
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(serde_json::to_string(&mock_card).unwrap())
+            .with_body(serde_json::to_string(&mock_card).unwrap())
             .create_async().await;
 
-        // Need directory for AgentRegistry::new when bidir-core is enabled
-        let (_registry, directory) = create_test_registry_with_real_dir().await;
-        let registry = AgentRegistry::new(directory.clone()); // Pass directory
+        // Discover the agent using the registry created by the helper
         let result = registry.discover(&server.url()).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Discovery failed: {:?}", result.err());
 
+        // Assert registry cache
         let cached_info = registry.get(agent_name);
-        assert!(cached_info.is_some());
+        assert!(cached_info.is_some(), "Agent not found in registry cache");
         assert_eq!(cached_info.unwrap().card.name, agent_name);
 
-        // Assert directory persistence
-        let dir_info = directory.get_agent_info(agent_name).await.expect("Agent not found in directory");
+        // Assert directory persistence using the directory returned by the helper
+        let dir_info = directory.get_agent_info(agent_name).await
+            .expect("Agent not found in directory after discovery");
         assert_eq!(dir_info["url"], server.url());
         assert_eq!(dir_info["status"], "active"); // Should be added as active
     }
 
      #[tokio::test]
     async fn test_discover_http_failure() {
-        let (registry, _directory) = create_test_registry_with_real_dir().await; // Use helper
+        // Keep the temp_dir guard alive
+        let (registry, _directory, _temp_dir_guard) = create_test_registry_with_real_dir().await;
         let mut server = Server::new_async().await;
         // Mock server to return error
         let _m = server.mock("GET", "/.well-known/agent.json")
@@ -317,15 +344,16 @@ pub(crate) mod tests { // Make module public within crate for reuse in other tes
 
         let result = registry.discover(&server.url()).await;
         assert!(result.is_err(), "Discovery should fail on HTTP error");
-        // Check the error message includes context about fetching the card
+        // Check the error message includes context about fetching the card and the status code
         let err_string = result.unwrap_err().to_string();
-        assert!(err_string.contains("Failed to get agent card from"), "Error message mismatch: {}", err_string);
-        assert!(err_string.contains("status code 500"), "Error message should mention status code: {}", err_string);
+        assert!(err_string.contains("Failed to get agent card from"), "Error message context mismatch: {}", err_string);
+        assert!(err_string.contains("(status code 500)"), "Error message should mention status code 500: {}", err_string);
     }
 
     #[tokio::test]
     async fn test_refresh_agent_info_updates_cache() {
-        let (registry, _directory) = create_test_registry_with_real_dir().await; // Use helper
+        // Keep the temp_dir guard alive
+        let (registry, _directory, _temp_dir_guard) = create_test_registry_with_real_dir().await;
         let mut server = Server::new_async().await;
         let agent_name = "refresh-agent-cache";
         let initial_url = server.url();
@@ -367,7 +395,8 @@ pub(crate) mod tests { // Make module public within crate for reuse in other tes
 
     #[tokio::test]
     async fn test_refresh_agent_info_no_change() {
-        let (registry, _directory) = create_test_registry_with_real_dir().await; // Use helper
+        // Keep the temp_dir guard alive
+        let (registry, _directory, _temp_dir_guard) = create_test_registry_with_real_dir().await;
         let mut server = Server::new_async().await;
         let agent_name = "no-change-agent";
         let card_v1 = create_mock_agent_card(agent_name, &server.url());

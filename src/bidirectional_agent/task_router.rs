@@ -162,12 +162,24 @@ impl TaskRouter {
                 }
                 // 2. Check TextPart for directory-related text
                 ExtendedPart::TextPart(text_part) => {
-                    // Check if the text mentions directory
-                    if text_part.text.to_lowercase().contains("agent directory") ||
-                       text_part.text.to_lowercase().contains("list agent") {
-                        // Basic intent detection
-                        println!("Detected directory mention in text");
+                    let lower_text = text_part.text.to_lowercase();
+                    // Check if the text mentions directory or listing agents
+                    if lower_text.contains("agent directory") ||
+                       lower_text.contains("list agent") || // Original check
+                       lower_text.contains("list active agents") || // Added check
+                       lower_text.contains("list inactive agents") || // Added check
+                       lower_text.contains("show me the list") // Added check
+                    {
+                        // Basic intent detection - determine action based on keywords
+                        let action = if lower_text.contains("inactive") {
+                            "list_inactive"
+                        } else {
+                            "list_active" // Default to active if not specified otherwise
+                        };
+                        println!("Detected directory mention in text, action: {}", action);
                         return Some(json!({
+                            "action": action,
+                            // We don't extract agent_id from simple text here
                             "action": "list",
                             "filter": "active"
                         }));
