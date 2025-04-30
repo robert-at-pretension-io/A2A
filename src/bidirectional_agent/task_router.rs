@@ -346,8 +346,10 @@ mod tests {
         }
         #[cfg(not(feature = "bidir-core"))]
         {
+             // AgentRegistry::new() doesn't take arguments when bidir-core is disabled
              let registry = Arc::new(AgentRegistry::new());
-             let executor = Arc::new(ToolExecutor::new()); // No directory needed
+             // ToolExecutor::new() doesn't take arguments when bidir-core is disabled
+             let executor = Arc::new(ToolExecutor::new());
              TaskRouter::new(registry, executor)
         }
     }
