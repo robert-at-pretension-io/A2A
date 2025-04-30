@@ -5,7 +5,7 @@ pub mod services;
 #[cfg(test)]
 pub mod tests;
 
-mod error;
+pub mod error; // Make the error module public
 
 use crate::types;
 use hyper::{Body, Request, Response, Server, StatusCode};
