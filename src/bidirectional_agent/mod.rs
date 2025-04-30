@@ -189,12 +189,17 @@ impl BidirectionalAgent {
     }
 
     /// Initializes and runs the agent's core services, including the server and background tasks.
-    /// Binds to the address and port specified in the configuration.
+    /// Binds to the address and port derived from the `base_url` in the configuration.
     pub async fn run(&self) -> Result<()> {
-        let bind_addr = &self.config.network.bind_address;
-        let port = self.config.network.port.unwrap_or(8080); // Use config port or default
+        // Parse base_url to get host and port for binding
+        let base_url = Url::parse(&self.config.base_url)
+            .with_context(|| format!("Invalid base_url in configuration: {}", self.config.base_url))?;
+
+        let bind_addr = base_url.host_str().unwrap_or("127.0.0.1"); // Default to localhost if host missing
+        let port = base_url.port_or_known_default().unwrap_or(8080); // Default to 8080 if port missing
+
         println!("🚀 Bidirectional Agent '{}' starting...", self.config.self_id);
-        println!("   Attempting to bind server to {}:{}", bind_addr, port);
+        println!("   Derived server binding from base_url: {}:{}", bind_addr, port);
 
          // --- Agent Discovery ---
         println!("🔍 Discovering initial agents...");
@@ -341,11 +346,14 @@ pub async fn run(config_path: &str) -> Result<()> {
         .with_context(|| format!("Failed to load agent config from '{}'", config_path))?;
 
     // Initialize the agent
-    let agent = BidirectionalAgent::new(config)
+    let agent = BidirectionalAgent::new(config).await // Add .await here as new is async
         .context("Failed to initialize Bidirectional Agent")?;
 
     // Run the agent (run method now handles port binding from config)
     agent.run().await
+        .context("Agent run failed")?; // Add context for the agent run result
+
+    Ok(()) // Return Ok(()) on success
 }
 
 
