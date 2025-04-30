@@ -2,8 +2,9 @@
 
 #![cfg(feature = "bidir-core")]
 
-use thiserror::Error;
 use crate::client::errors::ClientError; // Reuse client errors where applicable
+use crate::server::error::ServerError;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AgentError {
@@ -48,6 +49,9 @@ pub enum AgentError {
 
     #[error("Anyhow Error: {0}")]
     Anyhow(#[from] anyhow::Error),
+
+    #[error("Server Error: {0}")]
+    ServerError(#[from] ServerError),
 
     #[error("Other Error: {0}")]
     Other(String),
