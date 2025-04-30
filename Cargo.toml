@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = []
 # Bidirectional Agent Features (Incremental)
-bidir-core = ["dep:anyhow", "dep:thiserror", "dep:toml", "dep:log", "dep:env_logger", "dep:sqlx", "dep:tokio-util"] # Add sqlx and tokio-util here
+bidir-core = ["dep:anyhow", "dep:thiserror", "dep:toml", "dep:log", "dep:env_logger", "dep:sqlx"] # Remove tokio-util as it's now required
 bidir-local-exec = ["bidir-core"] # Depends on core features
 bidir-delegate = ["bidir-local-exec"] # Depends on local execution features
 # Fuzzing Feature
@@ -68,7 +68,7 @@ env_logger = { version = "0.11", optional = true }
 anyhow = { version = "1.0", optional = true }
 thiserror = { version = "1.0", optional = true }
 toml = { version = "0.8", optional = true }
-tokio-util = { version = "0.7", features = ["sync"], optional = true } # Add sync feature, make optional based on bidir-core
+tokio-util = { version = "0.7", features = ["rt"] } # Required for CancellationToken in sync module
 
 [build-dependencies]
 sha2 = "0.10"
