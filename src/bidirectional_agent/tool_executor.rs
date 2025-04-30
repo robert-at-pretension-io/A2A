@@ -122,7 +122,15 @@ impl ToolExecutor {
                 task.status = TaskStatus {
                     state: TaskState::Failed,
                     timestamp: Some(chrono::Utc::now()),
-                    message: Some(Message::agent("Local execution failed: No tool specified.")),
+                    message: Some(Message {
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            text: "Local execution failed: No tool specified.".to_string(),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    }),
                 };
                 return Err(AgentError::ToolError("No tool specified for local execution".to_string()));
             }
