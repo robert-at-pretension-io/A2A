@@ -82,10 +82,10 @@ impl Error for A2aError {}
 pub enum ClientError {
     /// JSON-RPC error from the A2A server
     A2aError(A2aError),
-    
-    /// HTTP error (e.g., connection refused, timeout)
-    HttpError(String),
-    
+
+    /// Reqwest HTTP client error, potentially including status code
+    ReqwestError { msg: String, status_code: Option<u16> },
+
     /// JSON serialization/deserialization error
     JsonError(String),
     
@@ -101,7 +101,13 @@ impl fmt::Display for ClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ClientError::A2aError(err) => write!(f, "{}", err),
-            ClientError::HttpError(msg) => write!(f, "HTTP error: {}", msg),
+            ClientError::ReqwestError { msg, status_code } => {
+                if let Some(code) = status_code {
+                    write!(f, "HTTP error (status {}): {}", code, msg)
+                } else {
+                    write!(f, "HTTP error: {}", msg)
+                }
+            }
             ClientError::JsonError(msg) => write!(f, "JSON error: {}", msg),
             ClientError::IoError(msg) => write!(f, "I/O error: {}", msg),
             ClientError::Other(msg) => write!(f, "{}", msg),
@@ -127,7 +133,11 @@ impl From<A2aError> for ClientError {
 
 impl From<reqwest::Error> for ClientError {
     fn from(err: reqwest::Error) -> Self {
-        ClientError::HttpError(format!("{}", err))
+        let status_code = err.status().map(|s| s.as_u16());
+        ClientError::ReqwestError {
+            msg: format!("{}", err),
+            status_code,
+        }
     }
 }
 
