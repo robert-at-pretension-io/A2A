@@ -3,7 +3,9 @@
 //! This module provides a specialized TaskRouter that uses LLMs for
 //! making sophisticated routing decisions.
 
-#![cfg(feature = "bidir-local-exec")]
+#[cfg(feature = "bidir-local-exec")]
+use crate::bidirectional_agent::llm_routing::RoutingAgentTrait;
+use crate::bidirectional_agent::agent_directory::AgentDirectory;
 
 use crate::bidirectional_agent::{
     agent_registry::AgentRegistry,
@@ -166,6 +168,8 @@ impl LlmTaskRouterTrait for LlmTaskRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bidirectional_agent::config::DirectoryConfig;
+    use crate::bidirectional_agent::agent_directory::AgentDirectory;
     use crate::types::{Message, Role, Part, TextPart};
     use std::collections::HashMap;
     use serde_json::json;
@@ -190,10 +194,28 @@ mod tests {
         }
     }
 
+    async fn create_test_directory() -> Arc<AgentDirectory> {
+        Arc::new(AgentDirectory::new(&DirectoryConfig::default()).await.expect("Failed to create test directory"))
+    }
+
     #[tokio::test]
     async fn test_handle_routing_hint() {
-        let registry = Arc::new(AgentRegistry::new());
-        let tool_executor = Arc::new(ToolExecutor::new());
+        // Create directory if bidir-core is enabled
+        #[cfg(feature = "bidir-core")]
+        let directory = create_test_directory().await;
+        
+        // Create registry with or without directory based on feature
+        let registry = Arc::new(AgentRegistry::new(
+            #[cfg(feature = "bidir-core")]
+            directory.clone()
+        ));
+        
+        // Create executor with or without directory based on feature
+        let tool_executor = Arc::new(ToolExecutor::new(
+            #[cfg(feature = "bidir-core")]
+            directory.clone()
+        ));
+        
         let router = LlmTaskRouter::new(registry.clone(), tool_executor, None);
         
         // Test "local" hint
@@ -221,8 +243,22 @@ mod tests {
     
     #[tokio::test]
     async fn test_routing_with_explicit_hint() {
-        let registry = Arc::new(AgentRegistry::new());
-        let tool_executor = Arc::new(ToolExecutor::new());
+        // Create directory if bidir-core is enabled
+        #[cfg(feature = "bidir-core")]
+        let directory = create_test_directory().await;
+        
+        // Create registry with or without directory based on feature
+        let registry = Arc::new(AgentRegistry::new(
+            #[cfg(feature = "bidir-core")]
+            directory.clone()
+        ));
+        
+        // Create executor with or without directory based on feature
+        let tool_executor = Arc::new(ToolExecutor::new(
+            #[cfg(feature = "bidir-core")]
+            directory.clone()
+        ));
+        
         let router = LlmTaskRouter::new(registry, tool_executor, None);
         
         // Create metadata with routing hint

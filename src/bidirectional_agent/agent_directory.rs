@@ -273,7 +273,7 @@ impl AgentDirectory {
 
                 if current_status_enum == AgentStatus::Inactive {
                     log::info!(
-                        target = "agent_directory",
+                        target: "agent_directory",
                         "Agent '{}' reactivated after being inactive",
                         agent.agent_id
                     );
@@ -456,8 +456,8 @@ impl AgentDirectory {
                         if let Err(e) = self_clone.verify_agents().await {
                             log::error!(
                                 target: "agent_directory",
-                                error = ?e, // Use structured logging field
-                                "Agent verification run failed within loop"
+                                "Agent verification run failed within loop: {:?}",
+                                e
                             );
                         }
                     });
@@ -487,9 +487,9 @@ impl AgentDirectory {
         // Log metrics (replace with actual metrics system later)
         log::info!(
             target: "agent_directory",
-            active_agents = active_count,
-            inactive_agents = inactive_count,
-            "Agent directory metrics updated"
+            "Agent directory metrics updated - Active: {}, Inactive: {}",
+            active_count,
+            inactive_count
         );
 
         // TODO: Expose these via a metrics endpoint (e.g., Prometheus)

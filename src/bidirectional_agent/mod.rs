@@ -150,17 +150,19 @@ impl BidirectionalAgent {
                  // Configure LLM router with API key if available
                  let llm_config = config_arc.tools.llm_api_key.as_ref().map(|api_key| {
                      llm_routing::LlmRoutingConfig {
-                         api_key: api_key.clone(),
                          model: config_arc.tools.llm_model.clone(),
-                         ..Default::default()
+                         max_tokens: 1024,
+                         temperature: 0.7,
+                         routing_prompt_template: "Make a routing decision for this task".to_string(),
+                         decomposition_prompt_template: "Decompose this task".to_string(),
                      }
                  });
 
                  // Create LLM task router using the factory
+                 // Note: the LLM config is not used in the current implementation
                  create_llm_task_router( // Use the factory function directly
                      registry_for_router,
-                     executor_for_router,
-                     llm_config // Pass Option<LlmRoutingConfig>
+                     executor_for_router
                  )
             } else {
                  // Use the standard task router if LLM routing is not enabled
@@ -241,8 +243,8 @@ impl BidirectionalAgent {
                     // Use log::error instead of println for errors
                     log::error!(
                         target: "agent_directory", // Log target for filtering
-                        error = ?e, // Use structured logging field
-                        "Directory verification loop exited with error"
+                        "Directory verification loop exited with error: {:?}",
+                        e
                     );
                 }
             });

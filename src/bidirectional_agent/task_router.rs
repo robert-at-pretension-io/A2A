@@ -218,6 +218,7 @@ async fn setup_test_router() -> TaskRouter {
     {
         // Use the correct helper from agent_registry tests
         let (registry, directory) = crate::bidirectional_agent::agent_registry::tests::create_test_registry_with_real_dir().await;
+        let registry = Arc::new(registry); // Convert to Arc
         let executor = Arc::new(ToolExecutor::new(directory));
         TaskRouter::new(registry, executor)
     }
@@ -236,63 +237,20 @@ async fn setup_test_router() -> TaskRouter {
 fn create_test_directory_params(id: &str, action: &str, filter: &str) -> TaskSendParams {
     TaskSendParams {
         id: id.to_string(),
-            message: Message {
-                role: Role::User,
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: text.to_string(),
-                    metadata: None,
-                })],
+        message: Message {
+            role: Role::User,
+            parts: vec![Part::TextPart(TextPart {
+                type_: "text".to_string(),
+                text: format!("Please use the agent directory to {} agents with filter: {}", action, filter),
                 metadata: None,
-            },
-            history_length: None,
-            metadata,
-            push_notification: None,
-            session_id: None,
-        }
-    }
-
-    // Helper to create a test router
-    async fn setup_test_router() -> TaskRouter {
-        // If bidir-core feature is enabled, use the directory version
-        #[cfg(feature = "bidir-core")]
-        {
-            let (registry, directory) = create_test_registry_with_real_dir().await;
-            let executor = Arc::new(ToolExecutor::new(directory));
-            TaskRouter::new(registry, executor)
-        }
-        
-        // If bidir-core is not enabled, use version without directory
-        #[cfg(not(feature = "bidir-core"))]
-        #[cfg(not(feature = "bidir-core"))]
-        {
-             let registry = Arc::new(AgentRegistry::new());
-             let executor = Arc::new(ToolExecutor::new());
-             TaskRouter::new(registry, executor)
-        }
-             TaskRouter::new(registry, executor)
-        }
-    }
-    
-    // Helper to create test params that mention the directory
-    #[cfg(feature = "bidir-core")]
-    fn create_test_directory_params(id: &str, action: &str, filter: &str) -> TaskSendParams {
-        TaskSendParams {
-            id: id.to_string(),
-            message: Message {
-                role: Role::User,
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: format!("Please use the agent directory to {} agents with filter: {}", action, filter),
-                    metadata: None,
-                })],
-                metadata: None,
-            },
-            history_length: None,
+            })],
             metadata: None,
-            push_notification: None,
-            session_id: None,
-        }
+        },
+        history_length: None,
+        metadata: None,
+        push_notification: None,
+        session_id: None,
+    }
 }
 
 // Helper to create TaskSendParams with a ToolCallPart using ToolCall struct
@@ -346,30 +304,10 @@ mod tests {
     #[tokio::test]
     async fn test_routing_default_to_local_echo() {
         let router = setup_test_router().await;
-            message: Message {
-                role: Role::User,
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: format!("Call directory tool with action: {}", 
-                            serde_json::to_string(&tool_call).unwrap_or_default()),
-                    metadata: None,
-                })],
-                metadata: None,
-            },
-            history_length: None,
-            metadata,
-            push_notification: None,
-            session_id: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_routing_default_to_local_echo() {
-        let router = setup_test_router().await;
         let params = create_test_params("task1", "A simple message with no keywords", None);
         let decision = router.decide(&params).await;
         // Default fallback should be local execution (e.g., echo tool)
-        assert_eq!(decision, RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
+        assert!(matches!(decision, Ok(RoutingDecision::Local { tool_names }) if tool_names == vec!["echo".to_string()]));
     }
 
     #[tokio::test]
@@ -380,7 +318,7 @@ mod tests {
         let params = create_test_params("task2", "Message with local hint", Some(hashmap_to_json_map(metadata)));
         let decision = router.decide(&params).await;
         // Hint forces local execution (defaulting to echo here)
-        assert_eq!(decision, RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
+        assert!(matches!(decision, Ok(RoutingDecision::Local { tool_names }) if tool_names == vec!["echo".to_string()]));
     }
     
     #[tokio::test]
@@ -396,7 +334,7 @@ mod tests {
         let params = create_test_params("task3", "Message with remote hint", Some(hashmap_to_json_map(metadata)));
         let decision = router.decide(&params).await;
         // Hint should route to the known remote agent
-        assert_eq!(decision, RoutingDecision::Remote { agent_id: agent_id.to_string() });
+        assert!(matches!(decision, Ok(RoutingDecision::Remote { agent_id: ref aid }) if aid == agent_id));
     }
     
     #[tokio::test]
@@ -428,7 +366,7 @@ mod tests {
         let params = create_test_params("task6", "Can you list active agents from the agent directory?", None);
         let decision = router.decide(&params).await;
         // Keyword match should route to directory tool
-        assert_eq!(decision, Ok(RoutingDecision::Local { tool_names: vec!["directory".to_string()] }));
+        assert!(matches!(decision, Ok(RoutingDecision::Local { tool_names }) if tool_names == vec!["directory".to_string()]));
     }
     
     #[cfg(feature = "bidir-core")]
@@ -437,14 +375,8 @@ mod tests {
         let router = setup_test_router().await;
         let params = create_test_params("task7", "Show me the list inactive agents.", None);
         let decision = router.decide(&params).await;
-        assert_eq!(decision, Ok(RoutingDecision::Local { tool_names: vec!["directory".to_string()] }));
+        assert!(matches!(decision, Ok(RoutingDecision::Local { tool_names }) if tool_names == vec!["directory".to_string()]));
     }
     
-    // Helper function to convert HashMap to serde_json::Map for testing
-    fn hashmap_to_json_map(map: HashMap<String, serde_json::Value>) -> serde_json::Map<String, serde_json::Value> {
-        let mut json_map = serde_json::Map::new();
-        for (k, v) in map {
-            json_map.insert(k, v);
-        }
-        json_map
-    }
+    // Use the global helper function for hashmap_to_json_map
+}

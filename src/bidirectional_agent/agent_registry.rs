@@ -45,7 +45,7 @@ impl AgentRegistry {
         // Add the agent to the in-memory cache
         let cache_info = crate::bidirectional_agent::agent_registry::CachedAgentInfo {
             // url field removed, URL is inside card
-            card: create_mock_agent_card(agent_id, url), // Provide a mock card
+            card: self::tests::create_mock_agent_card(agent_id, url), // Use the function from tests module
             last_checked: chrono::Utc::now(),
         };
         self.agents.insert(agent_id.to_string(), cache_info);
@@ -202,9 +202,12 @@ impl AgentRegistry {
                                     log::info!(target: "agent_registry", "Refreshed agent card details for {}", agent_id);
                                 } else {
                                     log::debug!(target: "agent_registry", "Agent card checked for {}, no changes", agent_id);
+                                }
+                            },
+                            Err(e) => {
+                                log::error!(target: "agent_registry", "Failed to refresh agent info for {}: {:?}", agent_id, e);
+                            }
                         }
-                    },
-                    }
                 }},
                 Err(e) => {
                     #[cfg(feature = "bidir-core")]

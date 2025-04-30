@@ -251,10 +251,14 @@ impl ClientManager {
 #[cfg(all(test, feature = "bidir-core"))]
 mod tests {
     use super::*;
-    use crate::bidirectional_agent::config::{BidirectionalAgentConfig, AuthConfig, NetworkConfig};
+    use crate::bidirectional_agent::config::{BidirectionalAgentConfig, AuthConfig, NetworkConfig, DirectoryConfig};
+#[cfg(feature = "bidir-local-exec")]
+use crate::bidirectional_agent::config::ToolConfigs;
+    use crate::bidirectional_agent::agent_directory::AgentDirectory;
     use mockito::Server;
     use crate::types::{AgentCard, AgentCapabilities, AgentSkill, AgentAuthentication}; // Import necessary types
     use std::collections::HashMap;
+    use tempfile;
 
     fn create_mock_agent_card(name: &str, url: &str, auth_schemes: Option<Vec<String>>) -> AgentCard {
          AgentCard {
@@ -291,12 +295,35 @@ mod tests {
             .with_body(serde_json::to_string(&mock_card).unwrap())
             .create_async().await;
 
-        let registry = Arc::new(AgentRegistry::new());
+        // Create a dummy directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = crate::bidirectional_agent::config::DirectoryConfig {
+            db_path: temp_dir.path().join("test.db").to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let directory = Arc::new(crate::bidirectional_agent::agent_directory::AgentDirectory::new(&config).await.unwrap());
+        let registry = Arc::new(AgentRegistry::new(directory));
         registry.discover(&server.url()).await.unwrap(); // Discover the agent first
 
+        #[cfg(feature = "bidir-local-exec")]
         let config = Arc::new(BidirectionalAgentConfig {
-            self_id: "test".to_string(), base_url: "".to_string(), discovery: vec![],
-            auth: AuthConfig::default(), network: NetworkConfig::default(),
+            self_id: "test".to_string(), 
+            base_url: "".to_string(), 
+            discovery: vec![],
+            auth: AuthConfig::default(), 
+            network: NetworkConfig::default(),
+            tools: ToolConfigs::default(),
+            directory: DirectoryConfig::default(),
+        });
+        
+        #[cfg(not(feature = "bidir-local-exec"))]
+        let config = Arc::new(BidirectionalAgentConfig {
+            self_id: "test".to_string(), 
+            base_url: "".to_string(), 
+            discovery: vec![],
+            auth: AuthConfig::default(), 
+            network: NetworkConfig::default(),
+            directory: DirectoryConfig::default(),
         });
         let manager = ClientManager::new(registry, config).unwrap();
 
@@ -318,17 +345,38 @@ mod tests {
             .with_body(serde_json::to_string(&mock_card).unwrap())
             .create_async().await;
 
-        let registry = Arc::new(AgentRegistry::new());
+        // Create a dummy directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = DirectoryConfig {
+            db_path: temp_dir.path().join("test.db").to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let directory = Arc::new(AgentDirectory::new(&config).await.unwrap());
+        let registry = Arc::new(AgentRegistry::new(directory));
         registry.discover(&server.url()).await.unwrap();
 
         let mut client_credentials = HashMap::new();
         client_credentials.insert("Bearer".to_string(), "my-secret-token".to_string());
 
+        #[cfg(feature = "bidir-local-exec")]
         let config = Arc::new(BidirectionalAgentConfig {
-            self_id: "test".to_string(), base_url: "".to_string(), discovery: vec![],
+            self_id: "test".to_string(), 
+            base_url: "".to_string(), 
+            discovery: vec![],
             auth: AuthConfig { client_credentials, ..Default::default() },
-            #[cfg(feature = "bidir-core")] directory: Default::default(),
-            #[cfg(feature = "bidir-local-exec")] tools: Default::default(),
+            network: NetworkConfig::default(),
+            tools: ToolConfigs::default(),
+            directory: DirectoryConfig::default(),
+        });
+        
+        #[cfg(not(feature = "bidir-local-exec"))]
+        let config = Arc::new(BidirectionalAgentConfig {
+            self_id: "test".to_string(), 
+            base_url: "".to_string(), 
+            discovery: vec![],
+            auth: AuthConfig { client_credentials, ..Default::default() },
+            network: NetworkConfig::default(),
+            directory: DirectoryConfig::default(),
         });
         let manager = ClientManager::new(registry, config).unwrap();
 
@@ -355,18 +403,38 @@ mod tests {
             .with_body(serde_json::to_string(&mock_card).unwrap())
             .create_async().await;
 
-        let registry = Arc::new(AgentRegistry::new());
+        // Create a dummy directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = DirectoryConfig {
+            db_path: temp_dir.path().join("test.db").to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let directory = Arc::new(AgentDirectory::new(&config).await.unwrap());
+        let registry = Arc::new(AgentRegistry::new(directory));
         registry.discover(&server.url()).await.unwrap();
 
         let mut client_credentials = HashMap::new();
         client_credentials.insert("Bearer".to_string(), "my-secret-token".to_string()); // Only Bearer
 
+        #[cfg(feature = "bidir-local-exec")]
         let config = Arc::new(BidirectionalAgentConfig {
-            self_id: "test".to_string(), base_url: "".to_string(), discovery: vec![],
+            self_id: "test".to_string(), 
+            base_url: "".to_string(), 
+            discovery: vec![],
             auth: AuthConfig { client_credentials, ..Default::default() },
             network: NetworkConfig::default(),
-            #[cfg(feature = "bidir-core")] directory: Default::default(),
-            #[cfg(feature = "bidir-local-exec")] tools: Default::default(),
+            tools: ToolConfigs::default(),
+            directory: DirectoryConfig::default(),
+        });
+        
+        #[cfg(not(feature = "bidir-local-exec"))]
+        let config = Arc::new(BidirectionalAgentConfig {
+            self_id: "test".to_string(), 
+            base_url: "".to_string(), 
+            discovery: vec![],
+            auth: AuthConfig { client_credentials, ..Default::default() },
+            network: NetworkConfig::default(),
+            directory: DirectoryConfig::default(),
         });
         let manager = ClientManager::new(registry, config).unwrap();
 
@@ -378,15 +446,33 @@ mod tests {
 
      #[tokio::test]
     async fn test_get_client_for_unknown_agent() {
-        let registry = Arc::new(AgentRegistry::new()); // Empty registry
+        // Create a dummy directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = DirectoryConfig {
+            db_path: temp_dir.path().join("test.db").to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let directory = Arc::new(AgentDirectory::new(&config).await.unwrap());
+        let registry = Arc::new(AgentRegistry::new(directory)); // Empty registry
+        #[cfg(feature = "bidir-local-exec")]
         let config = Arc::new(BidirectionalAgentConfig {
-            self_id: "test".to_string(),
-            base_url: "".to_string(),
+            self_id: "test".to_string(), 
+            base_url: "".to_string(), 
             discovery: vec![],
-            auth: AuthConfig::default(),
+            auth: AuthConfig::default(), 
             network: NetworkConfig::default(),
-            #[cfg(feature = "bidir-core")] directory: Default::default(),
-            #[cfg(feature = "bidir-local-exec")] tools: Default::default(),
+            tools: ToolConfigs::default(),
+            directory: DirectoryConfig::default(),
+        });
+        
+        #[cfg(not(feature = "bidir-local-exec"))]
+        let config = Arc::new(BidirectionalAgentConfig {
+            self_id: "test".to_string(), 
+            base_url: "".to_string(), 
+            discovery: vec![],
+            auth: AuthConfig::default(), 
+            network: NetworkConfig::default(),
+            directory: DirectoryConfig::default(),
         });
         let manager = ClientManager::new(registry, config).unwrap();
 

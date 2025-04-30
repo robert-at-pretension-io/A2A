@@ -53,8 +53,8 @@ impl TaskFlow {
         println!("🚀 Starting task flow for '{}' with decision: {:?}", self.task_id, decision);
 
         match decision {
-            RoutingDecision::Local { tool_names: _ } => {
-                self.execute_locally().await?;
+            RoutingDecision::Local { tool_names } => {
+                self.execute_locally(&tool_names).await?;
             }
             RoutingDecision::Remote { agent_id } => {
                 self.delegate_task(&agent_id).await?;
@@ -62,17 +62,18 @@ impl TaskFlow {
             RoutingDecision::Reject { reason } => {
                 self.reject_task(&reason).await?;
             }
-            // RoutingDecision::Decompose { subtasks } => {
-            //     // Handle decomposition (more complex, maybe later refinement)
-            //     println!("⏳ Decomposition not fully implemented yet for task '{}'", self.task_id);
-            //     self.reject_task("Decomposition not yet supported").await?;
-            // }
+            #[cfg(feature = "bidir-delegate")]
+            RoutingDecision::Decompose { subtasks: _ } => {
+                            // Handle decomposition (more complex, maybe later refinement)
+                            println!("⏳ Decomposition routing decision received, but execution not fully implemented yet for task '{}'", self.task_id);
+                            self.reject_task("Decomposition execution not yet supported").await?;
+                        }
         }
         Ok(())
     }
 
     /// Executes the task locally using the ToolExecutor.
-    async fn execute_locally(&self) -> Result<(), AgentError> {
+    async fn execute_locally(&self, tool_names: &[String]) -> Result<(), AgentError> {
         println!("⚙️ Executing task '{}' locally...", self.task_id);
         let mut task = self.get_task().await?;
 
@@ -80,7 +81,7 @@ impl TaskFlow {
         self.set_task_origin(TaskOrigin::Local).await?;
 
         // Execute using the tool executor
-        match self.tool_executor.execute_task_locally(&mut task).await {
+        match self.tool_executor.execute_task_locally(&mut task, tool_names).await {
             Ok(_) => {
                 println!("✅ Local execution successful for task '{}'", self.task_id);
                 // Save final state (already done by executor)
@@ -128,7 +129,8 @@ impl TaskFlow {
                 // Mark task origin as Delegated
                 self.set_task_origin(TaskOrigin::Delegated {
                     agent_id: target_agent_id.to_string(),
-                    remote_task_id: remote_task_status.id.clone(), // Store remote ID
+                    agent_url: None, // No URL info available here
+                    delegated_at: chrono::Utc::now().to_rfc3339(),
                 }).await?;
 
                 // Update local task status to reflect delegation (e.g., Working/Delegated)

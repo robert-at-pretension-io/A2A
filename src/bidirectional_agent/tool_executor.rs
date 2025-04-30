@@ -9,7 +9,7 @@ use crate::{
 
     },
     // Import ToolCall and ToolCallPart
-    types::{Task, TaskState, TaskStatus, Message, Role, Part, TextPart, Artifact, ToolCall, ToolCallPart},
+    types::{Task, TaskState, TaskStatus, Message, Role, Part, TextPart, Artifact},
 };
 
 #[cfg(feature = "bidir-core")] // Conditionally import AgentDirectory
@@ -55,7 +55,7 @@ impl From<ToolError> for AgentError {
 pub struct ToolExecutor {
     // Store tools in an Arc<HashMap> for thread-safe sharing and cloning.
     // Use Box<dyn Tool> for dynamic dispatch.
-    tools: Arc<HashMap<String, Box<dyn Tool>>>,
+    pub tools: Arc<HashMap<String, Box<dyn Tool>>>,
 }
 
 impl ToolExecutor {
@@ -90,17 +90,17 @@ impl ToolExecutor {
 
     /// Executes a specific tool by name with the given JSON parameters.
     pub async fn execute_tool(&self, tool_name: &str, params: Value) -> Result<Value, ToolError> {
-        log::debug!(target: "tool_executor", tool=%tool_name, params=%params, "Executing tool");
+        log::debug!(target: "tool_executor", "Executing tool: {} with params: {}", tool_name, params);
         match self.tools.get(tool_name) {
             Some(tool) => {
                 tool.execute(params).await.map_err(|e| {
                     // Log the specific tool error before returning
-                    log::error!(target: "tool_executor", tool=%tool_name, error=?e, "Tool execution failed");
+                    log::error!(target: "tool_executor", "Tool execution failed for {}: {:?}", tool_name, e);
                     e // Return the original ToolError
                 })
             },
             None => {
-                 log::error!(target: "tool_executor", tool=%tool_name, "Tool not found");
+                 log::error!(target: "tool_executor", "Tool not found: {}", tool_name);
                  Err(ToolError::NotFound(tool_name.to_string()))
             }
         }
@@ -117,7 +117,7 @@ impl ToolExecutor {
         let tool_name = match tool_names.first() {
             Some(name) => name.as_str(),
             None => {
-                log::error!(target: "tool_executor", task_id=%task.id, "No tool specified for local execution");
+                log::error!(target: "tool_executor", "No tool specified for local execution for task {}", task.id);
                 // Update task status to Failed
                 task.status = TaskStatus {
                     state: TaskState::Failed,
@@ -136,7 +136,7 @@ impl ToolExecutor {
             }
         };
 
-        log::info!(target: "tool_executor", task_id=%task.id, tool=%tool_name, "Attempting local execution");
+        log::info!(target: "tool_executor", "Attempting local execution of task {} with tool {}", task.id, tool_name);
 
         // --- Parameter Extraction ---
         // TODO: Implement more robust parameter extraction based on tool requirements
@@ -146,26 +146,14 @@ impl ToolExecutor {
         let params = task.history.as_ref()
             .and_then(|h| h.last()) // Get the latest message
             .and_then(|msg| {
-                // Prioritize ToolCallPart if available
+                // Just extract from TextPart
                 msg.parts.iter().find_map(|part| match part {
-                    Part::ToolCallPart(tcp) => {
-                        // Attempt to parse the tool_call Value to see if it matches the expected tool
-                        if let Ok(parsed_call) = serde_json::from_value::<crate::types::ToolCall>(tcp.tool_call.clone()) {
-                            if parsed_call.name == tool_name {
-                                Some(parsed_call.params)
-                            } else { None }
-                        } else { None }
-                    },
-                    _ => None,
-                })
-                // Fallback to TextPart
-                .or_else(|| msg.parts.iter().find_map(|part| match part {
                     Part::TextPart(tp) => Some(json!({"text": tp.text})), // Simple text param
                     _ => None,
-                }))
+                })
             })
             .unwrap_or_else(|| {
-                log::warn!(target: "tool_executor", task_id=%task.id, tool=%tool_name, "No suitable parameters found in task history, using default.");
+                log::warn!(target: "tool_executor", "No suitable parameters found in task history for task {} using tool {}, using default.", task.id, tool_name);
                 json!({}) // Default to empty params if none found
             });
 
@@ -173,7 +161,7 @@ impl ToolExecutor {
         // --- Execute the selected tool ---
         match self.execute_tool(tool_name, params).await {
             Ok(result_value) => {
-                log::info!(target: "tool_executor", task_id=%task.id, tool=%tool_name, "Tool executed successfully.");
+                log::info!(target: "tool_executor", "Tool {} executed successfully for task {}", tool_name, task.id);
 
                 // --- Format Result into Task Artifact ---
                 // Attempt to serialize the result value back to a string or keep as JSON
@@ -218,7 +206,7 @@ impl ToolExecutor {
                 Ok(())
             }
             Err(tool_error) => {
-                 log::error!(target: "tool_executor", task_id=%task.id, tool=%tool_name, error=?tool_error, "Tool execution failed");
+                 log::error!(target: "tool_executor", "Tool {} execution failed for task {}: {:?}", tool_name, task.id, tool_error);
                 // --- Update Task Status to Failed ---
                  task.status = TaskStatus {
                     state: TaskState::Failed,
@@ -372,11 +360,23 @@ mod tests {
         let executor = create_test_executor_with_mocks();
         let mut task = Task {
             id: "task-local-succ".to_string(),
-            history: Some(vec![Message::user("echo this message")]), // Provide input message
-            status: TaskStatus::initial(), // Start with initial status
+            session_id: Some("test-session".to_string()),
+            history: Some(vec![Message {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: "echo this message".to_string(),
+                    metadata: None,
+                })],
+                metadata: None,
+            }]), // Provide input message
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                timestamp: Some(chrono::Utc::now()),
+                message: None,
+            }, // Start with initial status
             artifacts: None,
             metadata: None,
-            relationships: None,
         };
         let tool_names = vec!["echo".to_string()];
 
@@ -385,12 +385,20 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(task.status.state, TaskState::Completed);
         assert!(task.status.message.is_some());
-        assert!(task.status.message.unwrap().text().contains("completed"));
+        let agent_msg = match &task.status.message.as_ref().unwrap().parts.first() {
+            Some(Part::TextPart(text_part)) => &text_part.text,
+            _ => panic!("Expected TextPart in message"),
+        };
+        assert!(agent_msg.contains("completed"));
         assert!(task.artifacts.is_some());
         let artifacts = task.artifacts.unwrap();
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].name.as_deref(), Some("echo_result"));
-        assert!(artifacts[0].parts[0].text().contains("Echo: echo this message"));
+        let artifact_text = match &artifacts[0].parts[0] {
+            Part::TextPart(text_part) => &text_part.text,
+            _ => panic!("Expected TextPart in artifact"),
+        };
+        assert!(artifact_text.contains("Echo: echo this message"));
     }
 
      #[tokio::test]
@@ -398,11 +406,23 @@ mod tests {
         let executor = create_test_executor_with_mocks();
          let mut task = Task {
             id: "task-local-fail".to_string(),
-            history: Some(vec![Message::user("run failing tool")]),
-            status: TaskStatus::initial(),
+            session_id: Some("test-session".to_string()),
+            history: Some(vec![Message {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: "run failing tool".to_string(),
+                    metadata: None,
+                })],
+                metadata: None,
+            }]),
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                timestamp: Some(chrono::Utc::now()),
+                message: None,
+            },
             artifacts: None,
             metadata: None,
-            relationships: None,
         };
         let tool_names = vec!["fail".to_string()]; // Specify the failing tool
 
@@ -411,7 +431,10 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(task.status.state, TaskState::Failed);
         assert!(task.status.message.is_some());
-        let agent_msg = task.status.message.unwrap().text();
+        let agent_msg = match &task.status.message.as_ref().unwrap().parts.first() {
+            Some(Part::TextPart(text_part)) => &text_part.text,
+            _ => panic!("Expected TextPart in message"),
+        };
         assert!(agent_msg.contains("Local execution failed"));
         assert!(agent_msg.contains("Simulated tool execution failure")); // Include tool error
         assert!(task.artifacts.is_none()); // No artifacts on failure
@@ -422,11 +445,23 @@ mod tests {
         let executor = create_test_executor_with_mocks();
          let mut task = Task {
             id: "task-local-notfound".to_string(),
-            history: Some(vec![Message::user("run unknown tool")]),
-            status: TaskStatus::initial(),
+            session_id: Some("test-session".to_string()),
+            history: Some(vec![Message {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: "run unknown tool".to_string(),
+                    metadata: None,
+                })],
+                metadata: None,
+            }]),
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                timestamp: Some(chrono::Utc::now()),
+                message: None,
+            },
             artifacts: None,
             metadata: None,
-            relationships: None,
         };
         let tool_names = vec!["unknown".to_string()]; // Specify non-existent tool
 
@@ -435,7 +470,11 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(task.status.state, TaskState::Failed);
         assert!(task.status.message.is_some());
-        assert!(task.status.message.unwrap().text().contains("Tool not found"));
+        let agent_msg = match &task.status.message.as_ref().unwrap().parts.first() {
+            Some(Part::TextPart(text_part)) => &text_part.text,
+            _ => panic!("Expected TextPart in message"),
+        };
+        assert!(agent_msg.contains("Tool not found"));
         assert!(task.artifacts.is_none());
     }
 
