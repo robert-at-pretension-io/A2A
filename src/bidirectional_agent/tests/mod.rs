@@ -26,3 +26,7 @@ mod delegation;
 
 #[cfg(feature = "bidir-delegate")]
 mod property;
+
+// Add integration tests module conditionally
+#[cfg(all(feature = "bidir-core", feature = "bidir-local-exec"))]
+mod integration;
