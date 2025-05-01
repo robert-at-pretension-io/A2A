@@ -198,8 +198,9 @@ impl AgentDirectory {
     }
 
     /// Retrieves basic info (ID and URL) for all agents currently marked as inactive.
-    pub async fn get_inactive_agents(&self) -> Result<Vec<(String, String)>> {
+    pub async fn get_inactive_agents(&self) -> Result<Vec<ActiveAgentEntry>> {
          let entries = sqlx::query_as::<_, DirectoryEntry>(
+            // Select only necessary columns for this purpose
             "SELECT agent_id, url, status, last_verified, consecutive_failures, last_failure_code, next_probe_at, card_json FROM agents WHERE status = ?"
         )
         .bind(AgentStatus::Inactive.as_str())
