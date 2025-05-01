@@ -80,6 +80,14 @@ pub struct AgentDirectory {
     last_failure_code: Arc<Mutex<Option<i32>>>,
 }
 
+/// Simple struct to return basic info about active agents.
+#[derive(Debug, Clone)]
+pub struct ActiveAgentEntry {
+    pub agent_id: String,
+    pub url: String,
+}
+
+
 impl AgentDirectory {
     /// Creates a new AgentDirectory instance, initializes the database, and runs migrations.
     pub async fn new(config: &DirectoryConfig) -> Result<Self> {
@@ -171,10 +179,10 @@ impl AgentDirectory {
         Ok(())
     }
 
-    /// Retrieves the IDs and URLs of all agents currently marked as active.
-    pub async fn get_active_agents(&self) -> Result<Vec<(String, String)>> {
+    /// Retrieves basic info (ID and URL) for all agents currently marked as active.
+    pub async fn get_active_agents(&self) -> Result<Vec<ActiveAgentEntry>> {
         let entries = sqlx::query_as::<_, DirectoryEntry>(
-            // Select only necessary columns
+            // Select only necessary columns for this purpose
             "SELECT agent_id, url, status, last_verified, consecutive_failures, last_failure_code, next_probe_at, card_json FROM agents WHERE status = ?"
         )
         .bind(AgentStatus::Active.as_str())
@@ -182,10 +190,14 @@ impl AgentDirectory {
         .await
         .context("Failed to fetch active agents")?;
 
-        Ok(entries.into_iter().map(|e| (e.agent_id, e.url)).collect())
+        // Map to the simpler ActiveAgentEntry struct
+        Ok(entries.into_iter().map(|e| ActiveAgentEntry {
+            agent_id: e.agent_id,
+            url: e.url,
+        }).collect())
     }
 
-    /// Retrieves the IDs and URLs of all agents currently marked as inactive.
+    /// Retrieves basic info (ID and URL) for all agents currently marked as inactive.
     pub async fn get_inactive_agents(&self) -> Result<Vec<(String, String)>> {
          let entries = sqlx::query_as::<_, DirectoryEntry>(
             "SELECT agent_id, url, status, last_verified, consecutive_failures, last_failure_code, next_probe_at, card_json FROM agents WHERE status = ?"
@@ -195,7 +207,11 @@ impl AgentDirectory {
         .await
         .context("Failed to fetch inactive agents")?;
 
-        Ok(entries.into_iter().map(|e| (e.agent_id, e.url)).collect())
+        // Map to the simpler ActiveAgentEntry struct
+        Ok(entries.into_iter().map(|e| ActiveAgentEntry {
+            agent_id: e.agent_id,
+            url: e.url,
+        }).collect())
     }
 
     /// Retrieves detailed information for a specific agent by its ID.

@@ -33,7 +33,18 @@ pub struct BidirectionalAgentConfig {
     #[cfg(feature = "bidir-core")]
     #[serde(default)]
     pub directory: DirectoryConfig,
+    /// Interval (in minutes) for discovering tools from other agents.
+    /// Only used if 'bidir-delegate' feature is enabled.
+    #[cfg(feature = "bidir-delegate")]
+    #[serde(default = "default_tool_discovery_interval")]
+    pub tool_discovery_interval_minutes: u64,
     // Add fields for routing policy etc. in later slices
+}
+
+/// Default interval for tool discovery (e.g., 30 minutes).
+#[cfg(feature = "bidir-delegate")]
+fn default_tool_discovery_interval() -> u64 {
+    30
 }
 
 /// Tool configurations. Keyed by tool name.
@@ -150,6 +161,8 @@ mod tests {
         assert!(config.network.proxy_url.is_none());
         #[cfg(feature = "bidir-local-exec")]
         assert!(config.tools.specific_configs.is_empty());
+        #[cfg(feature = "bidir-delegate")]
+        assert_eq!(config.tool_discovery_interval_minutes, default_tool_discovery_interval()); // Check default
     }
 
     #[test]
@@ -181,6 +194,10 @@ mod tests {
             max_failures_before_inactive = 5
             backoff_seconds = 30
             health_endpoint_path = "/api/v1/status"
+
+            # Add tool discovery interval if delegate feature is on
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes = 45
         "#;
 
         #[cfg(not(feature = "bidir-local-exec"))]
@@ -206,6 +223,10 @@ mod tests {
             max_failures_before_inactive = 5
             backoff_seconds = 30
             health_endpoint_path = "/api/v1/status"
+
+            # Add tool discovery interval if delegate feature is on
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes = 45
         "#;
 
         let config: BidirectionalAgentConfig = toml::from_str(config_str).unwrap();
@@ -233,6 +254,10 @@ mod tests {
             assert_eq!(config.directory.max_failures_before_inactive, 5);
             assert_eq!(config.directory.backoff_seconds, 30);
             assert_eq!(config.directory.health_endpoint_path, "/api/v1/status");
+        }
+        #[cfg(feature = "bidir-delegate")]
+        {
+             assert_eq!(config.tool_discovery_interval_minutes, 45); // Check specific value
         }
     }
 

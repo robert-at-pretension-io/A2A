@@ -17,7 +17,11 @@ use tokio_util::sync::CancellationToken;
 #[cfg(feature = "bidir-core")]
 use std::sync::Mutex as StdMutex; // Use std Mutex for handles
 #[cfg(feature = "bidir-core")]
-use url::Url; // Add import for Url
+use url::Url;
+#[cfg(feature = "bidir-delegate")]
+use crate::bidirectional_agent::tools::{RemoteToolRegistry, RemoteToolExecutor}; // Assuming these types exist
+#[cfg(feature = "bidir-delegate")]
+use crate::bidirectional_agent::agent_directory::ActiveAgentEntry; // Import for tool discovery
 
 // Public submodules (conditionally compiled based on features)
 #[cfg(feature = "bidir-core")]
@@ -84,6 +88,8 @@ pub use task_flow::TaskFlow;
 pub use result_synthesis::ResultSynthesizer;
 #[cfg(feature = "bidir-delegate")]
 pub use task_extensions::TaskRepositoryExt;
+#[cfg(feature = "bidir-delegate")]
+pub use crate::bidirectional_agent::tools::{RemoteToolRegistry, RemoteToolExecutor}; // Re-export if needed
 
 #[cfg(feature = "bidir-core")]
 /// Main struct representing the Bidirectional Agent.
@@ -99,7 +105,11 @@ pub struct BidirectionalAgent {
     pub tool_executor: Arc<ToolExecutor>,
     #[cfg(feature = "bidir-local-exec")]
     pub task_router: Arc<dyn LlmTaskRouterTrait>, // Use the trait for polymorphism
-    // Add components for Slice 3
+    // Add components for Slice 3 (Delegation)
+    #[cfg(feature = "bidir-delegate")]
+    pub remote_tool_registry: Arc<RemoteToolRegistry>,
+    #[cfg(feature = "bidir-delegate")]
+    pub remote_tool_executor: Arc<RemoteToolExecutor>,
     // Use the concrete type from the server module
     pub task_repository: Arc<crate::server::repositories::task_repository::InMemoryTaskRepository>,
     // Add handles for server and background tasks
@@ -173,8 +183,14 @@ impl BidirectionalAgent {
 
         let client_manager = Arc::new(ClientManager::new(
             agent_registry.clone(),
-            config_arc.clone()
+            config_arc.clone(),
         )?);
+
+        // Initialize Slice 3 components if feature is enabled
+        #[cfg(feature = "bidir-delegate")]
+        let remote_tool_registry = Arc::new(RemoteToolRegistry::new(agent_directory.clone())); // Needs AgentDirectory
+        #[cfg(feature = "bidir-delegate")]
+        let remote_tool_executor = Arc::new(RemoteToolExecutor::new(client_manager.clone())); // Needs ClientManager
 
         Ok(Self {
             config: config_arc,
@@ -188,6 +204,11 @@ impl BidirectionalAgent {
             tool_executor,
             #[cfg(feature = "bidir-local-exec")]
             task_router,
+            // Initialize Slice 3 components if feature is enabled
+            #[cfg(feature = "bidir-delegate")]
+            remote_tool_registry,
+            #[cfg(feature = "bidir-delegate")]
+            remote_tool_executor,
             // Initialize cancellation token and handles
             cancellation_token: CancellationToken::new(),
             server_handle: Arc::new(StdMutex::new(None)),
@@ -269,6 +290,20 @@ impl BidirectionalAgent {
             println!("✅ Started delegated task polling loop.");
         }
 
+        // Start remote tool discovery loop if feature is enabled
+        #[cfg(feature = "bidir-delegate")]
+        {
+            let self_clone = self.clone(); // Clone Arc<Self>
+            let tool_discovery_token = self.cancellation_token.child_token();
+            let tool_discovery_handle = tokio::spawn(async move {
+                if let Err(e) = self_clone.run_tool_discovery_loop(tool_discovery_token).await {
+                     log::error!(target: "tool_discovery", "Tool discovery loop exited with error: {:?}", e);
+                }
+            });
+            self.background_tasks.lock().expect("Mutex poisoned").push(tool_discovery_handle);
+            println!("✅ Started remote tool discovery loop.");
+        }
+
 
         // --- Start the A2A Server ---
         // Create the services needed by the server
@@ -310,6 +345,116 @@ impl BidirectionalAgent {
 
         Ok(())
     }
+
+    /// Background task to periodically discover tools from other active agents.
+    #[cfg(feature = "bidir-delegate")]
+    async fn run_tool_discovery_loop(&self, token: CancellationToken) -> Result<()> {
+        let interval_minutes = self.config.tool_discovery_interval_minutes;
+        if interval_minutes == 0 {
+            log::warn!(target: "tool_discovery", "Tool discovery interval is 0, discovery loop will not run.");
+            return Ok(());
+        }
+        let interval = chrono::Duration::minutes(interval_minutes as i64);
+        log::info!(target: "tool_discovery", "Starting tool discovery loop with interval: {:?}", interval);
+
+        // Use interval_at to start the first tick immediately or after a short delay
+        let mut interval_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + Duration::from_secs(5), // Start after 5s delay
+            interval.to_std()?
+        );
+
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    log::info!(target: "tool_discovery", "Tool discovery loop cancelled.");
+                    return Ok(());
+                }
+                _ = interval_timer.tick() => {
+                    log::debug!(target: "tool_discovery", "Running tool discovery scan...");
+                    // Spawn discovery in a separate task to avoid blocking the loop timer
+                    let self_clone = self.clone(); // Clone Arc<Self>
+                    tokio::spawn(async move {
+                        match self_clone.discover_remote_tools().await {
+                            Ok(count) => log::info!(target: "tool_discovery", "Tool discovery scan complete. Updated/found tools for {} agents.", count),
+                            Err(e) => log::error!(target: "tool_discovery", "Error during tool discovery scan: {:?}", e),
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    /// Performs a single scan to discover tools from active agents.
+    #[cfg(feature = "bidir-delegate")]
+    async fn discover_remote_tools(&self) -> Result<usize> {
+        let active_agents: Vec<ActiveAgentEntry> = self.agent_directory.get_active_agents().await
+            .context("Failed to get active agents for tool discovery")?;
+
+        if active_agents.is_empty() {
+            log::debug!(target: "tool_discovery", "No active agents found to discover tools from.");
+            return Ok(0);
+        }
+
+        log::info!(target: "tool_discovery", "Discovering tools from {} active agents...", active_agents.len());
+        let mut updated_count = 0;
+
+        // Use futures::stream to process agents concurrently (optional, but good for many agents)
+        use futures::stream::{self, StreamExt, TryStreamExt};
+        let results = stream::iter(active_agents)
+            .map(|agent_entry| async {
+                let agent_id = &agent_entry.agent_id;
+                let agent_url = &agent_entry.url;
+                log::debug!(target: "tool_discovery", "Querying tools for agent: {} at {}", agent_id, agent_url);
+
+                // --- Placeholder: Actual Tool Discovery Logic ---
+                // Example using ClientManager to get AgentCard (if AgentCard contains tool info):
+                match self.client_manager.get_agent_card(agent_id).await {
+                    Ok(Some(card)) => {
+                        // Assuming RemoteToolRegistry has a method to update from an AgentCard
+                        match self.remote_tool_registry.update_tools_from_card(agent_id, &card).await {
+                            Ok(_) => {
+                                log::debug!(target: "tool_discovery", "Successfully updated tools for agent: {}", agent_id);
+                                Ok(true) // Indicate update occurred
+                            }
+                            Err(e) => {
+                                log::warn!(target: "tool_discovery", "Failed to update tools for agent {}: {:?}", agent_id, e);
+                                Ok(false) // No update, but not a fatal error for the whole process
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!(target: "tool_discovery", "Could not find agent card for active agent: {}", agent_id);
+                        // Optionally: Remove tools for this agent if card is gone?
+                        // self.remote_tool_registry.remove_tools_for_agent(agent_id).await?;
+                        Ok(false)
+                    }
+                    Err(e) => {
+                        log::warn!(target: "tool_discovery", "Error fetching agent card for {}: {:?}", agent_id, e);
+                        Ok(false) // Error fetching card, treat as no update for this agent
+                    }
+                }
+                // --- End Placeholder ---
+            })
+            .buffer_unordered(10) // Limit concurrency
+            .try_collect::<Vec<bool>>() // Collect results, propagating fatal errors if any Ok(result) becomes Err
+            .await;
+
+        match results {
+            Ok(update_flags) => {
+                updated_count = update_flags.into_iter().filter(|&updated| updated).count();
+                Ok(updated_count)
+            }
+            Err(e) => {
+                // This would catch errors if the stream processing itself failed,
+                // or if any of the async blocks returned an Err instead of Ok(bool).
+                // Currently, the example logic returns Ok(false) on errors, so this
+                // might not be hit unless the placeholder logic is changed to return Err.
+                Err(anyhow::anyhow!("Tool discovery stream processing failed: {}", e))
+            }
+        }
+    }
+
 
     /// Initiates graceful shutdown of the agent.
     pub async fn shutdown(&self) -> Result<()> {
