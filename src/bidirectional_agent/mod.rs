@@ -396,3 +396,9 @@ mod tests {
         assert!(Arc::strong_count(&agent.client_manager) >= 1);
     }
 }
+
+// Include the new test utility and integration test modules when testing
+#[cfg(all(test, feature = "bidir-core"))]
+mod test_utils;
+#[cfg(all(test, feature = "bidir-core"))]
+mod integration_tests;

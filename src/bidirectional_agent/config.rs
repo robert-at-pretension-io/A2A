@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, path::Path};
 use anyhow::{Context, Result};
 use serde_json::Value;
+use tempfile::tempdir; // Import tempdir for tests
 
 /// Main configuration for the Bidirectional Agent.
 #[derive(Deserialize, Debug, Clone)]
@@ -153,6 +154,7 @@ mod tests {
 
     #[test]
     fn test_load_full_config() {
+        #[cfg(feature = "bidir-local-exec")]
         let config_str = r#"
             self_id = "agent2"
             base_url = "https://agent2.example.com"
@@ -180,6 +182,32 @@ mod tests {
             backoff_seconds = 30
             health_endpoint_path = "/api/v1/status"
         "#;
+
+        #[cfg(not(feature = "bidir-local-exec"))]
+        let config_str = r#"
+            self_id = "agent2"
+            base_url = "https://agent2.example.com"
+            discovery = ["http://agent1.example.com", "http://agent3.example.com"]
+
+            [auth]
+            server_auth_type = "bearer"
+            client_credentials = { Bearer = "agent2-secret-token", ApiKey = "xyz789" }
+            client_cert_path = "/path/to/client.crt"
+            client_key_path = "/path/to/client.key"
+
+            [network]
+            proxy_url = "http://proxy.example.com:8080"
+            proxy_auth = ["proxy_user", "proxy_pass"]
+            ca_cert_path = "/path/to/ca.pem"
+
+            [directory] # Add directory config section
+            db_path = "/var/lib/myagent/directory.sqlite"
+            verification_interval_minutes = 10
+            max_failures_before_inactive = 5
+            backoff_seconds = 30
+            health_endpoint_path = "/api/v1/status"
+        "#;
+
         let config: BidirectionalAgentConfig = toml::from_str(config_str).unwrap();
         assert_eq!(config.self_id, "agent2");
         assert_eq!(config.discovery.len(), 2);
@@ -213,18 +241,23 @@ mod tests {
         let config_str = r#"
             base_url = "http://localhost:8081"
         "#; // Missing self_id
-        let result: Result<BidirectionalAgentConfig, _> = toml::from_str(config_str);
         // TOML parsing itself doesn't enforce required fields defined in struct,
         // our load_config function does.
         // Let's simulate calling load_config indirectly.
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("bad_config.toml");
         std::fs::write(&file_path, config_str).unwrap();
 
         let load_result = load_config(file_path.to_str().unwrap());
         assert!(load_result.is_err());
-        // Check for the error message from the TOML deserializer when a field is missing
-        assert!(load_result.unwrap_err().to_string().contains("missing field `self_id`"));
+        // Store the error before unwrapping to avoid consuming the Result
+        let err = load_result.unwrap_err();
+        println!("Error (Display): {}", err); // Print the Display representation for debugging
+        println!("Error (Debug): {:?}", err); // Keep Debug representation for more detail if needed
+        println!("Error string for assertion: '{}'", err.to_string()); // Print the exact string
+        // Check the root cause for the specific TOML deserialization error message
+        let root_cause = err.root_cause();
+        assert!(root_cause.to_string().contains("missing field `self_id`"));
     }
 }
 
