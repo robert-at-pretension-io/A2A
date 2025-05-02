@@ -1,19 +1,19 @@
 /// Manages discovery and caching of known A2A agents.
 
-#[cfg(feature = "bidir-core")]
+
 use crate::client::A2aClient; // Use the existing client for discovery
-#[cfg(feature = "bidir-core")]
+
 use crate::types::AgentCard;
-#[cfg(feature = "bidir-core")]
+
 use dashmap::DashMap;
-#[cfg(feature = "bidir-core")]
+
 use std::sync::Arc;
-#[cfg(feature = "bidir-core")]
+
 use chrono::{DateTime, Utc, Duration};
-#[cfg(feature = "bidir-core")]
+
 use anyhow::{Result, Context};
 
-#[cfg(feature = "bidir-core")]
+
 /// Information cached about a known agent.
 #[derive(Clone, Debug)]
 pub struct CachedAgentInfo {
@@ -22,7 +22,7 @@ pub struct CachedAgentInfo {
     // Add reliability metrics later
 }
 
-#[cfg(feature = "bidir-core")]
+
 /// Thread-safe registry for discovered A2A agents.
 #[derive(Clone)]
 pub struct AgentRegistry {
@@ -32,12 +32,12 @@ pub struct AgentRegistry {
     // Consider making this Arc<reqwest::Client> if needed elsewhere or for easier cloning
     http_client: reqwest::Client,
     /// Reference to the persistent agent directory. Included if 'bidir-core' is enabled.
-    #[cfg(feature = "bidir-core")]
+    
     agent_directory: Arc<crate::bidirectional_agent::agent_directory::AgentDirectory>,
 }
 
 // Conditional compilation for AgentRegistry implementation based on features
-#[cfg(feature = "bidir-core")]
+
 impl AgentRegistry {
 
     #[cfg(test)]
@@ -52,7 +52,7 @@ impl AgentRegistry {
     }
 
     /// Creates a new agent registry. Requires AgentDirectory if 'bidir-core' is enabled.
-    pub fn new(#[cfg(feature = "bidir-core")] agent_directory: Arc<crate::bidirectional_agent::agent_directory::AgentDirectory>) -> Self {
+    pub fn new( agent_directory: Arc<crate::bidirectional_agent::agent_directory::AgentDirectory>) -> Self {
         // TODO: Consider pre-loading cache from directory here or lazily on first access.
         // For now, cache starts empty and populates on discovery/refresh.
 
@@ -64,7 +64,7 @@ impl AgentRegistry {
                 .build()
                 .expect("Failed to build HTTP client for registry"),
             // Store the directory if the feature is enabled
-            #[cfg(feature = "bidir-core")]
+            
             agent_directory,
         }
     }
@@ -130,7 +130,7 @@ impl AgentRegistry {
         self.agents.insert(agent_id.clone(), cache_info);
 
         // Also add/update in the persistent directory if the feature is enabled
-        #[cfg(feature = "bidir-core")]
+        
         {
             self.agent_directory.add_agent(&agent_id, url, Some(card)).await
                 .context("Failed to add agent to persistent directory")?;
@@ -207,7 +207,7 @@ impl AgentRegistry {
             log::info!(target: "agent_registry", "Running periodic agent info refresh...");
 
             // Determine the list of agents to refresh
-            #[cfg(feature = "bidir-core")]
+            
             let agents_to_refresh_result = self.agent_directory.get_active_agents().await;
             #[cfg(not(feature = "bidir-core"))]
             let agents_to_refresh_result: Result<Vec<(String, String)>> = Ok(self.agents.iter().map(|e| (e.key().clone(), e.value().card.url.clone())).collect());
@@ -219,7 +219,7 @@ impl AgentRegistry {
                     for agent_entry in agents_to_refresh {
                         // Extract agent_id based on the type
                         let agent_id = match agent_entry {
-                            #[cfg(feature = "bidir-core")]
+                            
                             agent_entry => agent_entry.agent_id,
                             #[cfg(not(feature = "bidir-core"))]
                             (id, _url) => id,
@@ -241,7 +241,7 @@ impl AgentRegistry {
                         }
                 }},
                 Err(e) => {
-                    #[cfg(feature = "bidir-core")]
+                    
                     log::error!(target: "agent_registry", "Failed to get active agents from directory for refresh loop: {:?}", e);
                     #[cfg(not(feature = "bidir-core"))]
                      log::error!(target: "agent_registry", "Failed to get agents from internal cache for refresh loop: {:?}", e);

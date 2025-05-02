@@ -18,7 +18,6 @@ use crate::bidirectional_agent::llm_core::{
 
 use crate::bidirectional_agent::task_router_llm_refactored::{
     RefactoredLlmTaskRouter,
-    RefactoredLlmTaskRouterFactory,
     create_refactored_llm_task_router,
 };
 
@@ -92,12 +91,11 @@ pub fn create_integrated_llm_router(
     let llm_client = create_llm_client(model)?;
     
     // Create task router with the client
-    RefactoredLlmTaskRouterFactory::create_with_client(
+    create_refactored_llm_task_router(
         agent_registry,
         tool_executor,
-        llm_client,
         config,
-    ).map(|r| r as Arc<dyn LlmTaskRouterTrait>)
+    )
 }
 
 /// Create a task router that prefers the new implementation but falls back to legacy.
@@ -121,8 +119,8 @@ pub fn create_transitional_llm_router(
             println!("⚠️ Falling back to legacy LLM router implementation");
             
             match crate::bidirectional_agent::task_router_llm::create_llm_task_router(
-                agent_registry,
-                tool_executor,
+                agent_registry.clone(),
+                tool_executor.clone(),
             ) {
                 Ok(router) => router,
                 Err(e) => {
@@ -131,7 +129,7 @@ pub fn create_transitional_llm_router(
                     println!("⚠️ Creating fallback router that always routes to echo");
                     
                     use crate::bidirectional_agent::task_router::TaskRouter;
-                    Arc::new(TaskRouter::new(agent_registry, tool_executor)) as Arc<dyn LlmTaskRouterTrait>
+                    Arc::new(TaskRouter::new(agent_registry.clone(), tool_executor.clone())) as Arc<dyn LlmTaskRouterTrait>
                 }
             }
         }
