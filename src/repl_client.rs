@@ -1322,6 +1322,17 @@ async fn process_input(
                 }
             }
         }
+        InterpretedAction::RouteTask { message } => {
+            let result = route_task(agent.clone(), &message).await?;
+            
+            // Update history with result
+            {
+                let mut history = commands_history.lock().await;
+                if let Some(cmd) = history.iter_mut().find(|c| c.id == cmd_id) {
+                    cmd.result = Some(result.clone());
+                }
+            }
+        }
         InterpretedAction::IntelligentRouteTask { message, streaming } => {
             let result = intelligent_route_task(agent.clone(), &message, streaming).await?;
             
@@ -1581,6 +1592,9 @@ enum InterpretedAction {
     DiscoverAgent {
         url: String,
     },
+    RouteTask {
+        message: String,
+    },
     ListAgents,
     ListTools,
     Explain {
@@ -1597,6 +1611,7 @@ impl InterpretedAction {
             InterpretedAction::SendTaskToAgent { streaming: false, .. } => "send_task_to_agent",
             InterpretedAction::IntelligentRouteTask { streaming: true, .. } => "stream_intelligent_task",
             InterpretedAction::IntelligentRouteTask { streaming: false, .. } => "intelligent_task",
+            InterpretedAction::RouteTask { .. } => "route_task",
             InterpretedAction::DiscoverAgent { .. } => "discover_agent",
             InterpretedAction::ListAgents => "list_agents",
             InterpretedAction::ListTools => "list_tools",
@@ -1648,13 +1663,15 @@ async fn interpret_input(
         \n{{\n  \"action\": \"send_task_to_agent\",\n  \"agent_id\": \"<agent_id>\",\n  \"message\": \"<task message>\",\n  \"streaming\": <true or false>\n}}\n\n\
         3. If they want to send a task but DON'T specify a particular agent (should be routed intelligently), return:\n\
         \n{{\n  \"action\": \"intelligent_route_task\",\n  \"message\": \"<task message>\",\n  \"streaming\": <true or false>\n}}\n\n\
-        4. If they want to discover a new agent, return:\n\
+        4. If they want to see the routing decision without executing the task (e.g., \"route task <message>\" command), return:\n\
+        \n{{\n  \"action\": \"route_task\",\n  \"message\": \"<task message>\"\n}}\n\n\
+        5. If they want to discover a new agent, return:\n\
         \n{{\n  \"action\": \"discover_agent\",\n  \"url\": \"<agent_url>\"\n}}\n\n\
-        5. If they want to list known agents, return:\n\
+        6. If they want to list known agents, return:\n\
         \n{{\n  \"action\": \"list_agents\"\n}}\n\n\
-        6. If they want to list available tools, return:\n\
+        7. If they want to list available tools, return:\n\
         \n{{\n  \"action\": \"list_tools\"\n}}\n\n\
-        7. For other requests that don't map to agent actions, return:\n\
+        8. For other requests that don't map to agent actions, return:\n\
         \n{{\n  \"action\": \"explain\",\n  \"response\": \"<helpful response>\"\n}}\n\n\
         Important notes:\n\
         - The default action should be \"intelligent_route_task\" for most tasks unless they specifically mention an agent ID\n\
@@ -1711,6 +1728,11 @@ async fn interpret_input(
                 streaming: response.streaming
             })
         }
+        "route_task" => {
+            Ok(InterpretedAction::RouteTask { 
+                message: response.message
+            })
+        }
         "discover_agent" => {
             Ok(InterpretedAction::DiscoverAgent { 
                 url: response.url 
@@ -1756,6 +1778,18 @@ async fn interpret_input(
         // Look for a URL in the input
         if let Some(url) = extract_url(input) {
             return Ok(InterpretedAction::DiscoverAgent { url: url.to_string() });
+        }
+    } else if input_lower.contains("route") && input_lower.contains("task") {
+        // Handle route task command (shows routing decision without execution)
+        let message = input.trim()
+            .replace("route task", "")
+            .trim()
+            .to_string();
+        
+        if !message.is_empty() {
+            return Ok(InterpretedAction::RouteTask {
+                message,
+            });
         }
     } else if input_lower.contains("send") && input_lower.contains("task") {
         // Check if streaming is requested
@@ -2496,6 +2530,72 @@ async fn send_task_to_agent(
 
 /// Intelligently routes a task to the appropriate destination
 #[cfg(all(feature = "bidir-core", feature = "bidir-local-exec"))]
+async fn route_task(
+    agent: Arc<BidirectionalAgent>,
+    message: &str,
+) -> Result<String> {
+    // Create an async spinner
+    let spinner = AsyncSpinner::new("Analyzing task for routing decision...");
+    
+    // Generate a unique task ID for this request
+    let task_id = Uuid::new_v4().to_string();
+    
+    // Create TaskSendParams
+    let params = TaskSendParams {
+        id: task_id.clone(),
+        message: Message {
+            role: Role::User,
+            parts: vec![Part::TextPart(TextPart {
+                type_: "text".to_string(),
+                text: message.to_string(),
+                metadata: None,
+            })],
+            metadata: None,
+        },
+        history_length: None,
+        metadata: None,
+        push_notification: None,
+        session_id: None,
+    };
+    
+    // Use the LlmTaskRouter to decide how to route the task
+    spinner.update_message("Using LLM to determine routing decision...");
+    
+    let route_decision_result = agent.task_router.decide(&params).await;
+    
+    if let Err(e) = &route_decision_result {
+        spinner.finish_with_error("❌ Failed to determine routing").await;
+        return Err(anyhow!("LLM task routing error: {}", e));
+    }
+    
+    let route_decision = route_decision_result.unwrap();
+    
+    // Format the decision for display only, without executing
+    spinner.finish_with_success("✅ Routing decision determined").await;
+    
+    let decision_details = match &route_decision {
+        crate::bidirectional_agent::task_router::RoutingDecision::Local { tool_names } => {
+            format!("LOCAL EXECUTION using tools: {}", tool_names.join(", "))
+        },
+        crate::bidirectional_agent::task_router::RoutingDecision::Remote { agent_id } => {
+            format!("REMOTE DELEGATION to agent: {}", agent_id)
+        },
+        crate::bidirectional_agent::task_router::RoutingDecision::Reject { reason } => {
+            format!("TASK REJECTION with reason: {}", reason)
+        },
+        #[cfg(feature = "bidir-delegate")]
+        crate::bidirectional_agent::task_router::RoutingDecision::Decompose { subtasks } => {
+            format!("TASK DECOMPOSITION into {} subtasks", subtasks.len())
+        },
+    };
+    
+    println!("🧠 Routing decision: {}", decision_details);
+    println!("Note: Task was not executed, this is just the routing decision");
+    
+    Ok(format!("Routing decision: {}", decision_details))
+}
+
+#[cfg(all(feature = "bidir-core", feature = "bidir-local-exec"))]
 async fn intelligent_route_task(
     agent: Arc<BidirectionalAgent>,
     message: &str,
@@ -2730,6 +2830,28 @@ async fn intelligent_route_task(
     }
 }
 
+/// Add a fallback implementation for route_task when bidir-local-exec is not enabled
+#[cfg(all(feature = "bidir-core", not(feature = "bidir-local-exec")))]
+async fn route_task(
+    agent: Arc<BidirectionalAgent>,
+    message: &str,
+) -> Result<String> {
+    let error_message = "Cannot show routing decisions without the bidir-local-exec feature enabled.";
+    println!("⚠️ {}", error_message);
+    println!("In this build, tasks are always routed to the default agent if available.");
+    
+    // Show what would happen with the default agent
+    let default_agents = agent.agent_registry.all();
+    if let Some((agent_id, _)) = default_agents.into_iter().next() {
+        println!("🔄 Routing decision (fallback): REMOTE DELEGATION to agent: {}", agent_id);
+        println!("Note: This is not using LLM-based routing, just showing the fallback behavior");
+        Ok(format!("Routing decision (fallback): REMOTE DELEGATION to agent: {}", agent_id))
+    } else {
+        println!("❌ No agents available to show routing decision");
+        Err(anyhow!("{} No agents available.", error_message))
+    }
+}
+
 /// Add a fallback implementation when bidir-local-exec is not enabled but bidir-core is
 #[cfg(all(feature = "bidir-core", not(feature = "bidir-local-exec")))]
 async fn intelligent_route_task(
@@ -2754,6 +2876,18 @@ async fn intelligent_route_task(
     } else {
         Err(anyhow!("{} No agents available for fallback.", error_message))
     }
+}
+
+/// Add a fallback implementation when bidir-core is not enabled
+#[cfg(not(feature = "bidir-core"))]
+async fn route_task(
+    _agent: Arc<impl std::any::Any>,
+    message: &str,
+) -> Result<String> {
+    let error_message = format!("❌ Cannot show routing decision for task: '{}'. Bidirectional agent features require bidir-core feature to be enabled.", 
+        if message.len() > 50 { &message[..50] } else { message });
+    println!("{}", error_message);
+    Err(anyhow!(error_message))
 }
 
 /// Add a fallback implementation when bidir-core is not enabled
