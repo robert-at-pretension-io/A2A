@@ -15,7 +15,7 @@ use crate::server::{
     services::{
         task_service::TaskService,
         streaming_service::StreamingService,
-        notification_service::NotificationService,
+        notification_service::NotificationService, TaskRouter
     },
     run_server,
 };
@@ -26,7 +26,6 @@ use crate::types::{
     DataPart, FilePart,
 };
 
-use crate::bidirectional_agent::task_router;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
