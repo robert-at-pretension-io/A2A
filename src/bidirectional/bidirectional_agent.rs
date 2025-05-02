@@ -15,15 +15,22 @@ use crate::server::{
     services::{
         task_service::TaskService,
         streaming_service::StreamingService,
-        notification_service::NotificationService, TaskRouter
+        notification_service::NotificationService,
     },
+    // Use the canonical TaskRouter and ToolExecutor from the server module
+    task_router::{TaskRouterTrait, RoutingDecision}, // Import TaskRouterTrait and RoutingDecision
+    tool_executor::{ToolExecutorTrait}, // Import ToolExecutorTrait
+    // Use the canonical AgentRegistry and ClientManager
+    agent_registry::AgentRegistry,
+    client_manager::ClientManager,
     run_server,
+    error::ServerError, // Import ServerError for error mapping
 };
 
 use crate::types::{
-    Task, TaskState, Message, Part, TextPart, Role, AgentCard,
+    Task, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities,
     TaskSendParams, TaskQueryParams, TaskIdParams, PushNotificationConfig,
-    DataPart, FilePart,
+    DataPart, FilePart, TaskStatus, // Import TaskStatus
 };
 
 
@@ -34,8 +41,8 @@ use dashmap::DashMap;
 use futures_util::{StreamExt, TryStreamExt};
 use reqwest;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::sync::Arc;
+use serde_json::{json, Value, Map}; // Import Map
+use std::{sync::Arc, error::Error as StdError}; // Import StdError for error mapping
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -55,7 +62,7 @@ You are an AI agent assistant that helps with tasks. You can:
 Always think step-by-step about the best way to handle each request.
 "#;
 
-// Helper Types
+// Helper Types (Keep ExecutionMode, AgentDirectoryEntry, AgentDirectory for local logic)
 
 /// Task execution mode
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -66,7 +73,7 @@ pub enum ExecutionMode {
     Remote { agent_id: String },
 }
 
-/// Entry in the agent directory
+/// Entry in the agent directory (Used locally for routing decisions)
 #[derive(Debug, Clone)]
 struct AgentDirectoryEntry {
     /// Agent card with capabilities
@@ -77,7 +84,7 @@ struct AgentDirectoryEntry {
     active: bool,
 }
 
-/// Simplified Agent Directory
+/// Simplified Agent Directory (Used locally for routing decisions)
 #[derive(Debug, Clone)]
 struct AgentDirectory {
     agents: Arc<DashMap<String, AgentDirectoryEntry>>,
@@ -90,8 +97,9 @@ impl AgentDirectory {
         }
     }
 
-    fn add_or_update_agent(&self, card: AgentCard) {
-        let agent_id = card.id.clone();
+    // Note: This uses the AgentCard from crate::types
+    // We need the agent_id separately as AgentCard doesn't have it
+    fn add_or_update_agent(&self, agent_id: String, card: AgentCard) {
         let entry = AgentDirectoryEntry {
             card,
             last_seen: Utc::now(),
@@ -113,88 +121,10 @@ impl AgentDirectory {
     }
 }
 
-/// Simplified Agent Registry for discovering and caching agent information
-#[derive(Clone)]
-struct AgentRegistry {
-    directory: Arc<AgentDirectory>,
-    http_client: reqwest::Client,
-}
 
-impl AgentRegistry {
-    fn new(directory: Arc<AgentDirectory>) -> Self {
-        Self {
-            directory,
-            http_client: reqwest::Client::new(),
-        }
-    }
+// REMOVED Local AgentRegistry definition
+// REMOVED Local ClientManager definition
 
-    async fn discover_agent(&self, base_url: &str) -> Result<AgentCard> {
-        // Create a temporary client for discovery
-        let client = A2aClient::new(base_url);
-        
-        // Get the agent card from the well-known endpoint
-        let card = client.get_agent_card().await
-            .context("Failed to get agent card")?;
-        
-        // Add or update the agent in the directory
-        self.directory.add_or_update_agent(card.clone());
-        
-        Ok(card)
-    }
-}
-
-/// Simplified Client Manager for managing A2A clients
-#[derive(Clone)]
-struct ClientManager {
-    clients: Arc<DashMap<String, A2aClient>>,
-    registry: Arc<AgentRegistry>,
-}
-
-impl ClientManager {
-    fn new(registry: Arc<AgentRegistry>) -> Self {
-        Self {
-            clients: Arc::new(DashMap::new()),
-            registry,
-        }
-    }
-
-    async fn get_client(&self, agent_id: &str) -> Result<A2aClient> {
-        // Check if we already have a client for this agent
-        if let Some(client) = self.clients.get(agent_id) {
-            return Ok(client.value().clone());
-        }
-
-        // Get the agent info from the registry
-        let agent = self.registry.directory.get_agent(agent_id)
-            .ok_or_else(|| anyhow!("Agent not found: {}", agent_id))?;
-
-        // Create a new client
-        let base_url = agent.card.url.clone();
-        let client = A2aClient::new(&base_url);
-
-        // Store the client for reuse
-        self.clients.insert(agent_id.to_string(), client.clone());
-
-        Ok(client)
-    }
-
-    async fn delegate_task(&self, agent_id: &str, task_params: TaskSendParams) -> Result<Task> {
-        let client = self.get_client(agent_id).await?;
-        let task = client.send_task_with_metadata(
-            &task_params.input.text,
-            task_params.metadata.map(|m| m.to_string()).as_deref(),
-        ).await?;
-        
-        Ok(task)
-    }
-
-    async fn get_delegated_task(&self, agent_id: &str, task_id: &str) -> Result<Task> {
-        let client = self.get_client(agent_id).await?;
-        let task = client.get_task(task_id).await?;
-        
-        Ok(task)
-    }
-}
 
 /// Simple LLM client interface
 #[async_trait]
@@ -264,45 +194,69 @@ impl LlmClient for ClaudeLlmClient {
     }
 }
 
-/// Task Router for determining how to process tasks
+// REMOVED Local TaskRouter definition
+
+// Define a struct that implements the server's TaskRouterTrait
 #[derive(Clone)]
-struct TaskRouter {
+struct BidirectionalTaskRouter {
     llm: Arc<dyn LlmClient>,
-    directory: Arc<AgentDirectory>,
+    directory: Arc<AgentDirectory>, // Use the local directory for routing logic
 }
 
-impl TaskRouter {
-    fn new(llm: Arc<dyn LlmClient>, directory: Arc<AgentDirectory>) -> Self {
+impl BidirectionalTaskRouter {
+     fn new(llm: Arc<dyn LlmClient>, directory: Arc<AgentDirectory>) -> Self {
         Self {
             llm,
             directory,
         }
     }
 
-    async fn route_task(&self, task: &Task) -> Result<ExecutionMode> {
-        // Extract the task content for analysis
-        let task_text = task.messages.iter()
-            .filter(|m| m.role == Role::User)
-            .flat_map(|m| m.parts.iter())
-            .filter_map(|p| match p {
-                Part::TextPart(tp) => Some(tp.text.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+    // Helper to perform the actual routing logic
+    async fn decide_execution_mode(&self, task: &Task) -> Result<ExecutionMode> {
+         // Extract the task content for analysis
+        // Use history if available, otherwise maybe the top-level message if applicable
+        let task_text = task.history.as_ref().map(|history| {
+            history.iter()
+                .filter(|m| m.role == Role::User)
+                .flat_map(|m| m.parts.iter())
+                .filter_map(|p| match p {
+                    Part::TextPart(tp) => Some(tp.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }).unwrap_or_default(); // Handle case where history is None
+
 
         if task_text.is_empty() {
+            // Maybe check task.message if history is empty? Assuming Task might have a top-level message.
+            // For now, default to Local if history is empty/None.
             return Ok(ExecutionMode::Local);
         }
 
-        // Get the list of available agents
+        // Get the list of available agents from the local directory
         let available_agents = self.directory.list_active_agents();
         let agent_descriptions = available_agents.iter()
-            .map(|a| format!("ID: {}\nName: {}\nDescription: {}\nCapabilities: {}", 
-                a.card.id, 
-                a.card.name, 
-                a.card.description.as_deref().unwrap_or(""), 
-                a.card.capabilities.join(", ")))
+            .map(|a| {
+                // Construct capabilities string manually
+                let mut caps = Vec::new();
+                if a.card.capabilities.push_notifications { caps.push("pushNotifications"); }
+                if a.card.capabilities.state_transition_history { caps.push("stateTransitionHistory"); }
+                if a.card.capabilities.streaming { caps.push("streaming"); }
+                // Add other capabilities fields if they exist in AgentCapabilities struct
+
+                // Find the agent_id (key) associated with this card's URL
+                let agent_id = self.directory.agents.iter()
+                    .find(|entry| entry.value().card.url == a.card.url)
+                    .map(|e| e.key().clone())
+                    .unwrap_or_else(|| "unknown-id".to_string()); // Fallback if not found
+
+                format!("ID: {}\nName: {}\nDescription: {}\nCapabilities: {}",
+                    agent_id,
+                    a.card.name.as_deref().unwrap_or(""), // name is Option<String>
+                    a.card.description.as_deref().unwrap_or(""),
+                    caps.join(", "))
+            })
             .collect::<Vec<_>>()
             .join("\n\n");
 
@@ -333,240 +287,323 @@ Your response should be exactly one of those formats, with no additional text.
         } else if decision.starts_with("REMOTE: ") {
             let agent_id = decision.strip_prefix("REMOTE: ").unwrap().trim().to_string();
             
-            // Verify the agent exists
+            // Verify the agent exists in the local directory
             if self.directory.get_agent(&agent_id).is_none() {
+                 warn!("LLM decided to delegate to unknown agent '{}', falling back to local execution.", agent_id);
                 return Ok(ExecutionMode::Local); // Fall back to local if agent not found
             }
             
             Ok(ExecutionMode::Remote { agent_id })
         } else {
+            warn!("LLM routing decision was unclear ('{}'), falling back to local execution.", decision);
             // Default to local if the decision isn't clear
             Ok(ExecutionMode::Local)
         }
     }
 }
 
-/// Tool Executor for running local tools
-#[derive(Clone)]
-struct ToolExecutor;
+#[async_trait]
+impl TaskRouterTrait for BidirectionalTaskRouter {
+    // Match the trait signature: takes TaskSendParams, returns Result<RoutingDecision, ServerError>
+    async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
+        // We need a Task object to make the decision based on history/message.
+        // Construct a temporary Task from TaskSendParams.
+        // This might be simplified if the trait signature changes or if TaskService provides the Task.
+        let task = Task {
+            id: params.id.clone(),
+            status: TaskStatus { // Default status for routing decision
+                state: TaskState::Submitted,
+                timestamp: Some(Utc::now()),
+                message: None, // Add missing field
+            },
+            history: Some(vec![params.message.clone()]), // Use the incoming message as history start
+            artifacts: None,
+            metadata: params.metadata.clone(),
+            session_id: params.session_id.clone(),
+        };
 
-impl ToolExecutor {
-    fn new() -> Self {
-        Self
+        self.decide_execution_mode(&task).await
+            .map(|decision| match decision {
+                ExecutionMode::Local => {
+                    // Convert to the server's RoutingDecision
+                    // Provide tool names if applicable, otherwise empty or default
+                    RoutingDecision::Local {
+                        tool_names: vec!["default_local_tool".to_string()] // Example tool name
+                    }
+                },
+                ExecutionMode::Remote { agent_id } => {
+                    // Convert to the server's RoutingDecision
+                    RoutingDecision::Remote {
+                        agent_id: agent_id.clone()
+                    }
+                },
+            })
+            // Map the anyhow::Error to ServerError::Internal
+            .map_err(|e| ServerError::Internal(format!("Routing error: {}", e)))
     }
 
-    async fn execute(&self, _task: &Task) -> Result<String> {
-        // For simplicity, just return a placeholder response
-        // In a real implementation, this would execute actual tools
-        Ok("Tool execution completed (placeholder)".to_string())
+    // Add the required process_follow_up method
+    async fn process_follow_up(&self, _task_id: &str, _message: &Message) -> Result<RoutingDecision, ServerError> {
+        // For now, always route follow-ups locally as a simple default.
+        // A real implementation would likely involve the LLM again.
+        Ok(RoutingDecision::Local {
+            tool_names: vec!["default_local_tool".to_string()]
+        })
     }
 }
 
+
+// REMOVED Local ToolExecutor definition
+
+// Define a struct that implements the server's ToolExecutorTrait
+#[derive(Clone)]
+struct BidirectionalToolExecutor;
+
+impl BidirectionalToolExecutor {
+    fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl ToolExecutorTrait for BidirectionalToolExecutor {
+     async fn execute(&self, _task: &Task, _tool_names: &[String]) -> Result<Vec<Message>, ServerError> {
+        // For simplicity, just return a placeholder response
+        // In a real implementation, this would execute actual tools based on tool_names
+        Ok(vec![Message {
+            role: Role::Agent, // Use Agent role
+            parts: vec![Part::TextPart(TextPart {
+                text: "Tool execution completed (placeholder)".to_string(),
+                metadata: None, // Add missing field
+                type_: "text".to_string(), // Add missing field
+            })],
+            metadata: None, // Add missing field
+        }])
+        // Note: If the internal logic could fail, map the error to ServerError
+        // .map_err(|e| ServerError::Internal(format!("Tool execution error: {}", e)))
+    }
+}
+
+
 /// Main bidirectional agent implementation
 pub struct BidirectionalAgent {
-    // Core components
-    task_repository: Arc<InMemoryTaskRepository>,
+    // Core components (TaskService, StreamingService, NotificationService are needed for run_server)
     task_service: Arc<TaskService>,
     streaming_service: Arc<StreamingService>,
     notification_service: Arc<NotificationService>,
-    
-    // Bidirectional components
-    agent_directory: Arc<AgentDirectory>,
-    agent_registry: Arc<AgentRegistry>,
-    client_manager: Arc<ClientManager>,
-    task_router: Arc<TaskRouter>,
-    tool_executor: Arc<ToolExecutor>,
-    llm: Arc<dyn LlmClient>,
-    
+
+    // Use canonical server components
+    agent_registry: Arc<AgentRegistry>, // From crate::server::agent_registry
+    client_manager: Arc<ClientManager>, // From crate::server::client_manager
+
+    // Local components for specific logic
+    agent_directory: Arc<AgentDirectory>, // Local directory for routing decisions
+    llm: Arc<dyn LlmClient>, // Local LLM client
+
     // Server configuration
     port: u16,
     bind_address: String,
-    agent_id: String,
+    agent_id: String, // Keep agent_id for identification
 }
 
 impl BidirectionalAgent {
     pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
-        // Create the agent directory
+        // Create the agent directory (local helper)
         let agent_directory = Arc::new(AgentDirectory::new());
-        
-        // Create the LLM client
+
+        // Create the LLM client (local helper)
         let llm: Arc<dyn LlmClient> = if let Some(api_key) = &config.claude_api_key {
             Arc::new(ClaudeLlmClient::new(api_key.clone(), SYSTEM_PROMPT.to_string()))
         } else {
-            return Err(anyhow!("No LLM configuration provided"));
+            // Allow running without LLM if only acting as server/client without local processing
+            warn!("No Claude API key provided. Local LLM processing will not be available.");
+            // Provide a dummy LLM client or handle this case appropriately
+             return Err(anyhow!("No LLM configuration provided")); // Or handle differently
         };
-        
-        // Create the task repository
-        let task_repository = Arc::new(InMemoryTaskRepository::new());
-        
-        // Create the agent registry
-        let agent_registry = Arc::new(AgentRegistry::new(agent_directory.clone()));
-        
-        // Create the client manager
+
+        // Create the task repository (needed by services)
+        let task_repository: Arc<dyn TaskRepository> = Arc::new(InMemoryTaskRepository::new());
+
+        // Create the canonical agent registry (from server module)
+        let agent_registry = Arc::new(AgentRegistry::new()); // Assuming AgentRegistry::new() exists
+
+        // Create the canonical client manager (from server module)
+        // It needs the registry
         let client_manager = Arc::new(ClientManager::new(agent_registry.clone()));
-        
-        // Create the task router
-        let task_router = Arc::new(TaskRouter::new(llm.clone(), agent_directory.clone()));
-        
-        // Create the tool executor
-        let tool_executor = Arc::new(ToolExecutor::new());
-        
-        // Create the task service
+
+        // Create our custom task router implementation
+        let bidirectional_task_router: Arc<dyn TaskRouterTrait> = Arc::new(BidirectionalTaskRouter::new(llm.clone(), agent_directory.clone()));
+
+        // Create our custom tool executor implementation
+        let bidirectional_tool_executor: Arc<dyn ToolExecutorTrait> = Arc::new(BidirectionalToolExecutor::new());
+
+        // Create the task service using the canonical components and our trait implementations
+        // Ensure TaskService::bidirectional exists and takes these arguments
         let task_service = Arc::new(TaskService::bidirectional(
             task_repository.clone(),
-            // Implement TaskRouter trait with our struct
-            Arc::new(move |task: &Task| {
-                let task_router = task_router.clone();
-                let task = task.clone();
-                Box::pin(async move {
-                    task_router.route_task(&task).await
-                        .map_err(|e| anyhow!(e.to_string()))
-                        .map(|decision| match decision {
-                            ExecutionMode::Local => {
-                                // Convert to the server's RoutingDecision
-                                task_router::RoutingDecision::Local { 
-                                    tool_names: vec!["default".to_string()] 
-                                }
-                            },
-                            ExecutionMode::Remote { agent_id } => {
-                                // Convert to the server's RoutingDecision
-                                task_router::RoutingDecision::Remote { 
-                                    agent_id: agent_id.clone() 
-                                }
-                            },
-                        })
-                })
-            }),
-            // Implement ToolExecutor trait with our struct
-            Arc::new(move |task: &Task, _tool_names: &[String]| {
-                let tool_executor = tool_executor.clone();
-                let task = task.clone();
-                Box::pin(async move {
-                    tool_executor.execute(&task).await
-                        .map_err(|e| anyhow!(e.to_string()))
-                        .map(|result| {
-                            vec![Message {
-                                role: Role::Assistant,
-                                parts: vec![Part::TextPart(TextPart { 
-                                    text: result
-                                })],
-                            }]
-                        })
-                })
-            }),
-            client_manager.clone(),
-            agent_registry.clone(),
-            config.agent_id.clone(),
+            Some(bidirectional_task_router), // Pass our TaskRouterTrait implementation
+            Some(bidirectional_tool_executor), // Pass our ToolExecutorTrait implementation
+            Some(client_manager.clone()),    // Pass canonical ClientManager
+            // TaskService::bidirectional might not need agent_registry directly if ClientManager handles it
+            // config.agent_id.clone(), // TaskService might not need agent_id directly
         ));
-        
+
         // Create the streaming service
         let streaming_service = Arc::new(StreamingService::new(task_repository.clone()));
-        
-        // Create the notification service
-        let notification_service = Arc::new(NotificationService::new());
-        
+
+        // Create the notification service (pass repository)
+        let notification_service = Arc::new(NotificationService::new(task_repository.clone()));
+
         Ok(Self {
-            task_repository,
             task_service,
             streaming_service,
             notification_service,
-            
-            agent_directory,
+
+            // Store canonical versions needed by the agent itself (if any)
             agent_registry,
             client_manager,
-            task_router,
-            tool_executor,
+
+            // Store local helper components
+            agent_directory, // Keep local directory for routing logic
             llm,
-            
+
             port: config.port,
             bind_address: config.bind_address,
             agent_id: config.agent_id,
         })
     }
-    
-    /// Process a message using the LLM
-    pub async fn process_message(&self, message: &str) -> Result<String> {
-        // Create a temporary task to hold the message
-        let task = Task {
-            id: Uuid::new_v4().to_string(),
-            state: TaskState::Working,
-            messages: vec![Message {
-                role: Role::User,
-                parts: vec![Part::TextPart(TextPart { 
-                    text: message.to_string() 
-                })],
-            }],
-            state_history: Vec::new(),
-            artifacts: Vec::new(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+
+    /// Process a message (Example: could be used for direct interaction or testing)
+    /// Note: This bypasses the standard A2A server flow.
+    pub async fn process_message_directly(&self, message_text: &str) -> Result<String> {
+        // Create a representative Task structure (matching types.rs)
+        let task_id = Uuid::new_v4().to_string();
+        let initial_message = Message {
+            role: Role::User,
+            parts: vec![Part::TextPart(TextPart {
+                text: message_text.to_string(),
+                metadata: None, // Add missing field
+                type_: "text".to_string(), // Add missing field
+            })],
+            metadata: None, // Add missing field
         };
-        
-        // Route the task
-        let decision = self.task_router.route_task(&task).await?;
-        
+        let task = Task {
+            id: task_id.clone(),
+            // Use status field
+            status: TaskStatus {
+                state: TaskState::Submitted, // Start as submitted
+                timestamp: Some(Utc::now()), // Timestamp is Option<DateTime>
+                message: None, // Add missing field
+            },
+            // Use history field
+            history: Some(vec![initial_message.clone()]),
+            artifacts: None, // Field is Option<Vec<Artifact>>
+            metadata: None,
+            session_id: None,
+            // created_at, updated_at don't exist directly on Task
+        };
+
+        // Use the BidirectionalTaskRouter's helper to decide execution mode
+        // We need an instance of it. Let's assume we create one temporarily or have access.
+        // For simplicity, let's recreate the router logic here or assume access.
+        // This part is tricky as the router is normally part of the TaskService flow.
+        // Let's simulate the routing decision directly for this example method.
+
+        // Simulate routing (replace with actual router call if possible)
+        let router = BidirectionalTaskRouter::new(self.llm.clone(), self.agent_directory.clone());
+        let decision = router.decide_execution_mode(&task).await?;
+
+
         match decision {
             ExecutionMode::Local => {
-                // Process locally with the LLM
-                let prompt = format!("Process this request and provide a helpful response:\n\n{}", message);
+                // Option 1: Use LLM directly
+                info!("Processing message locally using LLM.");
+                let prompt = format!("Process this request and provide a helpful response:\n\n{}", message_text);
                 self.llm.complete(&prompt).await
+
+                // Option 2: Simulate tool execution (if applicable)
+                // info!("Processing message locally using Tool Executor.");
+                // let executor = BidirectionalToolExecutor::new();
+                // let result_messages = executor.execute(&task, &["default_local_tool".to_string()]).await?;
+                // // Extract text from result messages
+                // Ok(result_messages.iter().flat_map(|m| m.parts.iter()).filter_map(|p| match p {
+                //     Part::TextPart(tp) => Some(tp.text.clone()),
+                //     _ => None,
+                // }).collect::<Vec<_>>().join("\n"))
             },
             ExecutionMode::Remote { agent_id } => {
-                // Delegate to remote agent
-                let task_params = TaskSendParams {
-                    input: TaskSendParamsInput {
-                        text: todo!(),
-                    },
-                    metadata: Some(json!({
+                 info!("Delegating message to agent: {}", agent_id);
+                // Use the canonical ClientManager to delegate
+                let mut client = self.client_manager.get_or_create_client(&agent_id).await?; // Use get_or_create_client
+
+                // Construct TaskSendParams
+                let metadata_map: Option<Map<String, Value>> = Some(
+                    serde_json::from_value(json!({
                         "origin": {
-                            "agent_id": self.agent_id,
+                            "agent_id": self.agent_id.clone(), // Clone agent_id
                             "timestamp": Utc::now().to_rfc3339(),
                         }
-                    })),
-                    history_length: todo!(),
-                    id: todo!(),
-                    message: todo!(),
-                    push_notification: todo!(),
-                    session_id: todo!(),
+                    }))? // Convert Value to Map
+                );
+
+                let task_params = TaskSendParams {
+                    id: task_id.clone(), // Reuse task ID or generate new? Depends on protocol.
+                    message: initial_message, // Send the initial user message
+                    metadata: metadata_map,
+                    history_length: Some(10), // Example history length
+                    push_notification: None,
+                    session_id: None, // Add missing field
                 };
-                
-                let delegated_task = self.client_manager.delegate_task(&agent_id, task_params).await?;
-                
-                // Wait for the task to complete (simplified)
-                let mut completed_task = delegated_task;
-                for _ in 0..30 {
-                    if completed_task.state == TaskState::Completed || 
-                       completed_task.state == TaskState::Failed || 
-                       completed_task.state == TaskState::Canceled {
+
+                // Send the task using send_task which takes TaskSendParams
+                let delegated_task = client.send_task(task_params).await?;
+                info!("Delegated task ID: {}", delegated_task.id);
+
+                // Wait for the task to complete (simplified polling)
+                let mut completed_task = delegated_task.clone(); // Clone initial response
+                for i in 0..30 { // Poll for 30 seconds max
+                    let current_state = completed_task.status.state;
+                    info!("Polling delegated task... Attempt {}, State: {:?}", i+1, current_state);
+                    if current_state == TaskState::Completed ||
+                       current_state == TaskState::Failed ||
+                       current_state == TaskState::Canceled {
                         break;
                     }
-                    
+
                     sleep(std::time::Duration::from_secs(1)).await;
-                    completed_task = self.client_manager.get_delegated_task(&agent_id, &delegated_task.id).await?;
+                    // Use get_task which requires &mut self and TaskQueryParams
+                    let query_params = TaskQueryParams {
+                        id: delegated_task.id.clone(),
+                        history_length: None,
+                        metadata: None,
+                    };
+                    completed_task = client.get_task(query_params).await?;
                 }
-                
-                // Extract the response
-                let response = completed_task.messages.iter()
-                    .filter(|m| m.role == Role::Assistant)
-                    .flat_map(|m| m.parts.iter())
-                    .filter_map(|p| match p {
-                        Part::TextPart(tp) => Some(tp.text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                
+
+                // Extract the response from the final task state's history
+                let response = completed_task.history.as_ref().map(|history| {
+                    history.iter()
+                        .filter(|m| m.role == Role::Agent) // Use Agent role
+                        .flat_map(|m| m.parts.iter())
+                        .filter_map(|p| match p {
+                            Part::TextPart(tp) => Some(tp.text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }).unwrap_or_else(|| "No response found in history.".to_string()); // Handle no history
+
                 Ok(response)
             }
         }
     }
-    
+
     /// Run the agent server
     pub async fn run(&self) -> Result<()> {
         // Create a cancellation token for graceful shutdown
         let shutdown_token = CancellationToken::new();
         let shutdown_token_clone = shutdown_token.clone();
-        
+
         // Set up signal handlers for graceful shutdown
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.expect("Failed to install CTRL+C handler");
@@ -582,26 +619,58 @@ impl BidirectionalAgent {
             self.streaming_service.clone(),
             self.notification_service.clone(),
             shutdown_token.clone(),
-        ).await?;
-        
+        ).await.map_err(anyhow::Error::from)?; // Map the Box<dyn Error>
+
         println!("Server running on {}:{}", self.bind_address, self.port);
-        
+
         // Wait for the server to complete
-        server_handle.await.map_err(|e| anyhow!("Server error: {}", e))?;
-        
-        Ok(())
+        // The JoinHandle contains Result<(), JoinError>
+        // The run_server function itself returns Result<JoinHandle<Result<(), ServerError>>, Box<dyn StdError + Send + Sync>>
+        // We need to handle both potential errors.
+        match server_handle.await {
+             Ok(server_result) => {
+                 match server_result {
+                     Ok(()) => {
+                        info!("Server shut down gracefully.");
+                        Ok(())
+                     }
+                     Err(server_err) => {
+                        error!("Server execution failed: {}", server_err);
+                        Err(anyhow!("Server execution error: {}", server_err))
+                     }
+                 }
+             }
+            Err(join_err) => {
+                error!("Failed to join server task: {}", join_err);
+                Err(anyhow!("Server join error: {}", join_err))
+            }
+        }
     }
-    
-    /// Create an agent card for discovery
+
+    /// Create an agent card (matching types.rs structure)
     pub fn create_agent_card(&self) -> AgentCard {
+        // Construct AgentCapabilities based on actual capabilities
+        let capabilities = AgentCapabilities {
+            push_notifications: true, // Example: Assuming supported
+            state_transition_history: true, // Example: Assuming supported
+            streaming: false, // Example: Assuming not supported
+            // Add other fields from AgentCapabilities if they exist
+        };
+
         AgentCard {
-            id: self.agent_id.clone(),
-            name: AGENT_NAME.to_string(),
+            // id field does not exist on AgentCard in types.rs
+            name: AGENT_NAME.to_string(), // name is String
             description: Some("A bidirectional A2A agent that can process tasks and delegate to other agents".to_string()),
-            version: Some(AGENT_VERSION.to_string()),
-            url: format!("http://{}:{}", self.bind_address, self.port),
-            capabilities: vec!["texttask".to_string(), "bidirectional".to_string()],
-            auth_required: false,
+            version: AGENT_VERSION.to_string(), // version is String
+            url: format!("http://{}:{}", self.bind_address, self.port), // url is String
+            capabilities, // Use the capabilities struct
+            authentication: None, // Set authentication if needed, otherwise None
+            default_input_modes: vec!["text".to_string()], // Example
+            default_output_modes: vec!["text".to_string()], // Example
+            documentation_url: None,
+            provider: None,
+            skills: vec![], // skills is Vec<AgentSkill>, provide empty vec
+            // Add other fields from AgentCard if they exist
         }
     }
 }
@@ -626,21 +695,20 @@ impl Default for BidirectionalAgentConfig {
     }
 }
 
-// TaskSendParams input struct for easier JSON deserialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TaskSendParamsInput {
-    text: String,
-}
+// REMOVED unused TaskSendParamsInput struct
 
 /// Main entry point
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt::init();
+
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
-    
+
     // Create a configuration
     let mut config = BidirectionalAgentConfig::default();
-    
+
     // Basic argument parsing
     for i in 1..args.len() {
         match args[i].as_str() {
@@ -658,34 +726,41 @@ async fn main() -> Result<()> {
             },
             "--message" if i + 1 < args.len() => {
                 // Interactive mode - just process a single message
-                
+
                 // Check if we have an API key
                 let api_key = config.claude_api_key.clone()
                     .or_else(|| std::env::var("CLAUDE_API_KEY").ok())
                     .ok_or_else(|| anyhow!("No Claude API key provided. Use --claude-api-key or set CLAUDE_API_KEY environment variable."))?;
-                
+
                 config.claude_api_key = Some(api_key);
-                
+
                 // Create the agent
                 let agent = BidirectionalAgent::new(config)?;
-                
-                // Process the message
+
+                // Process the message using the direct method
                 let message = args[i + 1].clone();
-                let response = agent.process_message(&message).await?;
-                
-                println!("{}", response);
+                println!("Processing message: '{}'", message);
+                let response = agent.process_message_directly(&message).await?;
+
+                println!("Response:\n{}", response);
                 return Ok(());
             },
-            _ => {}
+            _ => {} // Ignore unknown flags or flags without values for simplicity
         }
     }
-    
+
     // Check for environment variables if not provided as arguments
     if config.claude_api_key.is_none() {
         config.claude_api_key = std::env::var("CLAUDE_API_KEY").ok();
+        if config.claude_api_key.is_none() {
+             warn!("CLAUDE_API_KEY environment variable not set. LLM features will be unavailable unless --claude-api-key is used.");
+             // Decide if this should be a fatal error or just a warning
+             // For now, let it proceed, but new() might fail later if LLM is required.
+        }
     }
-    
+
     // Create and run the agent
+    info!("Starting agent with config: {:?}", config);
     let agent = BidirectionalAgent::new(config)?;
     agent.run().await
 }
