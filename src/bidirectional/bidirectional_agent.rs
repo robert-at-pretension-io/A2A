@@ -515,7 +515,7 @@ impl BidirectionalAgent {
                 // Delegate to remote agent
                 let task_params = TaskSendParams {
                     input: TaskSendParamsInput {
-                        text: message.to_string(),
+                        text: todo!(),
                     },
                     metadata: Some(json!({
                         "origin": {
@@ -523,6 +523,11 @@ impl BidirectionalAgent {
                             "timestamp": Utc::now().to_rfc3339(),
                         }
                     })),
+                    history_length: todo!(),
+                    id: todo!(),
+                    message: todo!(),
+                    push_notification: todo!(),
+                    session_id: todo!(),
                 };
                 
                 let delegated_task = self.client_manager.delegate_task(&agent_id, task_params).await?;
