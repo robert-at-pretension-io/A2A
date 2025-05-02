@@ -5,7 +5,7 @@
 #[cfg(feature = "bidir-core")]
 use crate::client::{A2aClient, errors::ClientError};
 #[cfg(feature = "bidir-core")]
-use crate::types::{TaskSendParams, Task, TaskState}; // Import necessary types
+use crate::types::{TaskSendParams, Task, TaskState, AgentCard}; // Import necessary types
 #[cfg(feature = "bidir-core")]
 use crate::bidirectional_agent::{
     agent_registry::AgentRegistry,
@@ -190,6 +190,18 @@ impl ClientManager {
         let mut client = self.get_or_create_client(agent_id).await?;
         client.get_task(task_id).await
     }
+    
+    /// Gets an agent card for the specified agent ID
+    pub async fn get_agent_card(&self, agent_id: &str) -> Result<Option<AgentCard>, ClientError> {
+        // Get the agent info from the registry
+        if let Some(agent_info) = self.registry.get(agent_id) {
+            // Return a copy of the agent card
+            Ok(Some(agent_info.card.clone()))
+        } else {
+            // Agent not found in registry
+            Ok(None)
+        }
+    }
 
     /// Periodically polls the status of delegated tasks.
     /// This should be run in a background task managed by the main agent loop.
@@ -314,6 +326,8 @@ use crate::bidirectional_agent::config::ToolConfigs;
             network: NetworkConfig::default(),
             tools: ToolConfigs::default(),
             directory: DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         });
         
         #[cfg(not(feature = "bidir-local-exec"))]
@@ -324,6 +338,10 @@ use crate::bidirectional_agent::config::ToolConfigs;
             auth: AuthConfig::default(), 
             network: NetworkConfig::default(),
             directory: DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         });
         let manager = ClientManager::new(registry, config).unwrap();
 
@@ -367,6 +385,8 @@ use crate::bidirectional_agent::config::ToolConfigs;
             network: NetworkConfig::default(),
             tools: ToolConfigs::default(),
             directory: DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         });
         
         #[cfg(not(feature = "bidir-local-exec"))]
@@ -377,6 +397,8 @@ use crate::bidirectional_agent::config::ToolConfigs;
             auth: AuthConfig { client_credentials, ..Default::default() },
             network: NetworkConfig::default(),
             directory: DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         });
         let manager = ClientManager::new(registry, config).unwrap();
 
@@ -425,6 +447,8 @@ use crate::bidirectional_agent::config::ToolConfigs;
             network: NetworkConfig::default(),
             tools: ToolConfigs::default(),
             directory: DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         });
         
         #[cfg(not(feature = "bidir-local-exec"))]
@@ -435,6 +459,8 @@ use crate::bidirectional_agent::config::ToolConfigs;
             auth: AuthConfig { client_credentials, ..Default::default() },
             network: NetworkConfig::default(),
             directory: DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         });
         let manager = ClientManager::new(registry, config).unwrap();
 
@@ -463,6 +489,8 @@ use crate::bidirectional_agent::config::ToolConfigs;
             network: NetworkConfig::default(),
             tools: ToolConfigs::default(),
             directory: DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         });
         
         #[cfg(not(feature = "bidir-local-exec"))]
@@ -473,6 +501,10 @@ use crate::bidirectional_agent::config::ToolConfigs;
             auth: AuthConfig::default(), 
             network: NetworkConfig::default(),
             directory: DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         });
         let manager = ClientManager::new(registry, config).unwrap();
 

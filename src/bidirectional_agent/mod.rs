@@ -19,9 +19,10 @@ use std::sync::Mutex as StdMutex; // Use std Mutex for handles
 #[cfg(feature = "bidir-core")]
 use url::Url;
 #[cfg(feature = "bidir-delegate")]
-use crate::bidirectional_agent::tools::{RemoteToolRegistry, RemoteToolExecutor}; // Assuming these types exist
+use crate::bidirectional_agent::tools::{RemoteToolRegistry, RemoteToolExecutor};
 #[cfg(feature = "bidir-delegate")]
 use crate::bidirectional_agent::agent_directory::ActiveAgentEntry; // Import for tool discovery
+use std::time::Duration; // Add this for Duration::from_secs()
 
 // Public submodules (conditionally compiled based on features)
 #[cfg(feature = "bidir-core")]
@@ -88,8 +89,6 @@ pub use task_flow::TaskFlow;
 pub use result_synthesis::ResultSynthesizer;
 #[cfg(feature = "bidir-delegate")]
 pub use task_extensions::TaskRepositoryExt;
-#[cfg(feature = "bidir-delegate")]
-pub use crate::bidirectional_agent::tools::{RemoteToolRegistry, RemoteToolExecutor}; // Re-export if needed
 
 #[cfg(feature = "bidir-core")]
 /// Main struct representing the Bidirectional Agent.
@@ -402,24 +401,24 @@ impl BidirectionalAgent {
         // Use futures::stream to process agents concurrently (optional, but good for many agents)
         use futures::stream::{self, StreamExt, TryStreamExt};
         let results = stream::iter(active_agents)
-            .map(|agent_entry| async {
-                let agent_id = &agent_entry.agent_id;
-                let agent_url = &agent_entry.url;
+            .map(|agent_entry| async move {
+                let agent_id = agent_entry.agent_id;
+                let agent_url = agent_entry.url;
                 log::debug!(target: "tool_discovery", "Querying tools for agent: {} at {}", agent_id, agent_url);
 
                 // --- Placeholder: Actual Tool Discovery Logic ---
                 // Example using ClientManager to get AgentCard (if AgentCard contains tool info):
-                match self.client_manager.get_agent_card(agent_id).await {
+                match self.client_manager.get_agent_card(&agent_id).await {
                     Ok(Some(card)) => {
                         // Assuming RemoteToolRegistry has a method to update from an AgentCard
-                        match self.remote_tool_registry.update_tools_from_card(agent_id, &card).await {
+                        match self.remote_tool_registry.update_tools_from_card(&agent_id, &card).await {
                             Ok(_) => {
                                 log::debug!(target: "tool_discovery", "Successfully updated tools for agent: {}", agent_id);
-                                Ok(true) // Indicate update occurred
+                                Ok::<bool, anyhow::Error>(true) // Indicate update occurred
                             }
                             Err(e) => {
                                 log::warn!(target: "tool_discovery", "Failed to update tools for agent {}: {:?}", agent_id, e);
-                                Ok(false) // No update, but not a fatal error for the whole process
+                                Ok::<bool, anyhow::Error>(false) // No update, but not a fatal error for the whole process
                             }
                         }
                     }
@@ -427,11 +426,11 @@ impl BidirectionalAgent {
                         log::warn!(target: "tool_discovery", "Could not find agent card for active agent: {}", agent_id);
                         // Optionally: Remove tools for this agent if card is gone?
                         // self.remote_tool_registry.remove_tools_for_agent(agent_id).await?;
-                        Ok(false)
+                        Ok::<bool, anyhow::Error>(false)
                     }
                     Err(e) => {
                         log::warn!(target: "tool_discovery", "Error fetching agent card for {}: {:?}", agent_id, e);
-                        Ok(false) // Error fetching card, treat as no update for this agent
+                        Ok::<bool, anyhow::Error>(false) // Error fetching card, treat as no update for this agent
                     }
                 }
                 // --- End Placeholder ---
@@ -464,8 +463,13 @@ impl BidirectionalAgent {
         self.cancellation_token.cancel();
 
         // Wait for the server task to complete
-        // Use std::sync::Mutex correctly
-        if let Some(handle) = self.server_handle.lock().expect("Mutex poisoned").take() {
+        // Take the handle out of the mutex to avoid holding the MutexGuard across await
+        let server_handle = {
+            let mut lock = self.server_handle.lock().expect("Mutex poisoned");
+            lock.take()
+        };
+        
+        if let Some(handle) = server_handle {
              println!("   Waiting for server task to finish...");
              if let Err(e) = handle.await {
                  eprintln!("   Server task join error: {:?}", e);
@@ -475,8 +479,11 @@ impl BidirectionalAgent {
         }
 
         // Wait for all background tasks to complete
-        // Use std::sync::Mutex correctly
-        let handles = std::mem::take(&mut *self.background_tasks.lock().expect("Mutex poisoned"));
+        // Take handles out of the mutex to avoid holding the MutexGuard across await
+        let handles = {
+            let mut lock = self.background_tasks.lock().expect("Mutex poisoned");
+            std::mem::take(&mut *lock)
+        };
         println!("   Waiting for {} background tasks...", handles.len());
         for (i, handle) in handles.into_iter().enumerate() {
             if let Err(e) = handle.await {
@@ -529,6 +536,8 @@ mod tests {
             tools: config::ToolConfigs::default(),
             #[cfg(feature = "bidir-core")]
             directory: config::DirectoryConfig::default(),
+            #[cfg(feature = "bidir-delegate")]
+            tool_discovery_interval_minutes: 30,
         };
         // BidirectionalAgent::new is async, use block_on for test
         let agent_result = tokio_test::block_on(BidirectionalAgent::new(config));

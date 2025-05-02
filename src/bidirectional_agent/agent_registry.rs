@@ -216,7 +216,15 @@ impl AgentRegistry {
             match agents_to_refresh_result {
                 Ok(agents_to_refresh) => {
                     log::debug!(target: "agent_registry", "Refreshing {} agent details", agents_to_refresh.len());
-                    for (agent_id, _url) in agents_to_refresh {
+                    for agent_entry in agents_to_refresh {
+                        // Extract agent_id based on the type
+                        let agent_id = match agent_entry {
+                            #[cfg(feature = "bidir-core")]
+                            agent_entry => agent_entry.agent_id,
+                            #[cfg(not(feature = "bidir-core"))]
+                            (id, _url) => id,
+                        };
+                        
                         // Use spawn to refresh concurrently? Maybe not, could overload network/rate limits.
                         // Refresh sequentially for now.
                         match self.refresh_agent_info(&agent_id).await {

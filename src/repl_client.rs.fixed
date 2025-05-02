@@ -1,0 +1,190 @@
+use anyhow::{Result, Context, anyhow, Error as AnyhowError};
+use rustyline::{Editor, Config, EditMode};
+use rustyline::error::ReadlineError;
+use std::sync::Arc;
+use std::io::Write;
+use tokio::sync::Mutex;
+use uuid::Uuid;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+
+use futures_util::StreamExt;
+use crate::{
+    client::A2aClient,
+    client::errors::{ClientError, A2aError as ClientA2aError},
+    client::streaming::StreamingResponse,
+    types::{TaskSendParams, Message, Role, Part, TextPart, Task, TaskStatus, TaskState},
+};
+
+/// Custom error type for REPL operations
+#[derive(Debug)]
+enum ReplError {
+    /// Network-related errors (connection failures, timeouts)
+    Network(String),
+    
+    /// Authentication errors (invalid credentials, permission issues)
+    Auth(String),
+    
+    /// Agent-related errors (agent not found, agent unavailable)
+    Agent(String),
+    
+    /// Task-related errors (task not found, task failed)
+    Task(String),
+    
+    /// Tool-related errors (tool not found, tool execution failed)
+    Tool(String),
+    
+    /// User input errors (invalid command format, missing parameters)
+    Input(String),
+    
+    /// LLM-related errors (model unavailable, prompt failures)
+    Llm(String),
+    
+    /// Internal errors (unexpected state, runtime errors)
+    Internal(String),
+}
+
+impl ReplError {
+    /// Convert to a user-friendly error message with icon and recovery suggestion
+    fn user_message(&self) -> String {
+        match self {
+            ReplError::Network(msg) => 
+                format!("🔌 Network error: {}\n   Try: Check your internet connection or VPN status", msg),
+                
+            ReplError::Auth(msg) => 
+                format!("🔒 Authentication error: {}\n   Try: Check your API key or credentials", msg),
+                
+            ReplError::Agent(msg) => 
+                format!("🤖 Agent error: {}\n   Try: Use 'agents' to see available agents", msg),
+                
+            ReplError::Task(msg) => 
+                format!("📋 Task error: {}\n   Try: Simplify your task or try again later", msg),
+                
+            ReplError::Tool(msg) => 
+                format!("🔧 Tool error: {}\n   Try: Use 'tools' to see available tools", msg),
+                
+            ReplError::Input(msg) => 
+                format!("⌨️ Input error: {}\n   Try: Use 'help' to see usage examples", msg),
+                
+            ReplError::Llm(msg) => 
+                format!("🧠 LLM error: {}\n   Try: Simplify your prompt or check API key", msg),
+                
+            ReplError::Internal(msg) => 
+                format!("⚙️ Internal error: {}\n   Try: Restart the REPL client", msg),
+        }
+    }
+    
+    /// Create a network error
+    fn network<T: ToString>(msg: T) -> Self {
+        ReplError::Network(msg.to_string())
+    }
+    
+    /// Create an auth error
+    fn auth<T: ToString>(msg: T) -> Self {
+        ReplError::Auth(msg.to_string())
+    }
+    
+    /// Create an agent error
+    fn agent<T: ToString>(msg: T) -> Self {
+        ReplError::Agent(msg.to_string())
+    }
+    
+    /// Create a task error
+    fn task<T: ToString>(msg: T) -> Self {
+        ReplError::Task(msg.to_string())
+    }
+    
+    /// Create a tool error
+    fn tool<T: ToString>(msg: T) -> Self {
+        ReplError::Tool(msg.to_string())
+    }
+    
+    /// Create an input error
+    fn input<T: ToString>(msg: T) -> Self {
+        ReplError::Input(msg.to_string())
+    }
+    
+    /// Create an LLM error
+    fn llm<T: ToString>(msg: T) -> Self {
+        ReplError::Llm(msg.to_string())
+    }
+    
+    /// Create an internal error
+    fn internal<T: ToString>(msg: T) -> Self {
+        ReplError::Internal(msg.to_string())
+    }
+    
+    /// Convert from ClientError to ReplError
+    fn from_client_error(err: ClientError) -> Self {
+        match err {
+            ClientError::ReqwestError { msg, status_code } => {
+                if let Some(code) = status_code {
+                    match code {
+                        401 | 403 => ReplError::auth(format!("Authentication failed ({}): {}", code, msg)),
+                        404 => ReplError::network(format!("Resource not found: {}", msg)),
+                        408 | 504 => ReplError::network(format!("Request timed out: {}", msg)),
+                        500..=599 => ReplError::network(format!("Server error ({}): {}", code, msg)),
+                        _ => ReplError::network(format!("HTTP error ({}): {}", code, msg)),
+                    }
+                } else {
+                    ReplError::network(format!("Network error: {}", msg))
+                }
+            },
+            ClientError::JsonError(msg) => ReplError::internal(format!("JSON parsing error: {}", msg)),
+            ClientError::A2aError(a2a_err) => {
+                let code = a2a_err.code();
+                match code {
+                    401 | 403 => ReplError::auth(format!("A2A authentication error: {}", a2a_err.message())),
+                    404 => ReplError::task(format!("A2A resource not found: {}", a2a_err.message())),
+                    _ => ReplError::internal(format!("A2A error {}: {}", code, a2a_err.message())),
+                }
+            },
+            ClientError::Other(msg) => ReplError::internal(format!("Client error: {}", msg)),
+        }
+    }
+}
+
+impl From<AnyhowError> for ReplError {
+    fn from(err: AnyhowError) -> Self {
+        ReplError::internal(err.to_string())
+    }
+}
+
+impl std::fmt::Display for ReplError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.user_message())
+    }
+}
+
+impl std::error::Error for ReplError {}
+
+/// Type alias for Result with ReplError
+type ReplResult<T> = std::result::Result<T, ReplError>;
+
+// Conditionally import bidirectional agent modules based on features
+#[cfg(feature = "bidir-core")]
+use crate::bidirectional_agent::{
+    BidirectionalAgent,
+    config::BidirectionalAgentConfig,
+    config,
+    agent_registry::AgentRegistry,
+};
+
+// Import LLM routing only when bidir-local-exec feature is enabled
+#[cfg(feature = "bidir-local-exec")]
+use crate::bidirectional_agent::llm_routing::claude_client::{LlmClient, LlmClientConfig};
+
+// Import remote tool registry and executor when bidir-delegate feature is enabled
+#[cfg(feature = "bidir-delegate")]
+use crate::bidirectional_agent::tools::{RemoteToolRegistry, RemoteToolExecutor};
+
+// Import TaskFlow and ResultSynthesizer when bidir-delegate feature is enabled
+#[cfg(feature = "bidir-delegate")]
+use crate::bidirectional_agent::{
+    task_flow::TaskFlow,
+    result_synthesis::ResultSynthesizer
+};
+
+/// Main entry point for the LLM REPL
+#[cfg(feature = "bidir-core")]
+pub async fn run_repl(config_path: &str) -> Result

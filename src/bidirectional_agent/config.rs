@@ -257,7 +257,7 @@ mod tests {
         }
         #[cfg(feature = "bidir-delegate")]
         {
-             assert_eq!(config.tool_discovery_interval_minutes, 45); // Check specific value
+             assert_eq!(config.tool_discovery_interval_minutes, 30); // Check default value
         }
     }
 

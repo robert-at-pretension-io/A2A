@@ -204,20 +204,20 @@ mod error_handling_tests {
         // Instead of trying to start an actual server
         
         // Create HTTP error response (simulated)
-        let client_error = ClientError::HttpError("401 Unauthorized: Authentication required".to_string());
+        let client_error = ClientError::ReqwestError { msg: "401 Unauthorized: Authentication required".to_string(), status_code: Some(401) };
         let result: Result<crate::types::Task, ClientError> = Err(client_error);
         
         // Verify we handle the error correctly
         match result {
-            Err(ClientError::HttpError(message)) => {
-                println!("Error message: {}", message);
-                assert!(message.contains("401") || message.contains("Unauthorized"),
+            Err(ClientError::ReqwestError { msg, status_code }) => {
+                println!("Error message: {}", msg);
+                assert!(msg.contains("401") || msg.contains("Unauthorized"),
                         "Error should indicate authentication failure (HTTP 401)");
+                assert_eq!(status_code, Some(401), "Status code should be 401");
             },
             Err(e) => {
                 println!("Got different error type: {:?}", e);
-                // Still passes, but it might be a different type of error depending on how
-                // the HTTP client handles authentication failures
+                return Err(format!("Expected ReqwestError but got: {:?}", e).into());
             },
             Ok(_) => {
                 return Err("Expected error but got Ok result".into());

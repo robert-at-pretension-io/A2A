@@ -212,7 +212,7 @@ impl A2aClient {
         let response = http_request.send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::HttpError(format!("Request failed with status: {}", response.status())));
+            return Err(ClientError::ReqwestError { msg: format!("Request failed with status: {}", response.status()), status_code: Some(response.status().as_u16()) });
         }
 
         // Get the response as a byte stream

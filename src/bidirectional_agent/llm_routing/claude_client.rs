@@ -182,7 +182,14 @@ impl ClaudeClient {
     
     /// Extracts JSON from a text that might contain other content.
     fn extract_json(&self, text: &str) -> Result<String> {
-        // Look for JSON between triple backticks
+        // Try to find JSON directly (primary approach)
+        if let Some(start) = text.find('{') {
+            if let Some(end) = text[start..].rfind('}') {
+                return Ok(text[start..start + end + 1].to_string());
+            }
+        }
+        
+        // Look for JSON between triple backticks (legacy format support)
         if let Some(start) = text.find("```json") {
             if let Some(end) = text[start..].find("```") {
                 // +7 to skip ```json
@@ -190,10 +197,13 @@ impl ClaudeClient {
             }
         }
         
-        // Try to find JSON between regular backticks
-        if let Some(start) = text.find('{') {
-            if let Some(end) = text[start..].rfind('}') {
-                return Ok(text[start..start + end + 1].to_string());
+        // Try to find JSON between regular backticks (legacy format support)
+        if let Some(start) = text.find('`') {
+            if let Some(end) = text[start + 1..].find('`') {
+                let content = text[start + 1..start + 1 + end].trim();
+                if content.starts_with('{') && content.ends_with('}') {
+                    return Ok(content.to_string());
+                }
             }
         }
         

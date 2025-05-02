@@ -86,7 +86,7 @@ impl A2aClient {
         let response = http_request.send().await?;
         
         if !response.status().is_success() {
-            return Err(ClientError::HttpError(format!("Request failed with status: {}", response.status())));
+            return Err(ClientError::ReqwestError { msg: format!("Request failed with status: {}", response.status()), status_code: Some(response.status().as_u16()) });
         }
         
         // Parse the response as a generic JSON-RPC response
@@ -132,7 +132,7 @@ impl A2aClient {
         let response = request.send().await?;
         
         if response.status() != StatusCode::OK {
-            return Err(ClientError::HttpError(format!("Failed to get agent card: {}", response.status())));
+            return Err(ClientError::ReqwestError { msg: format!("Failed to get agent card: {}", response.status()), status_code: Some(response.status().as_u16()) });
         }
         
         match response.json().await {
@@ -327,7 +327,7 @@ impl A2aClient {
         let response = http_request.send().await?;
         
         if !response.status().is_success() {
-            return Err(ClientError::HttpError(format!("Request failed with status: {}", response.status())));
+            return Err(ClientError::ReqwestError { msg: format!("Request failed with status: {}", response.status()), status_code: Some(response.status().as_u16()) });
         }
         
         // Parse the response as a generic JSON-RPC response

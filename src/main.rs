@@ -7,9 +7,13 @@ mod client;
 mod schema_utils; // Add this line
 mod runner; // Add the runner module
 mod server; // Add the reference server module
+mod agent_tester; // Add the agent tester module
 // Add bidirectional_agent module conditionally
 #[cfg(feature = "bidir-core")]
 pub mod bidirectional_agent;
+// Add REPL client module conditionally
+#[cfg(feature = "bidir-core")]
+mod repl_client;
 #[cfg(test)]
 mod client_tests;
 
@@ -88,6 +92,19 @@ enum Commands {
         config: String,
         // Port binding will be handled internally based on config or defaults
     },
+    /// Test and manage agent discovery (requires 'bidir-core' feature)
+    #[cfg(feature = "bidir-core")]
+    AgentTester {
+        #[command(subcommand)]
+        command: AgentTesterCommands,
+    },
+    /// Start an interactive REPL client for the bidirectional agent (requires 'bidir-core' feature)
+    #[cfg(feature = "bidir-core")]
+    ReplClient {
+        /// Configuration file path
+        #[arg(short, long, default_value = "bidirectional_agent.toml")]
+        config: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -105,6 +122,43 @@ enum ConfigCommands {
         /// Force regeneration even if types are up to date
         #[arg(short, long)]
         force: bool,
+    },
+}
+
+#[cfg(feature = "bidir-core")]
+#[derive(Subcommand)]
+enum AgentTesterCommands {
+    /// Test an agent before adding it to the directory
+    Test {
+        /// URL of the agent to test
+        #[arg(short, long)]
+        url: String,
+        /// Timeout for each individual test in seconds
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+        /// Run all available tests (not just required ones)
+        #[arg(long)]
+        all: bool,
+    },
+    /// Test and add an agent to the directory if it passes
+    TestAndAdd {
+        /// URL of the agent to test and add
+        #[arg(short, long)]
+        url: String,
+        /// Timeout for each individual test in seconds
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+        /// Add the agent even if some tests fail (as long as it's functional)
+        #[arg(long)]
+        force: bool,
+    },
+    /// List all agents that have been tested
+    List,
+    /// Re-test an agent that's already in the directory
+    Retest {
+        /// ID of the agent to re-test
+        #[arg(short, long)]
+        id: String,
     },
 }
 
@@ -241,7 +295,170 @@ fn main() {
             }
              println!("🏁 Bidirectional Agent finished."); // Should ideally run indefinitely
         }
+        #[cfg(feature = "bidir-core")]
+        Commands::AgentTester { command } => {
+            println!("🧪 Running Agent Tester...");
+            // Create a runtime for the async agent tester
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            if let Err(e) = rt.block_on(run_agent_tester_command(command)) {
+                eprintln!("❌ Agent tester error: {}", e);
+                std::process::exit(1);
+            }
+        },
+        #[cfg(feature = "bidir-core")]
+        Commands::ReplClient { config } => {
+            println!("🔄 Starting REPL client...");
+            // Create a runtime for the async REPL client
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            if let Err(e) = rt.block_on(repl_client::run_repl(config)) {
+                eprintln!("❌ REPL client error: {:?}", e); // Use debug format for detailed error
+                std::process::exit(1);
+            }
+            println!("🏁 REPL client finished.");
+        }
     }
+}
+
+#[cfg(feature = "bidir-core")]
+async fn run_agent_tester_command(command: &AgentTesterCommands) -> Result<(), Box<dyn std::error::Error>> {
+    use agent_tester::{AgentTester, AgentTesterConfig};
+    use crate::bidirectional_agent::config::load_config;
+    use colored::*;
+    
+    // Use the default bidirectional agent config file for testing
+    let config_path = "bidirectional_agent.toml";
+    
+    // Load the agent configuration
+    let config = load_config(config_path).map_err(|e| {
+        format!("Failed to load bidirectional agent config from '{}': {}", config_path, e)
+    })?;
+    
+    // Initialize the agent components needed for testing
+    // We'll need a running agent for this to work
+    let agent = bidirectional_agent::BidirectionalAgent::new(config).await
+        .map_err(|e| format!("Failed to initialize agent components: {}", e))?;
+    
+    // Create the agent tester
+    let tester_config = match command {
+        AgentTesterCommands::Test { timeout, all, .. } => {
+            AgentTesterConfig {
+                test_timeout: Duration::from_secs(*timeout),
+                run_all_tests: *all,
+                ..Default::default()
+            }
+        },
+        AgentTesterCommands::TestAndAdd { timeout, .. } => {
+            AgentTesterConfig {
+                test_timeout: Duration::from_secs(*timeout),
+                run_all_tests: false, // Default to false for TestAndAdd
+                ..Default::default()
+            }
+        },
+        _ => AgentTesterConfig::default(),
+    };
+    
+    let tester = AgentTester::from_agent(&agent, tester_config);
+    
+    // Execute the requested command
+    match command {
+        AgentTesterCommands::Test { url, .. } => {
+            println!("🔍 Testing agent at URL: {}", url);
+            let results = tester.test_agent(url).await?;
+            
+            // Display results
+            println!("\n{}", "======= Test Results =======".blue().bold());
+            println!("Agent: {}", url);
+            if let Some(card) = &results.agent_card {
+                println!("Name: {}", card.name);
+                if let Some(desc) = &card.description {
+                    println!("Description: {}", desc);
+                }
+            } else {
+                println!("(No agent card retrieved)");
+            }
+            
+            if results.passed_tests {
+                println!("Tests: {}", "PASSED".green().bold());
+            } else if results.functional {
+                println!("Tests: {}", "PARTIAL PASS".yellow().bold());
+                println!("Details: {}", results.message);
+            } else {
+                println!("Tests: {}", "FAILED".red().bold());
+                println!("Details: {}", results.message);
+            }
+            println!("{}", "==========================".blue().bold());
+        },
+        
+        AgentTesterCommands::TestAndAdd { url, force, .. } => {
+            println!("🧪 Testing and adding agent at URL: {}", url);
+            let add_result = tester.test_and_add_agent(url).await?;
+            
+            println!("\n{}", "======= Operation Results =======".blue().bold());
+            if add_result.added_to_directory {
+                println!("Agent added: {}", add_result.agent_id.unwrap_or_else(|| "unknown".to_string()));
+                println!("Status: {}", "SUCCESS".green().bold());
+            } else if *force && add_result.test_results.functional {
+                // We could add the agent forcibly if requested
+                println!("Agent added forcibly: {}", add_result.agent_id.unwrap_or_else(|| "unknown".to_string()));
+                println!("Status: {}", "FORCED SUCCESS".yellow().bold());
+            } else {
+                println!("Agent not added");
+                println!("Status: {}", "FAILED".red().bold());
+                println!("Reason: {}", add_result.message);
+            }
+            println!("{}", "================================".blue().bold());
+        },
+        
+        AgentTesterCommands::List => {
+            println!("📋 Listing all tested agents");
+            let agents = tester.list_tested_agents().await?;
+            
+            println!("\n{}", "======= Agent Directory =======".blue().bold());
+            if agents.is_empty() {
+                println!("No agents found in directory");
+            } else {
+                for (i, agent) in agents.iter().enumerate() {
+                    // Import from the source directly
+                    use crate::bidirectional_agent::agent_directory::AgentStatus;
+                    let status_str = match agent.status {
+                        AgentStatus::Active => "✅ Active".green(),
+                        AgentStatus::Inactive => "⚠️ Inactive".yellow(),
+                    };
+                    
+                    println!("{}. {} ({})", i+1, agent.agent_id.bold(), status_str);
+                    println!("   URL: {}", agent.url);
+                    if let Some(card) = &agent.agent_card {
+                        if let Some(desc) = &card.description {
+                            println!("   Description: {}", desc);
+                        }
+                    }
+                    println!();
+                }
+            }
+            println!("{}", "================================".blue().bold());
+        },
+        
+        AgentTesterCommands::Retest { id } => {
+            println!("🔄 Re-testing agent with ID: {}", id);
+            let results = tester.retest_agent(id).await?;
+            
+            println!("\n{}", "======= Test Results =======".blue().bold());
+            println!("Agent ID: {}", id);
+            
+            if results.passed_tests {
+                println!("Tests: {}", "PASSED".green().bold());
+            } else if results.functional {
+                println!("Tests: {}", "PARTIAL PASS".yellow().bold());
+                println!("Details: {}", results.message);
+            } else {
+                println!("Tests: {}", "FAILED".red().bold());
+                println!("Details: {}", results.message);
+            }
+            println!("{}", "==========================".blue().bold());
+        },
+    }
+    
+    Ok(())
 }
 
 // Constants used for schema handling

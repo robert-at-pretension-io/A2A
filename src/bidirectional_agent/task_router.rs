@@ -10,6 +10,7 @@ use crate::types::{TaskSendParams, Role, Part, TextPart, Message}; // Import Mes
 use std::sync::Arc;
 use std::collections::HashMap; // Import HashMap
 use serde_json::{json, Value}; // Import Value
+use tempfile; // For creating temp directories in tests
 
 /// Represents the decision made by the TaskRouter.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,7 +169,10 @@ impl TaskRouter {
                        lower_text.contains("list agent") || // Original check
                        lower_text.contains("list active agents") || // Added check
                        lower_text.contains("list inactive agents") || // Added check
-                       lower_text.contains("show me the list") // Added check
+                       lower_text.contains("show me the list") || // Added check
+                       lower_text.contains("directory tool") || // Tool call mentions
+                       lower_text.contains("tool directory") || // Tool call mentions
+                       lower_text.contains("use directory") // Tool call mentions
                     {
                         // Basic intent detection - determine action based on keywords
                         let action = if lower_text.contains("inactive") {
@@ -178,10 +182,9 @@ impl TaskRouter {
                         };
                         println!("Detected directory mention in text, action: {}", action);
                         return Some(json!({
-                            "action": action,
+                            "action": action
                             // We don't extract agent_id from simple text here
-                            "action": "list",
-                            "filter": "active"
+                            // Fixed: removed duplicate "action" field that was causing issues
                         }));
                     }
                 }
@@ -228,8 +231,15 @@ async fn setup_test_router() -> TaskRouter {
     // If bidir-core feature is enabled, use the directory version
     #[cfg(feature = "bidir-core")]
     {
-        // Use the correct helper from agent_registry tests
-        let (registry, directory) = crate::bidirectional_agent::agent_registry::tests::create_test_registry_with_real_dir().await;
+        // Set up a minimal registry and directory for testing
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp directory for test");
+        let db_path = temp_dir.path().join("test_router_dir.db");
+        let dir_config = crate::bidirectional_agent::config::DirectoryConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let directory = Arc::new(crate::bidirectional_agent::agent_directory::AgentDirectory::new(&dir_config).await.expect("Failed to create directory"));
+        let registry = crate::bidirectional_agent::agent_registry::AgentRegistry::new(directory.clone());
         let registry = Arc::new(registry); // Convert to Arc
         let executor = Arc::new(ToolExecutor::new(directory));
         TaskRouter::new(registry, executor)

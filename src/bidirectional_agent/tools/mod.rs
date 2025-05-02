@@ -26,11 +26,17 @@ pub use shell_tool::ShellTool;
 pub use http_tool::HttpTool;
 #[cfg(feature = "bidir-core")]
 pub use directory_tool::DirectoryTool;
-pub use special_tool::{SpecialEchoTool1, SpecialEchoTool2}; // Add this line
+pub use special_tool::{SpecialEchoTool1, SpecialEchoTool2};
+
+// For remote tool execution (delegate feature)
+#[cfg(feature = "bidir-delegate")]
+pub use pluggable::{RemoteToolRegistry, RemoteToolExecutor};
 
 // Import tool modules
 mod shell_tool;
 mod http_tool;
 #[cfg(feature = "bidir-core")]
 mod directory_tool;
-mod special_tool; // Add this line
+mod special_tool;
+#[cfg(feature = "bidir-delegate")]
+mod pluggable;

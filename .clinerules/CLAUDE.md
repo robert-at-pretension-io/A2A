@@ -37,7 +37,6 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
 - Reference server: `cargo run --quiet -- reference-server --port [port]`
 - Fuzzing: `cargo run --quiet -- fuzz --target [target] --time [seconds]`
 - Run integration tests: `cargo run --quiet -- run-tests`
-- REPL client: `cargo run --quiet -- repl-client --config [config_file]`
 - Client commands:
   - Get agent card: `cargo run --quiet -- client get-agent-card --url [url]`
   - Send task: `cargo run --quiet -- client send-task --url [url] --message [text] [--metadata '{"_mock_delay_ms": 2000}'] [--header "header_name"] [--value "auth_value"]`
@@ -100,7 +99,6 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
   - **src/client/auth.rs**: Authentication and authorization support
   - **src/client/tests/**: Client unit tests
 - **src/client_tests.rs**: Client integration tests
-- **src/repl_client.rs**: LLM-powered REPL interface for interacting with the A2A agent network
 - **start_server_and_test_client.sh**: Script for running integration tests
 
 ## Optimal Feature Development Workflow

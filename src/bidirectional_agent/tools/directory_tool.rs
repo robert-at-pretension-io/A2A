@@ -52,11 +52,23 @@ impl Tool for DirectoryTool {
 
     /// Executes the specified directory action based on the parameters.
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
+        // Handle both direct params and params embedded in a text field
+        let params_to_use = if params.is_object() && params.get("text").is_some() && params["text"].is_string() {
+            // Try to parse the text field as JSON
+            let text = params["text"].as_str().unwrap();
+            match serde_json::from_str::<Value>(text) {
+                Ok(parsed) => parsed,
+                Err(_) => params.clone(), // If parsing fails, use original params
+            }
+        } else {
+            params.clone()
+        };
+        
         // Deserialize the JSON parameters into a DirectoryAction enum
-        let action: DirectoryAction = serde_json::from_value(params.clone()) // Clone params for error reporting
+        let action: DirectoryAction = serde_json::from_value(params_to_use.clone()) // Clone params for error reporting
             .map_err(|e| ToolError::InvalidParams(
                 self.name().to_string(),
-                format!("Invalid parameters format: {}. Expected JSON with 'action' tag (e.g., {{'action': 'list_active'}} or {{'action': 'get_info', 'agent_id': '...'}}). Received: {}", e, params)
+                format!("Invalid parameters format: {}. Expected JSON with 'action' tag (e.g., {{'action': 'list_active'}} or {{'action': 'get_info', 'agent_id': '...'}}). Received: {}", e, params_to_use)
             ))?;
 
         // Execute the corresponding AgentDirectory method based on the action
@@ -70,8 +82,8 @@ impl Tool for DirectoryTool {
 
                 // Format the result as JSON
                 Ok(json!({
-                    "active_agents": agents.into_iter().map(|(id, url)| {
-                        json!({ "id": id, "url": url })
+                    "active_agents": agents.into_iter().map(|agent| {
+                        json!({ "id": agent.agent_id, "url": agent.url })
                     }).collect::<Vec<_>>()
                 }))
             },
@@ -83,8 +95,8 @@ impl Tool for DirectoryTool {
                     )?;
 
                 Ok(json!({
-                    "inactive_agents": agents.into_iter().map(|(id, url)| {
-                        json!({ "id": id, "url": url })
+                    "inactive_agents": agents.into_iter().map(|agent| {
+                        json!({ "id": agent.agent_id, "url": agent.url })
                     }).collect::<Vec<_>>()
                 }))
             },
