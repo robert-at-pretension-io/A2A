@@ -1,0 +1,62 @@
+# Bidirectional A2A Agent Configuration
+# This is an example configuration file for the bidirectional A2A agent.
+# You can run the agent without a config file for sensible defaults.
+
+# Server configuration
+[server]
+# Port to listen on (default: 8080)
+port = 8080
+# Bind address (default: 0.0.0.0)
+bind_address = "0.0.0.0"
+# Agent ID (default: randomly generated UUID with prefix)
+agent_id = "bidirectional-agent"
+
+# Client configuration
+[client]
+# Optional URL of remote agent to connect to
+# If not provided, you can still connect using the REPL
+target_url = "http://localhost:8081"
+
+# LLM configuration for task processing and routing
+[llm]
+# API key for Claude (can also use CLAUDE_API_KEY environment variable)
+# Either:
+# 1. Set the API key here: claude_api_key = "sk-ant-API123..."
+# 2. Or leave this commented out and export CLAUDE_API_KEY="sk-ant-API123..." in your shell
+# claude_api_key = "your-api-key-here"
+# System prompt for the LLM
+system_prompt = """
+You are an AI agent assistant that helps with tasks. You can:
+1. Process tasks directly (for simple questions or tasks you can handle)
+2. Delegate tasks to other agents when appropriate
+3. Use tools when needed
+
+Always think step-by-step about the best way to handle each request.
+"""
+
+# Mode configuration - uncomment the mode you want to use
+# If no mode is specified, the agent runs in standard server mode
+[mode]
+# Interactive REPL mode - connect to and work with multiple agents
+repl = true
+
+# Direct message processing - process a single message non-interactively
+# message = "What is the capital of France?"
+
+# Remote agent operations - interact with remote A2A agents
+# get_agent_card = true
+# remote_task = "Hello from bidirectional agent!"
+
+# Examples of other mode configurations:
+# 
+# Example 1: Process a specific question
+# [mode]
+# message = "Explain the A2A protocol in simple terms"
+#
+# Example 2: Get information about a remote agent
+# [mode]
+# get_agent_card = true
+#
+# Example 3: Send a specific message to a remote agent
+# [mode]
+# remote_task = "What's the weather in San Francisco?"

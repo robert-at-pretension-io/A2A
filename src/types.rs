@@ -377,10 +377,10 @@ pub struct AgentCard {
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub documentation_url: ::std::option::Option<::std::string::String>,
-    pub name: ::std::string::String, // Name is required according to schema
+    pub name: ::std::string::String,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub provider: ::std::option::Option<AgentProvider>,
-    pub skills: ::std::vec::Vec<AgentSkill>, // skills is required according to schema
+    pub skills: ::std::vec::Vec<AgentSkill>,
     pub url: ::std::string::String,
     pub version: ::std::string::String,
 }
@@ -3644,11 +3644,6 @@ pub struct TaskStatus {
     pub state: TaskState,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub timestamp: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
-    // Add potentially missing fields based on usage/schema (optional)
-    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-    pub reason: ::std::option::Option<String>, // Example: reason for failure/cancellation
-    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-    pub result: ::std::option::Option<Message>, // Example: final result message
 }
 impl ::std::convert::From<&TaskStatus> for TaskStatus {
     fn from(value: &TaskStatus) -> Self {
@@ -4000,14 +3995,14 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
-        name: ::std::result::Result<::std::string::String, ::std::string::String>, // Required
+        name: ::std::result::Result<::std::string::String, ::std::string::String>,
         provider: ::std::result::Result<
             ::std::option::Option<super::AgentProvider>,
             ::std::string::String,
         >,
-        skills: ::std::result::Result<::std::vec::Vec<super::AgentSkill>, ::std::string::String>, // Required
-        url: ::std::result::Result<::std::string::String, ::std::string::String>, // Required
-        version: ::std::result::Result<::std::string::String, ::std::string::String>, // Required
+        skills: ::std::result::Result<::std::vec::Vec<super::AgentSkill>, ::std::string::String>,
+        url: ::std::result::Result<::std::string::String, ::std::string::String>,
+        version: ::std::result::Result<::std::string::String, ::std::string::String>,
     }
     impl ::std::default::Default for AgentCard {
         fn default() -> Self {
@@ -7558,27 +7553,6 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for timestamp: {}", e));
             self
         }
-        // Add builders for new fields
-        pub fn reason<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<String>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.reason = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for reason: {}", e));
-            self
-        }
-        pub fn result<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<super::Message>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.result = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for result: {}", e));
-            self
-        }
     }
     impl ::std::convert::TryFrom<TaskStatus> for super::TaskStatus {
         type Error = super::error::ConversionError;
@@ -7589,8 +7563,6 @@ pub mod builder {
                 message: value.message?,
                 state: value.state?,
                 timestamp: value.timestamp?,
-                reason: value.reason?, // Add new field
-                result: value.result?, // Add new field
             })
         }
     }
@@ -7600,8 +7572,6 @@ pub mod builder {
                 message: Ok(value.message),
                 state: Ok(value.state),
                 timestamp: Ok(value.timestamp),
-                reason: Ok(value.reason), // Add new field
-                result: Ok(value.result), // Add new field
             }
         }
     }

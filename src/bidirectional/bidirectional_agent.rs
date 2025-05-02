@@ -2,6 +2,83 @@
 //!
 //! This file implements a minimal but complete bidirectional A2A agent
 //! that can both serve requests and delegate them to other agents.
+//!
+//! ## Configuration
+//!
+//! The agent is configured using a TOML file. A sample configuration file 
+//! (bidirectional_agent.toml) is included in the root of the project.
+//!
+//! ```toml
+//! [server]
+//! port = 8080
+//! bind_address = "0.0.0.0"
+//! agent_id = "bidirectional-agent"
+//!
+//! [client]
+//! # Optional URL of remote agent to connect to
+//! target_url = "http://localhost:8081"
+//!
+//! [llm]
+//! # API key for Claude (can also use CLAUDE_API_KEY environment variable)
+//! # claude_api_key = "your-api-key-here"
+//! ```
+//!
+//! ## Usage Examples
+//!
+//! Start with no arguments (defaults to REPL mode):
+//! ```bash
+//! cargo run --quiet -- bidirectional-agent
+//! ```
+//!
+//! Start with server:port to connect to a remote agent:
+//! ```bash
+//! cargo run --quiet -- bidirectional-agent localhost:8080
+//! ```
+//!
+//! Start with config file path:
+//! ```bash
+//! cargo run --quiet -- bidirectional-agent config_file.toml
+//! ```
+//!
+//! Process a single message locally (configure in TOML):
+//! ```toml
+//! [mode]
+//! message = "What is the capital of France?"
+//! ```
+//!
+//! Get agent card from a remote A2A agent (configure in TOML):
+//! ```toml
+//! [mode]
+//! get_agent_card = true
+//! ```
+//!
+//! Send a task to a remote A2A agent (configure in TOML):
+//! ```toml
+//! [mode]
+//! remote_task = "Hello from bidirectional agent!"
+//! ```
+//!
+//! Start in interactive REPL mode (configure in TOML):
+//! ```toml
+//! [mode]
+//! repl = true
+//! ```
+//!
+//! In REPL mode, you can:
+//! - Type messages to process them directly with the agent
+//! - Use `:servers` to list known remote servers
+//! - Use `:connect URL` to connect to a remote agent by URL
+//! - Use `:connect N` to connect to Nth server in the servers list
+//! - Use `:disconnect` to disconnect from the current remote agent
+//! - Use `:remote MESSAGE` to send a task to the connected agent
+//! - Use `:listen PORT` to start a server on the specified port
+//! - Use `:stop` to stop the currently running server
+//! - Use `:card` to view the agent card
+//! - Use `:help` to see all available commands
+//! - Use `:quit` to exit the REPL
+//!
+//! If no configuration file is provided, the agent starts with sensible defaults
+//! and automatically enters REPL mode for interactive use.
 
 // Import from other modules in the crate
 use crate::client::{
@@ -18,8 +95,8 @@ use crate::server::{
         notification_service::NotificationService,
     },
     // Use the canonical TaskRouter and ToolExecutor from the server module
-    task_router::{TaskRouterTrait, RoutingDecision}, // Import TaskRouterTrait and RoutingDecision
-    tool_executor::{ToolExecutorTrait}, // Import ToolExecutorTrait
+    task_router::{LlmTaskRouterTrait, RoutingDecision}, // Import LlmTaskRouterTrait and RoutingDecision
+    tool_executor::ToolExecutor, // Import ToolExecutor
     // Use the canonical AgentRegistry and ClientManager
     agent_registry::AgentRegistry,
     client_manager::ClientManager,
@@ -42,9 +119,16 @@ use futures_util::{StreamExt, TryStreamExt};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value, Map}; // Import Map
-use std::{sync::Arc, error::Error as StdError}; // Import StdError for error mapping
+use std::{
+    sync::Arc, 
+    error::Error as StdError, 
+    fs, 
+    path::Path,
+    io::{self, Write, BufRead}
+}; // Import StdError for error mapping and IO
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+use toml;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -86,12 +170,12 @@ struct AgentDirectoryEntry {
 
 /// Simplified Agent Directory (Used locally for routing decisions)
 #[derive(Debug, Clone)]
-struct AgentDirectory {
+pub struct AgentDirectory {
     agents: Arc<DashMap<String, AgentDirectoryEntry>>,
 }
 
 impl AgentDirectory {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             agents: Arc::new(DashMap::new()),
         }
@@ -99,7 +183,7 @@ impl AgentDirectory {
 
     // Note: This uses the AgentCard from crate::types
     // We need the agent_id separately as AgentCard doesn't have it
-    fn add_or_update_agent(&self, agent_id: String, card: AgentCard) {
+    pub fn add_or_update_agent(&self, agent_id: String, card: AgentCard) {
         let entry = AgentDirectoryEntry {
             card,
             last_seen: Utc::now(),
@@ -128,7 +212,7 @@ impl AgentDirectory {
 
 /// Simple LLM client interface
 #[async_trait]
-trait LlmClient: Send + Sync {
+pub trait LlmClient: Send + Sync {
     async fn complete(&self, prompt: &str) -> Result<String>;
 }
 
@@ -155,8 +239,8 @@ impl LlmClient for ClaudeLlmClient {
         
         // Prepare the request payload
         let payload = json!({
-            "model": "claude-3-opus-20240229",
-            "max_tokens": 4000,
+            "model": "claude-3-7-sonnet-20250219",
+            "max_tokens": 60000,
             "system": self.system_prompt,
             "messages": [{
                 "role": "user",
@@ -198,13 +282,13 @@ impl LlmClient for ClaudeLlmClient {
 
 // Define a struct that implements the server's TaskRouterTrait
 #[derive(Clone)]
-struct BidirectionalTaskRouter {
+pub struct BidirectionalTaskRouter {
     llm: Arc<dyn LlmClient>,
     directory: Arc<AgentDirectory>, // Use the local directory for routing logic
 }
 
 impl BidirectionalTaskRouter {
-     fn new(llm: Arc<dyn LlmClient>, directory: Arc<AgentDirectory>) -> Self {
+     pub fn new(llm: Arc<dyn LlmClient>, directory: Arc<AgentDirectory>) -> Self {
         Self {
             llm,
             directory,
@@ -212,7 +296,7 @@ impl BidirectionalTaskRouter {
     }
 
     // Helper to perform the actual routing logic
-    async fn decide_execution_mode(&self, task: &Task) -> Result<ExecutionMode> {
+    pub async fn decide_execution_mode(&self, task: &Task) -> Result<ExecutionMode> {
          // Extract the task content for analysis
         // Use history if available, otherwise maybe the top-level message if applicable
         let task_text = task.history.as_ref().map(|history| {
@@ -253,8 +337,8 @@ impl BidirectionalTaskRouter {
 
                 format!("ID: {}\nName: {}\nDescription: {}\nCapabilities: {}",
                     agent_id,
-                    a.card.name.as_deref().unwrap_or(""), // name is Option<String>
-                    a.card.description.as_deref().unwrap_or(""),
+                    a.card.name.as_str(), // name is String
+                    a.card.description.as_ref().unwrap_or(&"".to_string()),
                     caps.join(", "))
             })
             .collect::<Vec<_>>()
@@ -303,7 +387,7 @@ Your response should be exactly one of those formats, with no additional text.
 }
 
 #[async_trait]
-impl TaskRouterTrait for BidirectionalTaskRouter {
+impl LlmTaskRouterTrait for BidirectionalTaskRouter {
     // Match the trait signature: takes TaskSendParams, returns Result<RoutingDecision, ServerError>
     async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
         // We need a Task object to make the decision based on history/message.
@@ -350,39 +434,32 @@ impl TaskRouterTrait for BidirectionalTaskRouter {
             tool_names: vec!["default_local_tool".to_string()]
         })
     }
+    
+    // Implement the decide method required by LlmTaskRouterTrait
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
+        // Simply delegate to route_task for now
+        self.route_task(params).await
+    }
+    
+    // Implement should_decompose method required by LlmTaskRouterTrait
+    async fn should_decompose(&self, _params: &TaskSendParams) -> Result<bool, ServerError> {
+        // Simple implementation that never decomposes tasks
+        Ok(false)
+    }
+    
+    // Implement decompose_task method required by LlmTaskRouterTrait
+    async fn decompose_task(&self, _params: &TaskSendParams) -> Result<Vec<crate::server::task_router::SubtaskDefinition>, ServerError> {
+        // Simple implementation that returns an empty list (no decomposition)
+        Ok(Vec::new())
+    }
 }
 
 
 // REMOVED Local ToolExecutor definition
 
 // Define a struct that implements the server's ToolExecutorTrait
-#[derive(Clone)]
-struct BidirectionalToolExecutor;
-
-impl BidirectionalToolExecutor {
-    fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait]
-impl ToolExecutorTrait for BidirectionalToolExecutor {
-     async fn execute(&self, _task: &Task, _tool_names: &[String]) -> Result<Vec<Message>, ServerError> {
-        // For simplicity, just return a placeholder response
-        // In a real implementation, this would execute actual tools based on tool_names
-        Ok(vec![Message {
-            role: Role::Agent, // Use Agent role
-            parts: vec![Part::TextPart(TextPart {
-                text: "Tool execution completed (placeholder)".to_string(),
-                metadata: None, // Add missing field
-                type_: "text".to_string(), // Add missing field
-            })],
-            metadata: None, // Add missing field
-        }])
-        // Note: If the internal logic could fail, map the error to ServerError
-        // .map_err(|e| ServerError::Internal(format!("Tool execution error: {}", e)))
-    }
-}
+// We'll use the provided ToolExecutor from the server module
+// instead of implementing our own ToolExecutorTrait
 
 
 /// Main bidirectional agent implementation
@@ -404,6 +481,10 @@ pub struct BidirectionalAgent {
     port: u16,
     bind_address: String,
     agent_id: String, // Keep agent_id for identification
+    
+    // A2A client for making outbound requests to other agents
+    // This is a simple client that can be expanded later
+    pub client: Option<A2aClient>,
 }
 
 impl BidirectionalAgent {
@@ -412,13 +493,13 @@ impl BidirectionalAgent {
         let agent_directory = Arc::new(AgentDirectory::new());
 
         // Create the LLM client (local helper)
-        let llm: Arc<dyn LlmClient> = if let Some(api_key) = &config.claude_api_key {
-            Arc::new(ClaudeLlmClient::new(api_key.clone(), SYSTEM_PROMPT.to_string()))
+        let llm: Arc<dyn LlmClient> = if let Some(api_key) = &config.llm.claude_api_key {
+            Arc::new(ClaudeLlmClient::new(api_key.clone(), config.llm.system_prompt.clone()))
         } else {
             // Allow running without LLM if only acting as server/client without local processing
             warn!("No Claude API key provided. Local LLM processing will not be available.");
             // Provide a dummy LLM client or handle this case appropriately
-             return Err(anyhow!("No LLM configuration provided")); // Or handle differently
+             return Err(anyhow!("No LLM configuration provided. Set CLAUDE_API_KEY environment variable or add claude_api_key to config file.")); // Or handle differently
         };
 
         // Create the task repository (needed by services)
@@ -432,20 +513,19 @@ impl BidirectionalAgent {
         let client_manager = Arc::new(ClientManager::new(agent_registry.clone()));
 
         // Create our custom task router implementation
-        let bidirectional_task_router: Arc<dyn TaskRouterTrait> = Arc::new(BidirectionalTaskRouter::new(llm.clone(), agent_directory.clone()));
+        let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> = Arc::new(BidirectionalTaskRouter::new(llm.clone(), agent_directory.clone()));
 
-        // Create our custom tool executor implementation
-        let bidirectional_tool_executor: Arc<dyn ToolExecutorTrait> = Arc::new(BidirectionalToolExecutor::new());
+        // Create a tool executor using the provided implementation
+        let bidirectional_tool_executor = Arc::new(ToolExecutor::new());
 
         // Create the task service using the canonical components and our trait implementations
-        // Ensure TaskService::bidirectional exists and takes these arguments
         let task_service = Arc::new(TaskService::bidirectional(
             task_repository.clone(),
-            Some(bidirectional_task_router), // Pass our TaskRouterTrait implementation
-            Some(bidirectional_tool_executor), // Pass our ToolExecutorTrait implementation
-            Some(client_manager.clone()),    // Pass canonical ClientManager
-            // TaskService::bidirectional might not need agent_registry directly if ClientManager handles it
-            // config.agent_id.clone(), // TaskService might not need agent_id directly
+            bidirectional_task_router, // Pass our LlmTaskRouterTrait implementation
+            bidirectional_tool_executor, // Pass the ToolExecutor
+            client_manager.clone(), // Pass canonical ClientManager
+            agent_registry.clone(), // Pass canonical AgentRegistry
+            config.server.agent_id.clone(), // Pass agent_id
         ));
 
         // Create the streaming service
@@ -453,6 +533,14 @@ impl BidirectionalAgent {
 
         // Create the notification service (pass repository)
         let notification_service = Arc::new(NotificationService::new(task_repository.clone()));
+
+        // Initialize an A2A client if target URL is provided
+        let client = if let Some(target_url) = &config.client.target_url {
+            info!("Initializing A2A client for target URL: {}", target_url);
+            Some(A2aClient::new(target_url))
+        } else {
+            None
+        };
 
         Ok(Self {
             task_service,
@@ -467,9 +555,12 @@ impl BidirectionalAgent {
             agent_directory, // Keep local directory for routing logic
             llm,
 
-            port: config.port,
-            bind_address: config.bind_address,
-            agent_id: config.agent_id,
+            port: config.server.port,
+            bind_address: config.server.bind_address,
+            agent_id: config.server.agent_id,
+            
+            // Store the A2A client (if configured)
+            client,
         })
     }
 
@@ -546,17 +637,27 @@ impl BidirectionalAgent {
                     }))? // Convert Value to Map
                 );
 
-                let task_params = TaskSendParams {
-                    id: task_id.clone(), // Reuse task ID or generate new? Depends on protocol.
-                    message: initial_message, // Send the initial user message
-                    metadata: metadata_map,
-                    history_length: Some(10), // Example history length
-                    push_notification: None,
-                    session_id: None, // Add missing field
+                // Convert the task message to a string for the client API
+                let message_text = match &initial_message.parts.first() {
+                    Some(Part::TextPart(tp)) => tp.text.clone(),
+                    _ => "No text content available".to_string(),
+                };
+                
+                // Convert metadata to JSON string for client API
+                let metadata_json_string = if let Some(metadata) = metadata_map {
+                    match serde_json::to_string(&metadata) {
+                        Ok(json) => Some(json),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
                 };
 
-                // Send the task using send_task which takes TaskSendParams
-                let delegated_task = client.send_task(task_params).await?;
+                // Send the task using send_task_with_metadata
+                let delegated_task = match &metadata_json_string {
+                    Some(json_str) => client.send_task_with_metadata(&message_text, Some(json_str)).await?,
+                    None => client.send_task_with_metadata(&message_text, None).await?,
+                };
                 info!("Delegated task ID: {}", delegated_task.id);
 
                 // Wait for the task to complete (simplified polling)
@@ -572,12 +673,7 @@ impl BidirectionalAgent {
 
                     sleep(std::time::Duration::from_secs(1)).await;
                     // Use get_task which requires &mut self and TaskQueryParams
-                    let query_params = TaskQueryParams {
-                        id: delegated_task.id.clone(),
-                        history_length: None,
-                        metadata: None,
-                    };
-                    completed_task = client.get_task(query_params).await?;
+                    completed_task = client.get_task(&delegated_task.id).await?;
                 }
 
                 // Extract the response from the final task state's history
@@ -598,6 +694,332 @@ impl BidirectionalAgent {
         }
     }
 
+    /// Run an interactive REPL (Read-Eval-Print Loop)
+    pub async fn run_repl(&mut self) -> Result<()> {
+        println!("\n========================================");
+        println!("⚡ Bidirectional A2A Agent REPL Mode ⚡");
+        println!("========================================");
+        println!("Type a message to process it directly with the agent.");
+        println!("Special commands:");
+        println!("  :help            - Show this help message");
+        println!("  :card            - Show agent card");
+        println!("  :servers         - List known remote servers");
+        println!("  :connect URL     - Connect to a remote agent at URL");
+        println!("  :connect HOST:PORT - Connect to a remote agent by host and port");
+        println!("  :connect N       - Connect to Nth server in the server list");
+        println!("  :disconnect      - Disconnect from current remote agent");
+        println!("  :remote MSG      - Send message as task to connected agent");
+        println!("  :listen PORT     - Start listening server on specified port");
+        println!("  :stop            - Stop the currently running server");
+        println!("  :quit            - Exit the REPL");
+        println!("========================================\n");
+        
+        // Keep track of known servers
+        let mut known_servers: Vec<(String, String)> = Vec::new(); // (name, url)
+        
+        // Display initial client URL if we have one
+        if let Some(client) = &self.client {
+            if let Some(url) = &self.client_url() {
+                println!("🔗 Connected to remote agent: {}", url);
+                // Try to get agent name
+                match self.get_remote_agent_card().await {
+                    Ok(card) => {
+                        println!("📇 Connected to: {} ({})", card.name, url);
+                        // Add to known servers if not already present
+                        if !known_servers.iter().any(|(_, server_url)| server_url == url) {
+                            known_servers.push((card.name.clone(), url.clone()));
+                        }
+                    },
+                    Err(_) => {
+                        println!("🔗 Connected to: {}", url);
+                    }
+                }
+            }
+        }
+        
+        let stdin = io::stdin();
+        let mut reader = stdin.lock();
+        let mut input = String::new();
+        
+        // Flag to track if we have a listening server running
+        let mut server_running = false;
+        let mut server_shutdown_token: Option<CancellationToken> = None;
+        
+        loop {
+            // Display prompt (with connected agent information if available)
+            if let Some(url) = self.client_url() {
+                print!("agent@{} > ", url);
+            } else {
+                print!("agent > ");
+            }
+            io::stdout().flush().ok();
+            
+            input.clear();
+            reader.read_line(&mut input)?;
+            
+            let input = input.trim();
+            
+            if input.is_empty() {
+                continue;
+            }
+            
+            if input.starts_with(":") {
+                // Handle special commands
+                if input == ":help" {
+                    println!("\n========================================");
+                    println!("⚡ Bidirectional A2A Agent REPL Commands ⚡");
+                    println!("========================================");
+                    println!("  :help            - Show this help message");
+                    println!("  :card            - Show agent card");
+                    println!("  :servers         - List known remote servers");
+                    println!("  :connect URL     - Connect to a remote agent at URL");
+                    println!("  :connect HOST:PORT - Connect to a remote agent by host and port");
+                    println!("  :connect N       - Connect to Nth server in the server list");
+                    println!("  :disconnect      - Disconnect from current remote agent");
+                    println!("  :remote MSG      - Send message as task to connected agent");
+                    println!("  :listen PORT     - Start listening server on specified port");
+                    println!("  :stop            - Stop the currently running server");
+                    println!("  :quit            - Exit the REPL");
+                    println!("========================================\n");
+                } else if input == ":quit" {
+                    println!("Exiting REPL. Goodbye!");
+                    
+                    // Shutdown server if running
+                    if let Some(token) = server_shutdown_token.take() {
+                        println!("Shutting down server...");
+                        token.cancel();
+                    }
+                    
+                    break;
+                } else if input == ":card" {
+                    let card = self.create_agent_card();
+                    println!("\n📇 Agent Card:");
+                    println!("  Name: {}", card.name);
+                    println!("  Description: {}", card.description.as_deref().unwrap_or("None"));
+                    println!("  URL: {}", card.url);
+                    println!("  Version: {}", card.version);
+                    println!("  Capabilities:");
+                    println!("    - Streaming: {}", card.capabilities.streaming);
+                    println!("    - Push Notifications: {}", card.capabilities.push_notifications);
+                    println!("    - State Transition History: {}", card.capabilities.state_transition_history);
+                    println!("  Input Modes: {}", card.default_input_modes.join(", "));
+                    println!("  Output Modes: {}", card.default_output_modes.join(", "));
+                    println!("");
+                } else if input == ":servers" {
+                    // List known servers
+                    if known_servers.is_empty() {
+                        println!("No known servers. Connect to a server first with :connect URL");
+                    } else {
+                        println!("\n📋 Known Servers:");
+                        for (i, (name, url)) in known_servers.iter().enumerate() {
+                            // Mark the currently connected server with an asterisk
+                            let marker = if Some(url) == self.client_url().as_ref() { "*" } else { " " };
+                            println!("  {}{}: {} - {}", marker, i+1, name, url);
+                        }
+                        println!("\nUse :connect N to connect to a server by number");
+                        println!("");
+                    }
+                } else if input == ":disconnect" {
+                    // Disconnect from current server
+                    if self.client.is_some() {
+                        let url = self.client_url().unwrap_or_else(|| "unknown".to_string());
+                        self.client = None;
+                        println!("🔌 Disconnected from {}", url);
+                    } else {
+                        println!("Not connected to any server");
+                    }
+                } else if input.starts_with(":connect ") {
+                    let target = input.trim_start_matches(":connect ").trim();
+                    
+                    // Check if it's a number (referring to a server in the list)
+                    if let Ok(server_idx) = target.parse::<usize>() {
+                        if server_idx > 0 && server_idx <= known_servers.len() {
+                            let (name, url) = &known_servers[server_idx - 1];
+                            
+                            // Create a new client with the provided URL
+                            self.client = Some(A2aClient::new(url));
+                            println!("🔗 Connected to {}: {}", name, url);
+                        } else {
+                            println!("❌ Error: Invalid server number. Use :servers to see available servers.");
+                        }
+                    } else {
+                        // Treat as URL
+                        if target.is_empty() {
+                            println!("❌ Error: No URL provided. Use :connect URL");
+                            continue;
+                        }
+                        
+                        // Create a new client with the provided URL
+                        self.client = Some(A2aClient::new(target));
+                        println!("🔗 Connected to remote agent: {}", target);
+                        
+                        // Try to get the agent card to verify connection
+                        match self.get_remote_agent_card().await {
+                            Ok(card) => {
+                                println!("✅ Successfully connected to agent: {}", card.name);
+                                
+                                // Add to known servers if not already present
+                                if !known_servers.iter().any(|(_, url)| url == target) {
+                                    known_servers.push((card.name.clone(), target.to_string()));
+                                }
+                            },
+                            Err(e) => {
+                                println!("⚠️ Connected, but couldn't retrieve agent card: {}", e);
+                                
+                                // Still add to known servers
+                                if !known_servers.iter().any(|(_, url)| url == target) {
+                                    known_servers.push(("Unknown Agent".to_string(), target.to_string()));
+                                }
+                            }
+                        }
+                    }
+                } else if input.starts_with(":listen ") {
+                    let port_str = input.trim_start_matches(":listen ").trim();
+                    
+                    // Check if already running
+                    if server_running {
+                        println!("⚠️ Server already running. Stop it first with :stop");
+                        continue;
+                    }
+                    
+                    // Parse port
+                    match port_str.parse::<u16>() {
+                        Ok(port) => {
+                            // Update the port in the agent
+                            self.port = port;
+                            
+                            // Create a cancellation token
+                            let token = CancellationToken::new();
+                            server_shutdown_token = Some(token.clone());
+                            
+                            // Start server in background task
+                            println!("🚀 Starting server on port {}...", port);
+                            
+                            // Clone what we need for the task
+                            let task_service = self.task_service.clone();
+                            let streaming_service = self.streaming_service.clone();
+                            let notification_service = self.notification_service.clone();
+                            let bind_address = self.bind_address.clone();
+                            let agent_card = serde_json::to_value(self.create_agent_card()).unwrap_or_else(|e| {
+                                warn!("Failed to serialize agent card: {}", e);
+                                serde_json::json!({})
+                            });
+                            
+                            tokio::spawn(async move {
+                                match run_server(
+                                    port,
+                                    &bind_address,
+                                    task_service,
+                                    streaming_service,
+                                    notification_service,
+                                    token.clone(),
+                                    Some(agent_card),
+                                ).await {
+                                    Ok(handle) => {
+                                        // Wait for the server to complete or be cancelled
+                                        match handle.await {
+                                            Ok(()) => info!("Server shut down gracefully."),
+                                            Err(e) => error!("Server error: {}", e),
+                                        }
+                                    },
+                                    Err(e) => {
+                                        error!("Failed to start server: {}", e);
+                                    }
+                                }
+                            });
+                            
+                            server_running = true;
+                            println!("✅ Server started on http://{}:{}", self.bind_address, port);
+                            println!("The server will run until you exit the REPL or send :stop");
+                        },
+                        Err(_) => {
+                            println!("❌ Error: Invalid port number. Please provide a valid port.");
+                        }
+                    }
+                } else if input == ":stop" {
+                    // Stop the server if running
+                    if let Some(token) = server_shutdown_token.take() {
+                        println!("Shutting down server...");
+                        token.cancel();
+                        server_running = false;
+                        println!("✅ Server stopped");
+                    } else {
+                        println!("⚠️ No server currently running");
+                    }
+                } else if input.starts_with(":remote ") {
+                    let message = input.trim_start_matches(":remote ").trim();
+                    if message.is_empty() {
+                        println!("❌ Error: No message provided. Use :remote MESSAGE");
+                        continue;
+                    }
+                    
+                    // Check if we're connected to a remote agent
+                    if self.client.is_none() {
+                        println!("❌ Error: Not connected to a remote agent. Use :connect URL first.");
+                        continue;
+                    }
+                    
+                    // Send task to remote agent
+                    println!("📤 Sending task to remote agent: '{}'", message);
+                    match self.send_task_to_remote(message).await {
+                        Ok(task) => {
+                            println!("✅ Task sent successfully!");
+                            println!("Task ID: {}", task.id);
+                            println!("Initial state: {:?}", task.status.state);
+                            
+                            // If we have a completed task with history, show the response
+                            if task.status.state == TaskState::Completed && task.history.is_some() {
+                                if let Some(history) = task.history {
+                                    let response = history.iter()
+                                        .filter(|m| m.role == Role::Agent)
+                                        .flat_map(|m| m.parts.iter())
+                                        .filter_map(|p| match p {
+                                            Part::TextPart(tp) => Some(tp.text.clone()),
+                                            _ => None,
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    
+                                    if !response.is_empty() {
+                                        println!("\n📥 Response from remote agent:");
+                                        println!("{}", response);
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            println!("❌ Error sending task: {}", e);
+                        }
+                    }
+                } else {
+                    println!("❌ Unknown command: {}", input);
+                    println!("Type :help for a list of commands");
+                }
+            } else {
+                // Process the message directly with the agent
+                match self.process_message_directly(input).await {
+                    Ok(response) => {
+                        println!("\n🤖 Agent response:\n{}\n", response);
+                    },
+                    Err(e) => {
+                        println!("❌ Error processing message: {}", e);
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Get the URL of the currently connected client
+    fn client_url(&self) -> Option<String> {
+        // Since we don't have a getter for the URL in the client,
+        // we'll use a simple approach to track the URL for now
+        // In a real implementation, you'd add a getter to A2aClient
+        // or track the URL separately
+        self.client.as_ref().map(|c| extract_base_url_from_client(c))
+    }
+    
     /// Run the agent server
     pub async fn run(&self) -> Result<()> {
         // Create a cancellation token for graceful shutdown
@@ -611,39 +1033,76 @@ impl BidirectionalAgent {
             shutdown_token_clone.cancel();
         });
 
-        // Start the server
-        let server_handle = run_server(
+        // Create the agent card for this server
+        let agent_card = self.create_agent_card();
+        
+        // Convert to JSON value for the server
+        let agent_card_json = serde_json::to_value(agent_card).unwrap_or_else(|e| {
+            warn!("Failed to serialize agent card: {}", e);
+            serde_json::json!({})
+        });
+        
+        // Start the server - handle the Box<dyn Error> specially
+        let server_handle = match run_server(
             self.port,
             &self.bind_address,
             self.task_service.clone(),
             self.streaming_service.clone(),
             self.notification_service.clone(),
             shutdown_token.clone(),
-        ).await.map_err(anyhow::Error::from)?; // Map the Box<dyn Error>
+            Some(agent_card_json), // Pass our custom agent card
+        ).await {
+            Ok(handle) => handle,
+            Err(e) => {
+                return Err(anyhow!("Failed to start server: {}", e));
+            }
+        };
 
         println!("Server running on {}:{}", self.bind_address, self.port);
 
         // Wait for the server to complete
         // The JoinHandle contains Result<(), JoinError>
-        // The run_server function itself returns Result<JoinHandle<Result<(), ServerError>>, Box<dyn StdError + Send + Sync>>
-        // We need to handle both potential errors.
         match server_handle.await {
-             Ok(server_result) => {
-                 match server_result {
-                     Ok(()) => {
-                        info!("Server shut down gracefully.");
-                        Ok(())
-                     }
-                     Err(server_err) => {
-                        error!("Server execution failed: {}", server_err);
-                        Err(anyhow!("Server execution error: {}", server_err))
-                     }
-                 }
-             }
+            Ok(()) => {
+                info!("Server shut down gracefully.");
+                Ok(())
+            }
             Err(join_err) => {
                 error!("Failed to join server task: {}", join_err);
                 Err(anyhow!("Server join error: {}", join_err))
             }
+        }
+    }
+
+    /// Send a task to a remote agent using the A2A client
+    pub async fn send_task_to_remote(&mut self, message: &str) -> Result<Task> {
+        // Check if we have a client configured
+        if let Some(client) = &mut self.client {
+            info!("Sending task to remote agent: {}", message);
+            // Use the simple send_task method for now
+            // This can be expanded to use more advanced client features later
+            let task = client.send_task(message).await
+                .map_err(|e| anyhow!("Error sending task to remote agent: {}", e))?;
+            
+            info!("Remote task created with ID: {}", task.id);
+            return Ok(task);
+        } else {
+            return Err(anyhow!("No A2A client configured. Use --target-url to specify a remote agent."));
+        }
+    }
+    
+    /// Get capabilities of a remote agent (using A2A client)
+    pub async fn get_remote_agent_card(&mut self) -> Result<AgentCard> {
+        // Check if we have a client configured
+        if let Some(client) = &mut self.client {
+            info!("Retrieving agent card from remote agent");
+            let agent_card = client.get_agent_card().await
+                .map_err(|e| anyhow!("Error retrieving agent card: {}", e))?;
+            
+            info!("Retrieved agent card for: {}", agent_card.name);
+            return Ok(agent_card);
+        } else {
+            return Err(anyhow!("No A2A client configured. Use --target-url to specify a remote agent."));
         }
     }
 
@@ -675,91 +1134,316 @@ impl BidirectionalAgent {
     }
 }
 
-/// Configuration for the bidirectional agent
-#[derive(Clone, Debug)]
-pub struct BidirectionalAgentConfig {
+/// Server configuration section
+#[derive(Clone, Debug, Deserialize)]
+pub struct ServerConfig {
+    #[serde(default = "default_port")]
     pub port: u16,
+    #[serde(default = "default_bind_address")]
     pub bind_address: String,
+    #[serde(default = "default_agent_id")]
     pub agent_id: String,
+}
+
+/// Client configuration section
+#[derive(Clone, Debug, Deserialize)]
+pub struct ClientConfig {
+    pub target_url: Option<String>,
+}
+
+/// LLM configuration section 
+#[derive(Clone, Debug, Deserialize)]
+pub struct LlmConfig {
     pub claude_api_key: Option<String>,
+    #[serde(default = "default_system_prompt")]
+    pub system_prompt: String,
+}
+
+/// Configuration for the bidirectional agent
+#[derive(Clone, Debug, Deserialize)]
+pub struct BidirectionalAgentConfig {
+    #[serde(default)]
+    pub server: ServerConfig,
+    #[serde(default)]
+    pub client: ClientConfig,
+    #[serde(default)]
+    pub llm: LlmConfig,
+    
+    // Mode configuration
+    #[serde(default)]
+    pub mode: ModeConfig,
+    
+    // Path to the config file (for reference)
+    #[serde(skip)]
+    pub config_file_path: Option<String>,
+}
+
+/// Operation mode configuration
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ModeConfig {
+    // Interactive REPL mode
+    #[serde(default)]
+    pub repl: bool,
+    
+    // Direct message to process (non-interactive mode)
+    pub message: Option<String>,
+    
+    // Remote agent operations
+    pub get_agent_card: bool,
+    pub remote_task: Option<String>,
+}
+
+// Default functions
+fn default_port() -> u16 {
+    DEFAULT_PORT
+}
+
+fn default_bind_address() -> String {
+    DEFAULT_BIND_ADDRESS.to_string()
+}
+
+fn default_agent_id() -> String {
+    format!("bidirectional-{}", Uuid::new_v4())
+}
+
+fn default_system_prompt() -> String {
+    SYSTEM_PROMPT.to_string()
+}
+
+// Default implementations
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            port: default_port(),
+            bind_address: default_bind_address(),
+            agent_id: default_agent_id(),
+        }
+    }
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            target_url: None,
+        }
+    }
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            claude_api_key: None,
+            system_prompt: default_system_prompt(),
+        }
+    }
 }
 
 impl Default for BidirectionalAgentConfig {
     fn default() -> Self {
         Self {
-            port: DEFAULT_PORT,
-            bind_address: DEFAULT_BIND_ADDRESS.to_string(),
-            agent_id: format!("bidirectional-{}", Uuid::new_v4()),
-            claude_api_key: None,
+            server: ServerConfig::default(),
+            client: ClientConfig::default(),
+            llm: LlmConfig::default(),
+            mode: ModeConfig::default(),
+            config_file_path: None,
         }
+    }
+}
+
+impl BidirectionalAgentConfig {
+    /// Load configuration from a TOML file
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let config_str = fs::read_to_string(path)
+            .map_err(|e| anyhow!("Failed to read config file: {}", e))?;
+        
+        let mut config: BidirectionalAgentConfig = toml::from_str(&config_str)
+            .map_err(|e| anyhow!("Failed to parse config file: {}", e))?;
+        
+        // Check for environment variable override for API key
+        if config.llm.claude_api_key.is_none() {
+            config.llm.claude_api_key = std::env::var("CLAUDE_API_KEY").ok();
+        }
+        
+        Ok(config)
     }
 }
 
 // REMOVED unused TaskSendParamsInput struct
 
+/// Helper function to extract the base URL from an A2aClient
+fn extract_base_url_from_client(client: &A2aClient) -> String {
+    // In a real implementation, you'd add a getter to the A2aClient
+    // For now, we'll use this workaround to access private fields
+    
+    // If we have a client config with target_url, use that
+    if let Some(url) = client_url_hack(client) {
+        return url;
+    }
+    
+    // Fallback
+    format!("remote-agent")
+}
+
+// Temporary hack to get the URL from a client until we can add a getter
+fn client_url_hack(client: &A2aClient) -> Option<String> {
+    // Try to get the internal object as a debug string and extract the URL
+    let debug_str = format!("{:?}", client);
+    
+    // Extract URL from debug output - likely to contain "base_url: ..."
+    if let Some(start_idx) = debug_str.find("base_url: ") {
+        let start_idx = start_idx + "base_url: ".len();
+        if let Some(end_idx) = debug_str[start_idx..].find('\"') {
+            let end_idx = start_idx + end_idx;
+            if let Some(url_str) = debug_str.get(start_idx..end_idx) {
+                return Some(url_str.to_string());
+            }
+        }
+    }
+    
+    None
+}
+
 /// Main entry point
 #[tokio::main]
-async fn main() -> Result<()> {
+pub async fn main() -> Result<()> {
     // Initialize tracing subscriber
     tracing_subscriber::fmt::init();
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
-
-    // Create a configuration
+    
+    // Create a default configuration
     let mut config = BidirectionalAgentConfig::default();
-
-    // Basic argument parsing
-    for i in 1..args.len() {
-        match args[i].as_str() {
-            "--port" if i + 1 < args.len() => {
-                config.port = args[i + 1].parse().unwrap_or(DEFAULT_PORT);
-            },
-            "--bind" if i + 1 < args.len() => {
-                config.bind_address = args[i + 1].clone();
-            },
-            "--agent-id" if i + 1 < args.len() => {
-                config.agent_id = args[i + 1].clone();
-            },
-            "--claude-api-key" if i + 1 < args.len() => {
-                config.claude_api_key = Some(args[i + 1].clone());
-            },
-            "--message" if i + 1 < args.len() => {
-                // Interactive mode - just process a single message
-
-                // Check if we have an API key
-                let api_key = config.claude_api_key.clone()
-                    .or_else(|| std::env::var("CLAUDE_API_KEY").ok())
-                    .ok_or_else(|| anyhow!("No Claude API key provided. Use --claude-api-key or set CLAUDE_API_KEY environment variable."))?;
-
-                config.claude_api_key = Some(api_key);
-
-                // Create the agent
-                let agent = BidirectionalAgent::new(config)?;
-
-                // Process the message using the direct method
-                let message = args[i + 1].clone();
-                println!("Processing message: '{}'", message);
-                let response = agent.process_message_directly(&message).await?;
-
-                println!("Response:\n{}", response);
-                return Ok(());
-            },
-            _ => {} // Ignore unknown flags or flags without values for simplicity
+    
+    // Enable REPL mode by default
+    config.mode.repl = true;
+    
+    // Check for environment variable API key
+    if config.llm.claude_api_key.is_none() {
+        config.llm.claude_api_key = std::env::var("CLAUDE_API_KEY").ok();
+        if config.llm.claude_api_key.is_some() {
+            info!("Using Claude API key from environment variable");
         }
     }
-
-    // Check for environment variables if not provided as arguments
-    if config.claude_api_key.is_none() {
-        config.claude_api_key = std::env::var("CLAUDE_API_KEY").ok();
-        if config.claude_api_key.is_none() {
-             warn!("CLAUDE_API_KEY environment variable not set. LLM features will be unavailable unless --claude-api-key is used.");
-             // Decide if this should be a fatal error or just a warning
-             // For now, let it proceed, but new() might fail later if LLM is required.
+    
+    // Process command line argument if provided
+    if args.len() > 1 {
+        let arg = &args[1];
+        
+        // Check if the argument is in the format "server:port"
+        if arg.contains(':') {
+            let parts: Vec<&str> = arg.split(':').collect();
+            if parts.len() == 2 {
+                let server = parts[0];
+                if let Ok(port) = parts[1].parse::<u16>() {
+                    // Set server and port in the configuration
+                    info!("Setting up connection to server '{}' on port {}", server, port);
+                    
+                    // Update client configuration with the server URL
+                    let server_url = format!("http://{}:{}", server, port);
+                    config.client.target_url = Some(server_url);
+                } else {
+                    warn!("Invalid port number in '{}'. Using default configuration.", arg);
+                }
+            } else {
+                warn!("Invalid argument format '{}'. Expected 'server:port'. Using default configuration.", arg);
+            }
+        } else {
+            // If the argument doesn't contain ':', treat it as a config file path
+            let config_path = arg;
+            info!("Loading configuration from {}", config_path);
+            
+            // Try to load configuration from file
+            match BidirectionalAgentConfig::from_file(config_path) {
+                Ok(loaded_config) => {
+                    config = loaded_config;
+                    config.config_file_path = Some(config_path.to_string());
+                    info!("Successfully loaded configuration from {}", config_path);
+                },
+                Err(e) => {
+                    warn!("Failed to load configuration from {}: {}. Using default configuration.", config_path, e);
+                    // Continue with default configuration
+                }
+            }
         }
+    } else {
+        info!("No arguments provided. Using default configuration.");
     }
+    
+    // Process actions based on config.mode settings
+    
+    // REPL mode takes precedence
+    if config.mode.repl {
+        // Create the agent
+        let mut agent = BidirectionalAgent::new(config.clone())?;
+        
+        // Run the REPL
+        return agent.run_repl().await;
+    }
+    
+    // Process a single message
+    if let Some(message) = &config.mode.message {
+        // Create the agent
+        let agent = BidirectionalAgent::new(config.clone())?;
 
-    // Create and run the agent
+        // Process the message
+        println!("Processing message: '{}'", message);
+        let response = agent.process_message_directly(message).await?;
+
+        println!("Response:\n{}", response);
+        return Ok(());
+    }
+    
+    // Send task to remote agent
+    if let Some(task_message) = &config.mode.remote_task {
+        // Check if we have a target URL
+        if config.client.target_url.is_none() {
+            return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file."));
+        }
+        
+        // Create the agent
+        let mut agent = BidirectionalAgent::new(config.clone())?;
+        
+        // Send task to remote agent
+        println!("Sending task to remote agent: '{}'", task_message);
+        let task = agent.send_task_to_remote(task_message).await?;
+        
+        println!("Task sent successfully!");
+        println!("Task ID: {}", task.id);
+        println!("Initial state: {:?}", task.status.state);
+        
+        return Ok(());
+    }
+    
+    // Get remote agent card
+    if config.mode.get_agent_card {
+        // Check if we have a target URL
+        if config.client.target_url.is_none() {
+            return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file."));
+        }
+        
+        // Create the agent
+        let mut agent = BidirectionalAgent::new(config.clone())?;
+        
+        // Get remote agent card
+        println!("Retrieving agent card from remote agent...");
+        let card = agent.get_remote_agent_card().await?;
+        
+        println!("Remote Agent Card:");
+        println!("  Name: {}", card.name);
+        println!("  Version: {}", card.version);
+        println!("  Description: {}", card.description.as_deref().unwrap_or("None"));
+        println!("  URL: {}", card.url);
+        println!("  Capabilities:");
+        println!("    - Streaming: {}", card.capabilities.streaming);
+        println!("    - Push Notifications: {}", card.capabilities.push_notifications);
+        println!("    - State Transition History: {}", card.capabilities.state_transition_history);
+        println!("  Skills: {}", card.skills.len());
+        
+        return Ok(());
+    }
+    
+    // Default mode: Run the server
     info!("Starting agent with config: {:?}", config);
     let agent = BidirectionalAgent::new(config)?;
     agent.run().await

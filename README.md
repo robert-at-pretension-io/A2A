@@ -102,8 +102,6 @@ cargo test client::streaming::tests
 
 - [Client Documentation](src/client/README.md)
 - [Schema Overview](docs/schema_overview.md)
-- [Docker Guide](docker-guide.md)
-- [Cross-Compilation](cross-compile.md)
 
 ## Project Status
 

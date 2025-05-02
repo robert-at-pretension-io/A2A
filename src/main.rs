@@ -4,10 +4,13 @@ mod mock_server;
 mod fuzzer;
 mod types;
 mod client;
-mod schema_utils; // Add this line
-mod runner; // Add the runner module
-mod server; // Add the reference server module
-// Add bidirectional_agent module conditionally
+mod schema_utils;
+mod runner;
+mod server;
+mod bidirectional;
+
+// Note: The bidirectional agent is available as a separate binary.
+// To run it, use: cargo run --bin bidirectional-agent [server:port | config_file]
 
 #[cfg(test)]
 mod client_tests;
@@ -178,13 +181,17 @@ fn main() {
                 let shutdown_token = tokio_util::sync::CancellationToken::new();
                 
                 // Start the server
+                // Create agent card for the server
+                let agent_card = Some(server::create_agent_card());
+                
                 server::run_server(
                     *port,
                     bind_address,
                     task_service,
                     streaming_service,
                     notification_service,
-                    shutdown_token
+                    shutdown_token,
+                    agent_card
                 ).await
             }) {
                 eprintln!("Server error: {}", e);
@@ -255,9 +262,6 @@ fn main() {
                 }
             }
         }
-        // Handle the new BidirectionalAgent command
-        
-        
     }
 }
 

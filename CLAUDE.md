@@ -62,6 +62,7 @@ The A2A Test Suite is a comprehensive testing framework for the Agent-to-Agent (
   - List skills: `cargo run --quiet -- client list-skills --url [url] --tags [optional_tags]`
   - Get skill details: `cargo run --quiet -- client get-skill-details --url [url] --id [skill_id]`
   - Invoke skill: `cargo run --quiet -- client invoke-skill --url [url] --id [skill_id] --message [text] --input-mode [optional_mode] --output-mode [optional_mode] [--metadata '{"_mock_duration_ms": 3000}']`
+  - Start Claude REPL: `CLAUDE_API_KEY=your_api_key cargo run --quiet -- agent-repl` (interactive chat with Claude via API)
 - **REQUIRED VERIFICATION**: Always run `RUSTFLAGS="-A warnings" cargo test && RUSTFLAGS="-A warnings" cargo build` before finalizing changes (ALWAYS use `RUSTFLAGS="-A warnings"`)
 
 ## Code Style Guidelines

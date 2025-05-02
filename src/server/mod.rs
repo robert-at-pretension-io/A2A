@@ -15,7 +15,7 @@ pub mod tool_executor;
 pub mod error; // Make the error module public
 
 use crate::types;
-use hyper::{Body, Request, Response, Server, StatusCode};
+use hyper::{Body, Request, Response, Server, StatusCode, header};
 use hyper::service::{make_service_fn, service_fn};
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -51,6 +51,7 @@ pub async fn run_server(
     streaming_service: Arc<StreamingService>, // Accept pre-built StreamingService
     notification_service: Arc<NotificationService>, // Accept pre-built NotificationService
     shutdown_token: CancellationToken, // Add shutdown token
+    agent_card: Option<serde_json::Value>, // Optional custom agent card
 ) -> Result<JoinHandle<()>, Box<dyn std::error::Error + Send + Sync>> {
 
     // Create service function using the provided services
@@ -58,15 +59,34 @@ pub async fn run_server(
         let task_svc = task_service.clone();
         let stream_svc = streaming_service.clone();
         let notif_svc = notification_service.clone();
+        // Clone the custom agent card or use the default
+        let agent_card_clone = agent_card.clone();
         
         async move {
-            Ok::<_, Infallible>(service_fn(move |req| {
-                jsonrpc_handler(
-                    req,
-                    task_svc.clone(),
-                    stream_svc.clone(),
-                    notif_svc.clone()
-                )
+            Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
+                let task_svc = task_svc.clone();
+                let stream_svc = stream_svc.clone();
+                let notif_svc = notif_svc.clone();
+                let card = agent_card_clone.clone();
+                
+                async move {
+                    // For agent card requests, check if we have a custom one first
+                    if req.uri().path() == "/.well-known/agent.json" && card.is_some() {
+                        return Ok(Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(serde_json::to_string(&card.as_ref().unwrap()).unwrap()))
+                            .unwrap());
+                    }
+                    
+                    // Otherwise, use the standard handler
+                    jsonrpc_handler(
+                        req,
+                        task_svc,
+                        stream_svc,
+                        notif_svc
+                    ).await
+                }
             }))
         }
     });

@@ -1,0 +1,179 @@
+use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter, ExecutionMode, AgentDirectory};
+use crate::bidirectional::tests::mocks::MockLlmClient;
+use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities};
+use std::sync::Arc;
+use uuid::Uuid;
+use chrono::Utc;
+
+#[tokio::test]
+async fn test_router_local_decision() {
+    // Create a mock LLM client that always returns "LOCAL"
+    let llm = Arc::new(MockLlmClient::new().with_default_response("LOCAL"));
+    
+    // Create an agent directory
+    let directory = Arc::new(AgentDirectory::new());
+    
+    // Create the router
+    let router = BidirectionalTaskRouter::new(llm, directory);
+    
+    // Create a test task
+    let task = create_test_task("What is the capital of France?");
+    
+    // Test the routing decision
+    let decision = router.decide_execution_mode(&task).await.unwrap();
+    
+    // Verify that the decision is to execute locally
+    assert!(matches!(decision, ExecutionMode::Local));
+}
+
+#[tokio::test]
+async fn test_router_remote_decision() {
+    // Create a mock LLM client that returns a remote decision
+    let llm = Arc::new(MockLlmClient::new().with_default_response("REMOTE: test-agent"));
+    
+    // Create an agent directory
+    let directory = Arc::new(AgentDirectory::new());
+    
+    // Add a test agent to the directory
+    let agent_card = create_test_agent_card("http://example.com/agent");
+    directory.add_or_update_agent("test-agent".to_string(), agent_card);
+    
+    // Create the router
+    let router = BidirectionalTaskRouter::new(llm, directory);
+    
+    // Create a test task
+    let task = create_test_task("Please forward this to test-agent");
+    
+    // Test the routing decision
+    let decision = router.decide_execution_mode(&task).await.unwrap();
+    
+    // Verify that the decision is to execute remotely with the correct agent ID
+    assert!(matches!(decision, ExecutionMode::Remote { agent_id } if agent_id == "test-agent"));
+}
+
+#[tokio::test]
+async fn test_router_fallback_to_local_for_unknown_agent() {
+    // Create a mock LLM client that returns a remote decision for an unknown agent
+    let llm = Arc::new(MockLlmClient::new().with_default_response("REMOTE: unknown-agent"));
+    
+    // Create an agent directory (with no agents)
+    let directory = Arc::new(AgentDirectory::new());
+    
+    // Create the router
+    let router = BidirectionalTaskRouter::new(llm, directory);
+    
+    // Create a test task
+    let task = create_test_task("Please forward this to unknown-agent");
+    
+    // Test the routing decision
+    let decision = router.decide_execution_mode(&task).await.unwrap();
+    
+    // Verify that the decision falls back to local execution
+    assert!(matches!(decision, ExecutionMode::Local));
+}
+
+#[tokio::test]
+async fn test_router_fallback_to_local_for_unclear_decision() {
+    // Create a mock LLM client that returns an unclear decision
+    let llm = Arc::new(MockLlmClient::new().with_default_response("I'm not sure"));
+    
+    // Create an agent directory
+    let directory = Arc::new(AgentDirectory::new());
+    
+    // Create the router
+    let router = BidirectionalTaskRouter::new(llm, directory);
+    
+    // Create a test task
+    let task = create_test_task("What should I do with this?");
+    
+    // Test the routing decision
+    let decision = router.decide_execution_mode(&task).await.unwrap();
+    
+    // Verify that the decision falls back to local execution
+    assert!(matches!(decision, ExecutionMode::Local));
+}
+
+#[tokio::test]
+async fn test_router_prompt_formatting() {
+    // Create a mock LLM client to capture the prompt
+    let llm = Arc::new(MockLlmClient::new());
+    
+    // Create an agent directory with some test agents
+    let directory = Arc::new(AgentDirectory::new());
+    
+    // Add test agents to the directory
+    let agent_card1 = create_test_agent_card("http://example.com/agent1");
+    let agent_card2 = create_test_agent_card("http://example.com/agent2");
+    directory.add_or_update_agent("test-agent-1".to_string(), agent_card1);
+    directory.add_or_update_agent("test-agent-2".to_string(), agent_card2);
+    
+    // Create the router
+    let router = BidirectionalTaskRouter::new(llm.clone(), directory);
+    
+    // Create a test task
+    let task = create_test_task("Please route this task appropriately");
+    
+    // Make the routing decision
+    let _ = router.decide_execution_mode(&task).await.unwrap();
+    
+    // Check that the prompt sent to the LLM contains key elements
+    let calls = llm.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let prompt = &calls[0];
+    
+    // The prompt should contain these key elements
+    assert!(prompt.contains("You need to decide whether to handle a task locally or delegate it to another agent"));
+    assert!(prompt.contains("Please route this task appropriately"));
+    assert!(prompt.contains("test-agent-1"));
+    assert!(prompt.contains("test-agent-2"));
+    assert!(prompt.contains("LOCAL"));
+    assert!(prompt.contains("REMOTE"));
+}
+
+// Helper function to create a test task
+fn create_test_task(message_text: &str) -> Task {
+    let task_id = Uuid::new_v4().to_string();
+    let initial_message = Message {
+        role: Role::User,
+        parts: vec![Part::TextPart(TextPart {
+            text: message_text.to_string(),
+            metadata: None,
+            type_: "text".to_string(),
+        })],
+        metadata: None,
+    };
+    
+    Task {
+        id: task_id.clone(),
+        status: TaskStatus {
+            state: TaskState::Submitted,
+            timestamp: Some(Utc::now()),
+            message: None,
+        },
+        history: Some(vec![initial_message]),
+        artifacts: None,
+        metadata: None,
+        session_id: None,
+    }
+}
+
+// Helper function to create a test agent card
+fn create_test_agent_card(url: &str) -> AgentCard {
+    AgentCard {
+        name: "Test Agent".to_string(),
+        description: Some("A test agent for routing decisions".to_string()),
+        version: "1.0.0".to_string(),
+        url: url.to_string(),
+        capabilities: AgentCapabilities {
+            push_notifications: true,
+            state_transition_history: true,
+            streaming: false,
+        },
+        authentication: None,
+        default_input_modes: vec!["text".to_string()],
+        default_output_modes: vec!["text".to_string()],
+        documentation_url: None,
+        provider: None,
+        skills: vec![],
+    }
+}
