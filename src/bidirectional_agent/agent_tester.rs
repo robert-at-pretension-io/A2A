@@ -1,27 +1,27 @@
-#[cfg(feature = "bidir-core")]
+
 use crate::bidirectional_agent::{
     agent_directory::{AgentDirectory, AgentStatus},
     AgentRegistry, BidirectionalAgent, BidirectionalAgentConfig,
 };
-#[cfg(feature = "bidir-core")]
+
 use crate::client::A2aClient;
-#[cfg(feature = "bidir-core")]
+
 use crate::runner::{TestRunnerConfig, run_integration_tests};
-#[cfg(feature = "bidir-core")]
+
 use crate::types::AgentCard;
-#[cfg(feature = "bidir-core")]
+
 use anyhow::{Result, Context, anyhow};
-#[cfg(feature = "bidir-core")]
+
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(feature = "bidir-core")]
+
 use url::Url;
-#[cfg(feature = "bidir-core")]
+
 use colored::*;
 
 /// Configuration for agent testing
-#[cfg_attr(feature = "bidir-core", derive(Debug, Clone))]
-#[cfg_attr(not(feature = "bidir-core"), derive(Debug, Clone))]
+
+
 pub struct AgentTesterConfig {
     /// Timeout for individual tests
     pub test_timeout: Duration,
@@ -31,7 +31,7 @@ pub struct AgentTesterConfig {
     pub run_all_tests: bool,
 }
 
-#[cfg(feature = "bidir-core")]
+
 impl Default for AgentTesterConfig {
     fn default() -> Self {
         Self {
@@ -42,26 +42,16 @@ impl Default for AgentTesterConfig {
     }
 }
 
-#[cfg(not(feature = "bidir-core"))]
-impl Default for AgentTesterConfig {
-    fn default() -> Self {
-        Self {
-            test_timeout: Duration::from_secs(30),
-            max_retries: 3,
-            run_all_tests: false,
-        }
-    }
-}
 
 /// A tool for testing A2A agents before adding them to the directory
-#[cfg(feature = "bidir-core")]
+
 pub struct AgentTester {
     config: AgentTesterConfig,
     agent_registry: Arc<AgentRegistry>,
     agent_directory: Arc<AgentDirectory>,
 }
 
-#[cfg(feature = "bidir-core")]
+
 impl AgentTester {
     /// Create a new AgentTester with the given bidirectional agent components
     pub fn new(
@@ -76,14 +66,6 @@ impl AgentTester {
         }
     }
 
-    /// Create a new AgentTester from a BidirectionalAgent instance
-    pub fn from_agent(agent: &BidirectionalAgent, config: AgentTesterConfig) -> Self {
-        Self {
-            config,
-            agent_registry: agent.agent_registry.clone(),
-            agent_directory: agent.agent_directory.clone(),
-        }
-    }
 
     /// Test an agent at the given URL before adding it to the directory
     pub async fn test_agent(&self, url: &str) -> Result<TestResults> {
@@ -241,7 +223,7 @@ impl AgentTester {
 }
 
 /// Results of testing an agent
-#[cfg(feature = "bidir-core")]
+
 #[derive(Debug, Clone)]
 pub struct TestResults {
     /// The agent's card if successfully retrieved
@@ -257,7 +239,7 @@ pub struct TestResults {
 }
 
 /// Results of testing and adding an agent
-#[cfg(feature = "bidir-core")]
+
 #[derive(Debug, Clone)]
 pub struct AddAgentResult {
     /// ID of the agent (if determined)
@@ -271,7 +253,7 @@ pub struct AddAgentResult {
 }
 
 /// Information about a tested agent
-#[cfg(feature = "bidir-core")]
+
 #[derive(Debug, Clone)]
 pub struct TestedAgentInfo {
     /// ID of the agent

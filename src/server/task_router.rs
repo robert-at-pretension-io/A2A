@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::bidirectional_agent::error::AgentError;
+use crate::server::error::ServerError;
 use crate::types::{Message, TaskSendParams};
 
 /// Subtask definition for task decomposition
@@ -68,19 +68,19 @@ pub enum RoutingDecision {
 #[async_trait]
 pub trait LlmTaskRouterTrait: Send + Sync {
     /// Determines the routing strategy for a task
-    async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError>;
+    async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError>;
     
     /// Processes a follow-up message for a task
-    async fn process_follow_up(&self, task_id: &str, message: &Message) -> Result<RoutingDecision, AgentError>;
+    async fn process_follow_up(&self, task_id: &str, message: &Message) -> Result<RoutingDecision, ServerError>;
     
     /// Determines the routing decision for a task
-    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError>;
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError>;
     
     /// Determines if a task should be decomposed
-    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, AgentError>;
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, ServerError>;
     
     /// Decomposes a task into subtasks
-    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, AgentError>;
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, ServerError>;
 }
 
 /// Basic implementation of a task router
@@ -101,5 +101,35 @@ impl TaskRouter {
         RoutingDecision::Local {
             tool_names: self.tools.clone(),
         }
+    }
+}
+
+#[async_trait]
+impl LlmTaskRouterTrait for TaskRouter {
+    async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
+        // Simple implementation that always routes to local tools
+        Ok(self.route(params))
+    }
+    
+    async fn process_follow_up(&self, _task_id: &str, _message: &Message) -> Result<RoutingDecision, ServerError> {
+        // Simple implementation that always routes to local tools
+        Ok(RoutingDecision::Local {
+            tool_names: self.tools.clone(),
+        })
+    }
+    
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
+        // Simple implementation that always routes to local tools
+        Ok(self.route(params))
+    }
+    
+    async fn should_decompose(&self, _params: &TaskSendParams) -> Result<bool, ServerError> {
+        // Simple implementation that never decomposes tasks
+        Ok(false)
+    }
+    
+    async fn decompose_task(&self, _params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, ServerError> {
+        // Simple implementation that returns an empty list (no decomposition)
+        Ok(Vec::new())
     }
 }

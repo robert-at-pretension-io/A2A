@@ -5,6 +5,13 @@ pub mod services;
 #[cfg(test)]
 pub mod tests;
 
+// Local modules for functionality previously from bidirectional_agent
+pub mod agent_registry;
+pub mod client_manager;
+pub mod task_flow;
+pub mod task_router;
+pub mod tool_executor;
+
 pub mod error; // Make the error module public
 
 use crate::types;
@@ -25,11 +32,14 @@ use crate::server::services::notification_service::NotificationService;
 use tokio::task::JoinHandle; // Add JoinHandle import
 use tokio_util::sync::CancellationToken; // Add CancellationToken import
 
-// Conditionally import bidirectional components
-#[cfg(feature = "bidir-local-exec")]
-use crate::bidirectional_agent::{TaskRouter, ToolExecutor};
-#[cfg(feature = "bidir-delegate")]
-use crate::bidirectional_agent::{ClientManager, AgentRegistry};
+// Use our local component types
+use crate::server::{
+    task_router::TaskRouter,
+    tool_executor::ToolExecutor,
+    client_manager::ClientManager,
+    agent_registry::AgentRegistry,
+    task_flow::TaskFlow,
+};
 
 
 /// Runs the A2A server on the specified port, accepting pre-built services.

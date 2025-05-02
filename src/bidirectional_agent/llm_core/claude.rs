@@ -208,7 +208,6 @@ pub struct RateLimitInfo {
     /// Time until the rate limit resets (in seconds)
     pub reset: u32,
 }
-}
 
 #[async_trait]
 impl LlmClient for ClaudeClient {

@@ -1,15 +1,13 @@
 //! Built-in tools for the Bidirectional Agent.
 
-// Only compile if local execution feature is enabled
-#![cfg(feature = "bidir-local-exec")]
-
 use async_trait::async_trait;
+use dyn_clone::DynClone;
 use serde_json::Value;
 use crate::bidirectional_agent::tool_executor::ToolError; // Use ToolError from executor
 
 // Define the core Tool trait
 #[async_trait]
-pub trait Tool: Send + Sync + 'static {
+pub trait Tool: Send + Sync + DynClone + 'static {
     /// Returns the unique name of the tool.
     fn name(&self) -> &str;
     /// Returns a description of what the tool does.
@@ -21,22 +19,21 @@ pub trait Tool: Send + Sync + 'static {
     fn capabilities(&self) -> &[&'static str];
 }
 
+// Enable cloning of trait objects
+dyn_clone::clone_trait_object!(Tool);
+
 // Re-export tool implementations
 pub use shell_tool::ShellTool;
 pub use http_tool::HttpTool;
-#[cfg(feature = "bidir-core")]
 pub use directory_tool::DirectoryTool;
 pub use special_tool::{SpecialEchoTool1, SpecialEchoTool2};
 
-// For remote tool execution (delegate feature)
-#[cfg(feature = "bidir-delegate")]
+// For remote tool execution
 pub use pluggable::{RemoteToolRegistry, RemoteToolExecutor};
 
 // Import tool modules
 mod shell_tool;
 mod http_tool;
-#[cfg(feature = "bidir-core")]
 mod directory_tool;
 mod special_tool;
-#[cfg(feature = "bidir-delegate")]
-mod pluggable;
+pub mod pluggable;

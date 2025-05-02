@@ -3,8 +3,8 @@
 //! This module provides functionality to maintain a directory of known agents
 //! using SQLite, managing their status, verification history, and backoff.
 
-// Only compile if bidir-core feature is enabled
-#![cfg(feature = "bidir-core")]
+// Previously was conditionally compiled with bidir-core feature
+// Now available unconditionally
 
 use crate::{
     bidirectional_agent::config::DirectoryConfig,

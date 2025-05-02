@@ -1,6 +1,6 @@
 //! Combines results from multiple delegated or decomposed tasks.
 
-#![cfg(feature = "bidir-delegate")]
+
 
 use crate::types::{Task, Artifact, Message, Part, TextPart, Role, TaskState}; // Import TaskState
 use crate::server::repositories::task_repository::TaskRepository;

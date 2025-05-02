@@ -1,7 +1,7 @@
 //! Tool for accessing the agent directory.
 
 // Only compile if local execution feature is enabled
-#![cfg(feature = "bidir-local-exec")]
+
 
 use crate::bidirectional_agent::{
     agent_directory::AgentDirectory,
@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 
 /// Tool for interacting with the agent directory.
+#[derive(Clone)]
 pub struct DirectoryTool {
     agent_directory: Arc<AgentDirectory>,
 }

@@ -14,6 +14,12 @@ pub enum ServerError {
     FileNotFound(String),
     SkillNotFound(String),
     BatchNotFound(String),
+    // Additional errors for the server components
+    A2aClientError(String),
+    AgentNotFound(String),
+    UnsupportedOperation(String),
+    ConfigError(String),
+    ServerTaskExecutionFailed(String),
 }
 
 impl fmt::Display for ServerError {
@@ -30,6 +36,11 @@ impl fmt::Display for ServerError {
             ServerError::FileNotFound(id) => write!(f, "File not found: {}", id),
             ServerError::SkillNotFound(id) => write!(f, "Skill not found: {}", id),
             ServerError::BatchNotFound(id) => write!(f, "Batch not found: {}", id),
+            ServerError::A2aClientError(_) => todo!(),
+            ServerError::AgentNotFound(_) => todo!(),
+            ServerError::UnsupportedOperation(_) => todo!(),
+            ServerError::ConfigError(_) => todo!(),
+            ServerError::ServerTaskExecutionFailed(_) => todo!(),
         }
     }
 }
@@ -37,19 +48,23 @@ impl fmt::Display for ServerError {
 impl ServerError {
     pub fn code(&self) -> i32 {
         match self {
-            // Update error codes to match the client/errors.rs definitions
-            ServerError::TaskNotFound(_) => -32001, // Match ERROR_TASK_NOT_FOUND
-            ServerError::TaskNotCancelable(_) => -32002, // Match ERROR_TASK_NOT_CANCELABLE
-            ServerError::InvalidRequest(_) => -32600, // Match ERROR_INVALID_REQUEST
-            ServerError::MethodNotFound(_) => -32601, // Match ERROR_METHOD_NOT_FOUND
-            ServerError::InvalidParameters(_) => -32602, // Match ERROR_INVALID_PARAMS
-            ServerError::Internal(_) => -32603, // Match ERROR_INTERNAL
-            ServerError::PushNotificationNotSupported(_) => -32003, // Match ERROR_PUSH_NOT_SUPPORTED
-            ServerError::AuthenticationError(_) => -32004, // Match ERROR_UNSUPPORTED_OP (closest match)
-            ServerError::FileNotFound(_) => -32005, // Match ERROR_INCOMPATIBLE_TYPES (closest match)
-            ServerError::SkillNotFound(_) => -32001, // Use ERROR_TASK_NOT_FOUND (for compatibility)
-            ServerError::BatchNotFound(_) => -32001, // Use ERROR_TASK_NOT_FOUND (for compatibility)
-        }
+            ServerError::TaskNotFound(_) => -32001,
+            ServerError::TaskNotCancelable(_) => -32002,
+            ServerError::InvalidRequest(_) => -32600,
+            ServerError::MethodNotFound(_) => -32601,
+            ServerError::InvalidParameters(_) => -32602,
+            ServerError::Internal(_) => -32603,
+            ServerError::PushNotificationNotSupported(_) => -32003,
+            ServerError::AuthenticationError(_) => -32004,
+            ServerError::FileNotFound(_) => -32005,
+            ServerError::SkillNotFound(_) => -32001,
+            ServerError::BatchNotFound(_) => -32001,
+            ServerError::A2aClientError(_) => todo!(),
+ServerError::AgentNotFound(_) => todo!(),
+            ServerError::UnsupportedOperation(_) => todo!(),
+ServerError::ConfigError(_) => todo!(),
+            ServerError::ServerTaskExecutionFailed(_) => todo!(),
+                    }
     }
 }
 

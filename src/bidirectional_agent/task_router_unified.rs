@@ -1,46 +1,51 @@
-/// LLM-powered task router implementation.
+/// Unified task router implementation
 ///
-/// This module provides a task router that uses LLM-based decision making
-/// to determine the best way to handle tasks (local execution, delegation, etc.).
+/// This module provides a unified task router that combines local and remote execution options.
 
 use std::sync::Arc;
 use async_trait::async_trait;
+use anyhow::Context;
 use serde_json::Value;
 
 use crate::bidirectional_agent::{
     agent_registry::AgentRegistry,
     error::AgentError,
-    task_router::{RoutingDecision, SubtaskDefinition, LlmTaskRouterTrait},
+    task_router::{RoutingDecision, SubtaskDefinition, LlmTaskRouterTrait, TaskRouter},
     tool_executor::ToolExecutor,
 };
 use crate::types::{Message, TaskSendParams};
 
-/// LLM-powered task router
-pub struct LlmTaskRouter {
-    /// Agent registry for delegation
+/// Unified task router that handles both local and remote execution
+pub struct UnifiedTaskRouter {
+    /// Agent registry for looking up available agents
     agent_registry: Arc<AgentRegistry>,
     
     /// Tool executor for local execution
     tool_executor: Arc<ToolExecutor>,
+    
+    /// Whether to use LLM for routing decisions
+    use_llm: bool,
 }
 
-impl LlmTaskRouter {
-    /// Creates a new LLM-powered task router
-    pub fn new(
-        agent_registry: Arc<AgentRegistry>,
-        tool_executor: Arc<ToolExecutor>,
-    ) -> Self {
-        Self {
-            agent_registry,
-            tool_executor,
-        }
-    }
+/// Factory function to create a unified task router
+pub fn create_unified_task_router(
+    agent_registry: Arc<AgentRegistry>,
+    tool_executor: Arc<ToolExecutor>,
+    use_llm: bool,
+) -> Result<Arc<dyn LlmTaskRouterTrait>, AgentError> {
+    let router = UnifiedTaskRouter {
+        agent_registry,
+        tool_executor,
+        use_llm,
+    };
+    
+    Ok(Arc::new(router))
 }
 
 #[async_trait]
-impl LlmTaskRouterTrait for LlmTaskRouter {
+impl LlmTaskRouterTrait for UnifiedTaskRouter {
     async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, AgentError> {
-        // Simplified implementation - always execute locally with echo tool
+        // Simple implementation - local execution with echo tool
         Ok(RoutingDecision::Local {
             tool_names: vec!["echo".to_string()],
         })
@@ -66,13 +71,4 @@ impl LlmTaskRouterTrait for LlmTaskRouter {
         // Simple implementation - return empty list
         Ok(vec![])
     }
-}
-
-/// Factory function to create an LLM-powered task router
-pub fn create_llm_task_router(
-    agent_registry: Arc<AgentRegistry>,
-    tool_executor: Arc<ToolExecutor>,
-) -> Result<Arc<dyn LlmTaskRouterTrait>, AgentError> {
-    let router = LlmTaskRouter::new(agent_registry, tool_executor);
-    Ok(Arc::new(router))
 }

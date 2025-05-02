@@ -1,7 +1,7 @@
 //! Integration tests for the bidirectional agent components (Registry, Directory).
 
-// Only compile when testing and bidir-core feature is enabled
-#![cfg(all(test, feature = "bidir-core"))]
+// Only compile when testing
+#![cfg(test)]
 
 // Import necessary items
 use crate::bidirectional_agent::{
@@ -25,17 +25,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 // Import additional items needed for task_flow tests
-#[cfg(feature = "bidir-delegate")]
 use crate::bidirectional_agent::{
     client_manager::ClientManager,
     config::{BidirectionalAgentConfig, AuthConfig, NetworkConfig, DirectoryConfig, ToolConfigs},
     task_flow::TaskFlow,
 };
-#[cfg(feature = "bidir-delegate")]
 use std::collections::HashMap;
-#[cfg(feature = "bidir-delegate")]
 use crate::server::repositories::task_repository::TaskRepository;
-#[cfg(feature = "bidir-delegate")]
 use anyhow::Result;
 
 #[tokio::test]
@@ -537,7 +533,6 @@ async fn test_task_router_with_explicit_tool_call() {
 
 // Test for task flow with agent directory interactions
 // This test requires the bidir-delegate feature since TaskFlow is only available with that feature
-#[cfg(feature = "bidir-delegate")]
 #[tokio::test]
 async fn test_task_flow_with_directory_local_execution() {
     // Arrange: Set up environment
@@ -608,7 +603,6 @@ async fn test_task_flow_with_directory_local_execution() {
         network: NetworkConfig::default(),
         directory: DirectoryConfig::default(),
         tools: ToolConfigs::default(),
-        #[cfg(feature = "bidir-delegate")]
         tool_discovery_interval_minutes: 30,
     });
     let client_manager = Arc::new(ClientManager::new(registry_arc.clone(), self_config).unwrap());
@@ -980,7 +974,6 @@ async fn test_directory_verification_error_handling() {
 // --- More tests will be added below ---
 // --- Test for Pluggable Tools ---
 
-#[cfg(feature = "bidir-delegate")]
 #[tokio::test]
 async fn test_pluggable_tools_between_agents() {
     // This test demonstrates two agents discovering and using each other's tools
@@ -1012,9 +1005,7 @@ async fn test_pluggable_tools_between_agents() {
             db_path: temp_dir1.path().join("agent1_dir.db").to_string_lossy().to_string(),
             ..Default::default()
         },
-        #[cfg(feature = "bidir-local-exec")]
         tools: ToolConfigs::default(),
-        #[cfg(feature = "bidir-delegate")]
         tool_discovery_interval_minutes: 1, // Short interval for test
     };
     
@@ -1029,9 +1020,7 @@ async fn test_pluggable_tools_between_agents() {
             db_path: temp_dir2.path().join("agent2_dir.db").to_string_lossy().to_string(),
             ..Default::default()
         },
-        #[cfg(feature = "bidir-local-exec")]
         tools: ToolConfigs::default(),
-        #[cfg(feature = "bidir-delegate")]
         tool_discovery_interval_minutes: 1, // Short interval for test
     };
     

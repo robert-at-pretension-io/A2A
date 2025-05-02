@@ -4,6 +4,7 @@ use crate::bidirectional_agent::tool_executor::ToolError;
 use super::Tool;
 
 /// A special tool for testing purposes that echoes back parameters with identifier 1
+#[derive(Clone)]
 pub struct SpecialEchoTool1;
 
 #[async_trait]
@@ -30,6 +31,7 @@ impl Tool for SpecialEchoTool1 {
 }
 
 /// A special tool for testing purposes that echoes back parameters with identifier 2
+#[derive(Clone)]
 pub struct SpecialEchoTool2;
 
 #[async_trait]

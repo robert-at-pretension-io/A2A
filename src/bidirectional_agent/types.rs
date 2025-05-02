@@ -14,41 +14,6 @@ pub use crate::types::{
 /// Namespace for custom metadata to avoid conflicts with standard A2A fields
 pub const METADATA_NAMESPACE: &str = "a2a_test_suite";
 
-/// Information about the origin of a task
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TaskOrigin {
-    /// Task originated locally within this agent
-    Local,
-    /// Task was delegated to another agent
-    Delegated {
-        /// The ID of the agent that this task was delegated to
-        agent_id: String,
-        /// Optional URL of the agent
-        agent_url: Option<String>,
-        /// Timestamp of when the task was delegated
-        delegated_at: String,
-    },
-    /// Task was received from another agent
-    External {
-        /// The ID of the agent that created this task
-        agent_id: String,
-        /// Optional URL of the agent
-        agent_url: Option<String>,
-        /// Timestamp of when the task was created
-        created_at: String,
-    },
-}
-
-/// Relationships between tasks in a workflow
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskRelationships {
-    /// Parent task IDs that led to this task
-    pub parent_task_ids: Vec<String>,
-    /// Child task IDs created from this task
-    pub child_task_ids: Vec<String>,
-    /// Related task IDs that are associated but not direct parents/children
-    pub related_task_ids: HashMap<String, String>,
-}
 
 /// Extension metadata that can be stored in standard A2A metadata fields
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

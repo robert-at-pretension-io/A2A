@@ -1,6 +1,6 @@
 //! Example Shell Tool implementation.
 
-#![cfg(feature = "bidir-local-exec")]
+
 
 use super::Tool; // Import the Tool trait from the parent module
 use crate::bidirectional_agent::tool_executor::ToolError;
@@ -10,6 +10,7 @@ use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
 /// A tool for executing shell commands (with safety precautions).
+#[derive(Clone)]
 pub struct ShellTool {
     // Add configuration if needed (e.g., allowed commands, timeout)
     allowed_commands: Vec<String>,

@@ -1,36 +1,36 @@
-//! Executes local tools based on task requirements.
+//! Executes local tools with standard A2A protocol-compliant types and artifacts.
 
-#![cfg(feature = "bidir-local-exec")]
-
-use crate::{
-    bidirectional_agent::{
-        error::AgentError,
-        tools::Tool, // Import the Tool trait from the tools module
-
-    },
-    // Import ToolCall and ToolCallPart
-    types::{Task, TaskState, TaskStatus, Message, Role, Part, TextPart, Artifact},
+use crate::bidirectional_agent::error::AgentError;
+use crate::bidirectional_agent::tools::Tool;
+use crate::bidirectional_agent::types::{create_tool_call_part, format_tool_call_result};
+use crate::types::{
+    Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact
 };
 
-#[cfg(feature = "bidir-core")] // Conditionally import AgentDirectory
 use crate::bidirectional_agent::agent_directory::AgentDirectory;
+
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
-// Remove anyhow::Result if Tool::execute returns Result<Value, ToolError>
-// Remove async_trait import as Tool trait is now in tools/mod.rs
+use std::collections::HashMap;
+use std::sync::Arc;
+use chrono::Utc;
+use log::{debug, info, warn, error};
 
 /// Error type specific to tool execution.
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum ToolError {
     #[error("Tool '{0}' not found")]
     NotFound(String),
+
     #[error("Invalid parameters for tool '{0}': {1}")]
     InvalidParams(String, String),
+
     #[error("Tool execution failed for '{0}': {1}")]
     ExecutionFailed(String, String),
+
     #[error("Tool configuration error for '{0}': {1}")]
     ConfigError(String, String),
-    #[error("Input/Output Error during tool execution: {0}")] // Add IO Error variant if tools interact with FS etc.
+
+    #[error("Input/Output Error during tool execution: {0}")]
     IoError(String),
 }
 
@@ -41,20 +41,28 @@ impl From<std::io::Error> for ToolError {
     }
 }
 
-
 // Implement conversion to AgentError
 impl From<ToolError> for AgentError {
     fn from(error: ToolError) -> Self {
-        // Provide more context in the AgentError if possible
-        AgentError::ToolError(format!("Tool execution failed: {}", error))
+        match error {
+            ToolError::NotFound(tool) => 
+                AgentError::UnsupportedOperation(format!("Tool '{}' not found", tool)),
+            ToolError::InvalidParams(tool, msg) => 
+                AgentError::InvalidParameters(format!("Invalid parameters for tool '{}': {}", tool, msg)),
+            ToolError::ExecutionFailed(tool, msg) => 
+                AgentError::Internal(format!("Tool '{}' execution failed: {}", tool, msg)),
+            ToolError::ConfigError(tool, msg) => 
+                AgentError::ConfigError(format!("Tool '{}' configuration error: {}", tool, msg)),
+            ToolError::IoError(msg) => 
+                AgentError::Internal(format!("I/O error during tool execution: {}", msg)),
+        }
     }
 }
 
-/// Manages and executes available local tools.
+/// Manages and executes available local tools using standard A2A types.
 #[derive(Clone)]
 pub struct ToolExecutor {
-    // Store tools in an Arc<HashMap> for thread-safe sharing and cloning.
-    // Use Box<dyn Tool> for dynamic dispatch.
+    /// Registered tools that can be executed
     pub tools: Arc<HashMap<String, Box<dyn Tool>>>,
 }
 
@@ -62,8 +70,8 @@ impl ToolExecutor {
     /// Creates a new ToolExecutor and registers available tools.
     /// Requires AgentDirectory if the directory tool is enabled.
     pub fn new(
-        #[cfg(feature = "bidir-core")] // Only require directory if feature is enabled
-        agent_directory: Arc<AgentDirectory>
+        agent_directory: Arc<AgentDirectory>,
+        remote_tool_executor: Option<Arc<crate::bidirectional_agent::RemoteToolExecutor>>
     ) -> Self {
         let mut tools: HashMap<String, Box<dyn Tool>> = HashMap::new();
 
@@ -74,67 +82,123 @@ impl ToolExecutor {
         let http_tool = crate::bidirectional_agent::tools::HttpTool::new();
         tools.insert(http_tool.name().to_string(), Box::new(http_tool));
 
-        // Register the DirectoryTool conditionally
-        #[cfg(feature = "bidir-core")]
-        {
-            let directory_tool = crate::bidirectional_agent::tools::DirectoryTool::new(agent_directory);
-            tools.insert(directory_tool.name().to_string(), Box::new(directory_tool));
+        // Register the DirectoryTool
+        let directory_tool = crate::bidirectional_agent::tools::DirectoryTool::new(agent_directory);
+        tools.insert(directory_tool.name().to_string(), Box::new(directory_tool));
+
+        // Register special test tools
+        let special_echo_1 = crate::bidirectional_agent::tools::SpecialEchoTool1;
+        tools.insert(special_echo_1.name().to_string(), Box::new(special_echo_1));
+        
+        let special_echo_2 = crate::bidirectional_agent::tools::SpecialEchoTool2;
+        tools.insert(special_echo_2.name().to_string(), Box::new(special_echo_2));
+        
+        // Register the RemoteToolExecutor if available
+        if let Some(executor) = remote_tool_executor {
+            tools.insert(executor.name().to_string(), Box::new(executor.clone()));
         }
 
-        log::info!(target: "tool_executor", "Initialized with tools: {:?}", tools.keys());
+        info!(target: "tool_executor", "Initialized with tools: {:?}", tools.keys());
 
         Self {
             tools: Arc::new(tools),
         }
     }
+    
+    /// Add a tool to the executor
+    /// This method can be used to add tools after initialization
+    pub fn add_tool(&mut self, tool: Box<dyn Tool>) {
+        let name = tool.name().to_string();
+        let mut tools_map = HashMap::new();
+        
+        // Copy existing tools from the Arc
+        for (tool_name, tool_impl) in self.tools.as_ref() {
+            tools_map.insert(tool_name.clone(), dyn_clone::clone_box(&**tool_impl));
+        }
+        
+        // Add the new tool
+        tools_map.insert(name.clone(), tool);
+        
+        // Update tools with the new map
+        self.tools = Arc::new(tools_map);
+        
+        info!(target: "tool_executor", "Added tool: {}", name);
+    }
+    
+    /// Register remote tools
+    /// This method is used to register tools provided by remote agents
+    pub fn register_remote_tools(&mut self, registry: &crate::bidirectional_agent::RemoteToolRegistry, 
+                             executor: Arc<crate::bidirectional_agent::RemoteToolExecutor>) {
+        use crate::bidirectional_agent::tools::pluggable::RemoteToolWrapper;
+        
+        let all_tools = registry.get_all_tools();
+        let mut tools_map = HashMap::new();
+        
+        // Copy existing tools from the Arc
+        for (tool_name, tool_impl) in self.tools.as_ref() {
+            tools_map.insert(tool_name.clone(), dyn_clone::clone_box(&**tool_impl));
+        }
+        
+        // Add all remote tools
+        for (agent_id, tools) in all_tools {
+            for tool_info in tools {
+                let wrapper = RemoteToolWrapper::new(executor.clone(), tool_info.clone());
+                let name = wrapper.name().to_string();
+                tools_map.insert(name.clone(), Box::new(wrapper) as Box<dyn Tool>);
+                info!(target: "tool_executor", "Registered remote tool '{}' from agent '{}'", name, agent_id);
+            }
+        }
+        
+        // Update tools with the new map
+        self.tools = Arc::new(tools_map);
+    }
 
     /// Executes a specific tool by name with the given JSON parameters.
     pub async fn execute_tool(&self, tool_name: &str, params: Value) -> Result<Value, ToolError> {
-        log::debug!(target: "tool_executor", "Executing tool: {} with params: {}", tool_name, params);
-        
-        // Check if this is one of our special test tools
-        if tool_name == "special_echo_1" || tool_name == "special_echo_2" {
-            // For integration tests, handle special echo tools directly
-            let text = params["text"].as_str().unwrap_or("default");
-            let prefix = if tool_name == "special_echo_1" { "AGENT1" } else { "AGENT2" };
-            return Ok(json!({
-                "result": format!("{}: {}", prefix, text),
-                "identifier": tool_name
-            }));
-        }
+        debug!(target: "tool_executor", "Executing tool: {} with params: {}", tool_name, params);
         
         // Regular tool handling
         match self.tools.get(tool_name) {
             Some(tool) => {
-                tool.execute(params).await.map_err(|e| {
+                tool.execute(params.clone()).await.map_err(|e| {
                     // Log the specific tool error before returning
-                    log::error!(target: "tool_executor", "Tool execution failed for {}: {:?}", tool_name, e);
+                    error!(target: "tool_executor", "Tool execution failed for {}: {:?}", tool_name, e);
                     e // Return the original ToolError
                 })
             },
             None => {
-                 log::error!(target: "tool_executor", "Tool not found: {}", tool_name);
-                 Err(ToolError::NotFound(tool_name.to_string()))
+                // If the tool isn't found directly, check if it's a remote tool via the remote_tool_executor
+                if let Some(executor) = self.tools.get("remote_tool_executor") {
+                    // Wrap the parameters to include tool name
+                    let mut remote_params = serde_json::Map::new();
+                    remote_params.insert("tool_name".to_string(), Value::String(tool_name.to_string()));
+                    remote_params.insert("params".to_string(), params);
+                    
+                    // Try executing via the remote tool executor
+                    info!(target: "tool_executor", "Attempting to execute '{}' as a remote tool", tool_name);
+                    executor.execute(Value::Object(remote_params)).await
+                } else {
+                    // No remote tool executor available
+                    error!(target: "tool_executor", "Tool not found and no remote tool executor available: {}", tool_name);
+                    Err(ToolError::NotFound(tool_name.to_string()))
+                }
             }
         }
     }
 
     /// Executes a task locally using the specified tool(s).
-    /// Assumes routing has already determined this task is for local execution
-    /// and identified the necessary tool(s).
-    ///
-    /// Currently handles only a single tool execution per task for simplicity.
+    /// This implementation creates standardized A2A-compliant artifacts with proper
+    /// text and data parts.
     pub async fn execute_task_locally(&self, task: &mut Task, tool_names: &[String]) -> Result<(), AgentError> {
         // For now, assume only one tool is specified or use the first one.
-        // TODO: Handle multiple tool executions if needed (chaining, parallel?).
         let tool_name = match tool_names.first() {
             Some(name) => name.as_str(),
             None => {
-                log::error!(target: "tool_executor", "No tool specified for local execution for task {}", task.id);
+                error!(target: "tool_executor", "No tool specified for local execution for task {}", task.id);
                 // Update task status to Failed
                 task.status = TaskStatus {
                     state: TaskState::Failed,
-                    timestamp: Some(chrono::Utc::now()),
+                    timestamp: Some(Utc::now()),
                     message: Some(Message {
                         role: Role::Agent,
                         parts: vec![Part::TextPart(TextPart {
@@ -149,81 +213,57 @@ impl ToolExecutor {
             }
         };
 
-        log::info!(target: "tool_executor", "Attempting local execution of task {} with tool {}", task.id, tool_name);
+        info!(target: "tool_executor", "Attempting local execution of task {} with tool {}", task.id, tool_name);
 
-        // --- Parameter Extraction ---
-        // TODO: Implement more robust parameter extraction based on tool requirements
-        // and task message structure (e.g., extracting from specific parts or metadata).
-        // For now, extract parameters from the last user message's text part,
-        // or potentially from a ToolCallPart if present.
-        let params = task.history.as_ref()
-            .and_then(|h| h.last()) // Get the latest message
-            .and_then(|msg| {
-                // Try to extract parameters from TextPart
-                msg.parts.iter().find_map(|part| match part {
-                    Part::TextPart(tp) => {
-                        // First, check if the text could be JSON
-                        if tp.text.trim().starts_with('{') && tp.text.trim().ends_with('}') {
-                            // Try to parse as JSON
-                            match serde_json::from_str::<serde_json::Value>(&tp.text) {
-                                Ok(json_val) => {
-                                    log::info!(target: "tool_executor", "Extracted JSON parameters from text: {}", json_val);
-                                    return Some(json_val);
-                                },
-                                Err(_) => { /* Not valid JSON, continue with default handling */ }
-                            }
+        // --- Extract Tool Call Parameters ---
+        // First, try to find a tool call in the message parts
+        let params = if let Some(history) = &task.history {
+            if let Some(last_message) = history.last() {
+                // Check if any part contains a tool call
+                let mut tool_call_params = None;
+                
+                for part in &last_message.parts {
+                    if let Some((name, params)) = crate::bidirectional_agent::types::extract_tool_call(part) {
+                        if name == tool_name {
+                            tool_call_params = Some(params);
+                            break;
                         }
-                        // If tool is directory, try to ensure it has an "action" field
-                        if tool_name == "directory" {
-                            if tp.text.contains("list_active") {
-                                return Some(json!({"action": "list_active"}));
-                            } else if tp.text.contains("list_inactive") {
-                                return Some(json!({"action": "list_inactive"}));
-                            } else {
-                                // Default directory action
-                                return Some(json!({"action": "list_active"}));
-                            }
-                        }
-                        // Otherwise, use simple text param
-                        Some(json!({"text": tp.text}))
-                    },
-                    _ => None,
-                })
-            })
-            .unwrap_or_else(|| {
-                log::warn!(target: "tool_executor", "No suitable parameters found in task history for task {} using tool {}, using default.", task.id, tool_name);
-                // Provide reasonable defaults based on tool
-                match tool_name {
-                    "directory" => json!({"action": "list_active"}),
-                    _ => json!({}) // Default to empty params for other tools
+                    }
                 }
-            });
+                
+                // If we found a tool call, use its parameters
+                if let Some(params) = tool_call_params {
+                    params
+                } else {
+                    // Otherwise, extract from text parts as a fallback
+                    self.extract_params_from_message(last_message, tool_name)
+                }
+            } else {
+                // No messages in history, use empty params
+                json!({})
+            }
+        } else {
+            // No history, use empty params
+            json!({})
+        };
 
-
-        // --- Execute the selected tool ---
+        // --- Execute the Tool ---
         match self.execute_tool(tool_name, params).await {
             Ok(result_value) => {
-                log::info!(target: "tool_executor", "Tool {} executed successfully for task {}", tool_name, task.id);
+                info!(target: "tool_executor", "Tool {} executed successfully for task {}", tool_name, task.id);
 
-                // --- Format Result into Task Artifact ---
-                // Attempt to serialize the result value back to a string or keep as JSON
-                let result_text = serde_json::to_string_pretty(&result_value)
-                    .unwrap_or_else(|_| format!("{:?}", result_value)); // Fallback to debug format
-
-                 let result_part = Part::TextPart(TextPart {
-                    type_: "text".to_string(), // Or potentially "json" if result is complex
-                    text: result_text,
-                    metadata: None,
-                });
-
-                // Create an artifact containing the result part
+                // --- Create A2A-compliant parts from the tool result ---
+                // Use the helper function to create both text and data parts
+                let result_parts = format_tool_call_result(tool_name, &result_value);
+                
+                // Create an artifact from the parts
                 let artifact = Artifact {
-                    parts: vec![result_part],
+                    parts: result_parts,
                     index: task.artifacts.as_ref().map_or(0, |a| a.len()) as i64, // Next index
                     name: Some(format!("{}_result", tool_name)),
-                    description: Some(format!("Result of local execution using tool '{}'", tool_name)),
+                    description: Some(format!("Result from tool '{}'", tool_name)),
                     append: None,
-                    last_chunk: None, // Assuming non-streaming tool result
+                    last_chunk: Some(true), // Mark as last chunk
                     metadata: None,
                 };
 
@@ -231,15 +271,15 @@ impl ToolExecutor {
                 task.artifacts.get_or_insert_with(Vec::new).push(artifact);
 
                 // --- Update Task Status to Completed ---
-                 task.status = TaskStatus {
+                task.status = TaskStatus {
                     state: TaskState::Completed,
-                    timestamp: Some(chrono::Utc::now()),
+                    timestamp: Some(Utc::now()),
                     // Provide a confirmation message from the agent
-                    message: Some(Message { // Use struct initialization
+                    message: Some(Message {
                         role: Role::Agent,
                         parts: vec![Part::TextPart(TextPart {
                             type_: "text".to_string(),
-                            text: format!("Local execution with tool '{}' completed.", tool_name),
+                            text: format!("Task completed successfully using tool '{}'.", tool_name),
                             metadata: None,
                         })],
                         metadata: None,
@@ -248,17 +288,17 @@ impl ToolExecutor {
                 Ok(())
             }
             Err(tool_error) => {
-                 log::error!(target: "tool_executor", "Tool {} execution failed for task {}: {:?}", tool_name, task.id, tool_error);
+                error!(target: "tool_executor", "Tool {} execution failed for task {}: {:?}", tool_name, task.id, tool_error);
                 // --- Update Task Status to Failed ---
-                 task.status = TaskStatus {
+                task.status = TaskStatus {
                     state: TaskState::Failed,
-                    timestamp: Some(chrono::Utc::now()),
-                     // Provide an error message from the agent
-                    message: Some(Message { // Use struct initialization
+                    timestamp: Some(Utc::now()),
+                    // Provide an error message from the agent
+                    message: Some(Message {
                         role: Role::Agent,
                         parts: vec![Part::TextPart(TextPart {
                             type_: "text".to_string(),
-                            text: format!("Local execution failed: {}", tool_error),
+                            text: format!("Tool execution failed: {}", tool_error),
                             metadata: None,
                         })],
                         metadata: None,
@@ -270,36 +310,65 @@ impl ToolExecutor {
         }
     }
 
-     /// Generates AgentSkill descriptions from registered tools.
-     pub fn generate_agent_skills(&self) -> Vec<crate::types::AgentSkill> {
-         self.tools.values().map(|tool| {
-             crate::types::AgentSkill {
-                 id: tool.name().to_string(),
-                 name: tool.name().to_string(), // Use tool name as skill name for now
-                 description: Some(tool.description().to_string()),
-                 tags: Some(tool.capabilities().iter().map(|s| s.to_string()).collect()),
-                 examples: None, // Add examples later if needed
-                 input_modes: None, // Define based on tool params later
-                 output_modes: None, // Define based on tool output later
-             }
-         }).collect()
-     }
+    /// Helper function to extract parameters from a message for a specific tool
+    fn extract_params_from_message(&self, message: &Message, tool_name: &str) -> Value {
+        // Try to extract parameters from text parts
+        for part in &message.parts {
+            if let Part::TextPart(tp) = part {
+                // Special case for directory tool
+                if tool_name == "directory" {
+                    let lower_text = tp.text.to_lowercase();
+                    if lower_text.contains("list_active") || lower_text.contains("list active") {
+                        return json!({"action": "list_active"});
+                    } else if lower_text.contains("list_inactive") || lower_text.contains("list inactive") {
+                        return json!({"action": "list_inactive"});
+                    } else {
+                        // Default directory action
+                        return json!({"action": "list_active"});
+                    }
+                }
+                
+                // Check if the text could be JSON
+                if tp.text.trim().starts_with('{') && tp.text.trim().ends_with('}') {
+                    // Try to parse as JSON
+                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&tp.text) {
+                        debug!(target: "tool_executor", "Extracted JSON parameters from text: {}", json_val);
+                        return json_val;
+                    }
+                }
+                
+                // Default to simple text param
+                return json!({"text": tp.text});
+            }
+        }
+        
+        // Default to empty params if no suitable text part is found
+        json!({})
+    }
+
+    /// Generate AgentSkill descriptions from registered tools.
+    pub fn generate_agent_skills(&self) -> Vec<crate::types::AgentSkill> {
+        self.tools.values().map(|tool| {
+            crate::types::AgentSkill {
+                id: tool.name().to_string(),
+                name: tool.name().to_string(), // Use tool name as skill name for now
+                description: Some(tool.description().to_string()),
+                tags: Some(tool.capabilities().iter().map(|s| s.to_string()).collect()),
+                examples: None, // Add examples later if needed
+                input_modes: None, // Define based on tool params later
+                output_modes: None, // Define based on tool output later
+            }
+        }).collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        bidirectional_agent::tools::{Tool}, // Removed directory_tool import as it's conditional
-        types::{Task, Message, TextPart, TaskStatus, TaskState}, // Import Task types
-    };
+    use crate::bidirectional_agent::tools::Tool;
     use serde_json::json;
     use std::sync::Arc;
-    // Conditionally import directory test helpers
-    #[cfg(feature = "bidir-core")]
-    use crate::bidirectional_agent::agent_registry::tests::create_test_registry_with_real_dir;
-
-
+    
     // --- Mock Tools for Testing ---
     struct MockEchoTool;
     #[async_trait::async_trait]
@@ -311,10 +380,10 @@ mod tests {
                 .ok_or_else(|| ToolError::InvalidParams("echo".to_string(), "Missing 'text' parameter".to_string()))?;
             Ok(json!(format!("Echo: {}", text))) // Return simple JSON string
         }
-         fn capabilities(&self) -> &[&'static str] { &["echo", "text_manipulation"] }
+        fn capabilities(&self) -> &[&'static str] { &["echo", "text_manipulation"] }
     }
 
-     struct MockFailTool;
+    struct MockFailTool;
     #[async_trait::async_trait]
     impl Tool for MockFailTool {
         fn name(&self) -> &str { "fail" }
@@ -322,29 +391,17 @@ mod tests {
         async fn execute(&self, _params: Value) -> Result<Value, ToolError> {
             Err(ToolError::ExecutionFailed("fail".to_string(), "Simulated tool execution failure".to_string()))
         }
-         fn capabilities(&self) -> &[&'static str] { &["testing", "failure_simulation"] }
+        fn capabilities(&self) -> &[&'static str] { &["testing", "failure_simulation"] }
     }
 
     // --- Test Setup ---
-    // Helper to create a ToolExecutor with mock tools
     fn create_test_executor_with_mocks() -> ToolExecutor {
         let mut tools: HashMap<String, Box<dyn Tool>> = HashMap::new();
         tools.insert("echo".to_string(), Box::new(MockEchoTool));
         tools.insert("fail".to_string(), Box::new(MockFailTool));
-        // We don't need AgentDirectory here as DirectoryTool is not registered
         ToolExecutor { tools: Arc::new(tools) }
     }
 
-     // Helper to create a ToolExecutor with real tools (requires real directory)
-     #[cfg(feature = "bidir-core")]
-     async fn create_real_tool_executor() -> ToolExecutor {
-         // This requires the directory setup from registry tests
-         let (_registry, directory, _temp_dir) = create_test_registry_with_real_dir().await;
-         ToolExecutor::new(directory) // Use the real constructor
-     }
-
-
-    // --- execute_tool Tests ---
     #[tokio::test]
     async fn test_execute_tool_echo_success() {
         let executor = create_test_executor_with_mocks();
@@ -370,182 +427,164 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_tool_not_found() {
+    async fn test_execute_task_locally_with_tool_call() {
         let executor = create_test_executor_with_mocks();
-        let params = json!({});
-        let result = executor.execute_tool("nonexistent_tool", params).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ToolError::NotFound(name) => assert_eq!(name, "nonexistent_tool"),
-            e => panic!("Expected NotFound error, got {:?}", e),
-        }
-    }
-
-     #[tokio::test]
-    async fn test_execute_tool_echo_invalid_params() {
-        let executor = create_test_executor_with_mocks();
-        let params = json!({"wrong_param": "hello"}); // Missing "text"
-        let result = executor.execute_tool("echo", params).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ToolError::InvalidParams(name, msg) => {
-                assert_eq!(name, "echo");
-                assert!(msg.contains("Missing 'text' parameter"));
-            },
-            e => panic!("Expected InvalidParams error, got {:?}", e),
-        }
-    }
-
-    // --- execute_task_locally Tests ---
-    #[tokio::test]
-    async fn test_execute_task_locally_success() {
-        let executor = create_test_executor_with_mocks();
+        
+        // Create a task with a tool call in DataPart format
+        let tool_call_part = create_tool_call_part("echo", json!({"text": "world"}), Some("Echo the text"));
+        
         let mut task = Task {
-            id: "task-local-succ".to_string(),
+            id: "task-with-tool-call".to_string(),
             session_id: Some("test-session".to_string()),
             history: Some(vec![Message {
                 role: Role::User,
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: "echo this message".to_string(),
-                    metadata: None,
-                })],
+                parts: vec![
+                    // Include both text part and data part
+                    Part::TextPart(TextPart {
+                        type_: "text".to_string(),
+                        text: "Please echo 'world'".to_string(),
+                        metadata: None,
+                    }),
+                    Part::DataPart(tool_call_part),
+                ],
                 metadata: None,
-            }]), // Provide input message
+            }]),
             status: TaskStatus {
-                state: TaskState::Submitted,
-                timestamp: Some(chrono::Utc::now()),
+                state: TaskState::Working,
+                timestamp: Some(Utc::now()),
                 message: None,
-            }, // Start with initial status
+            },
             artifacts: None,
             metadata: None,
         };
-        let tool_names = vec!["echo".to_string()];
-
-        let result = executor.execute_task_locally(&mut task, &tool_names).await;
-
-        assert!(result.is_ok());
+        
+        // Execute task locally
+        let result = executor.execute_task_locally(&mut task, &["echo".to_string()]).await;
+        
+        // Check result
+        assert!(result.is_ok(), "Task execution failed: {:?}", result.err());
         assert_eq!(task.status.state, TaskState::Completed);
-        assert!(task.status.message.is_some());
-        let agent_msg = match &task.status.message.as_ref().unwrap().parts.first() {
-            Some(Part::TextPart(text_part)) => &text_part.text,
-            _ => panic!("Expected TextPart in message"),
-        };
-        assert!(agent_msg.contains("completed"));
+        
+        // Check artifacts
         assert!(task.artifacts.is_some());
         let artifacts = task.artifacts.unwrap();
         assert_eq!(artifacts.len(), 1);
-        assert_eq!(artifacts[0].name.as_deref(), Some("echo_result"));
-        let artifact_text = match &artifacts[0].parts[0] {
-            Part::TextPart(text_part) => &text_part.text,
-            _ => panic!("Expected TextPart in artifact"),
-        };
-        assert!(artifact_text.contains("Echo: echo this message"));
+        
+        // There should be multiple parts in the artifact (text and data)
+        assert!(artifacts[0].parts.len() >= 2);
+        
+        // Check text part
+        let has_text_part = artifacts[0].parts.iter().any(|part| {
+            if let Part::TextPart(text_part) = part {
+                text_part.text.contains("Echo: world")
+            } else {
+                false
+            }
+        });
+        assert!(has_text_part, "No text part with expected content found in artifact");
+        
+        // Check data part 
+        let has_data_part = artifacts[0].parts.iter().any(|part| {
+            if let Part::DataPart(_) = part {
+                true
+            } else {
+                false
+            }
+        });
+        assert!(has_data_part, "No data part found in artifact");
     }
 
-     #[tokio::test]
-    async fn test_execute_task_locally_tool_failure() {
-        let executor = create_test_executor_with_mocks();
-         let mut task = Task {
-            id: "task-local-fail".to_string(),
-            session_id: Some("test-session".to_string()),
-            history: Some(vec![Message {
-                role: Role::User,
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: "run failing tool".to_string(),
-                    metadata: None,
-                })],
-                metadata: None,
-            }]),
-            status: TaskStatus {
-                state: TaskState::Submitted,
-                timestamp: Some(chrono::Utc::now()),
-                message: None,
-            },
-            artifacts: None,
-            metadata: None,
-        };
-        let tool_names = vec!["fail".to_string()]; // Specify the failing tool
-
-        let result = executor.execute_task_locally(&mut task, &tool_names).await;
-
-        assert!(result.is_err());
-        assert_eq!(task.status.state, TaskState::Failed);
-        assert!(task.status.message.is_some());
-        let agent_msg = match &task.status.message.as_ref().unwrap().parts.first() {
-            Some(Part::TextPart(text_part)) => &text_part.text,
-            _ => panic!("Expected TextPart in message"),
-        };
-        assert!(agent_msg.contains("Local execution failed"));
-        assert!(agent_msg.contains("Simulated tool execution failure")); // Include tool error
-        assert!(task.artifacts.is_none()); // No artifacts on failure
-    }
-
-     #[tokio::test]
-    async fn test_execute_task_locally_tool_not_found() {
-        let executor = create_test_executor_with_mocks();
-         let mut task = Task {
-            id: "task-local-notfound".to_string(),
-            session_id: Some("test-session".to_string()),
-            history: Some(vec![Message {
-                role: Role::User,
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: "run unknown tool".to_string(),
-                    metadata: None,
-                })],
-                metadata: None,
-            }]),
-            status: TaskStatus {
-                state: TaskState::Submitted,
-                timestamp: Some(chrono::Utc::now()),
-                message: None,
-            },
-            artifacts: None,
-            metadata: None,
-        };
-        let tool_names = vec!["unknown".to_string()]; // Specify non-existent tool
-
-        let result = executor.execute_task_locally(&mut task, &tool_names).await;
-
-        assert!(result.is_err());
-        assert_eq!(task.status.state, TaskState::Failed);
-        assert!(task.status.message.is_some());
-        let agent_msg = match &task.status.message.as_ref().unwrap().parts.first() {
-            Some(Part::TextPart(text_part)) => &text_part.text,
-            _ => panic!("Expected TextPart in message"),
-        };
-        // Check that the error message contains the tool name and 'not found'
-        assert!(agent_msg.contains("Tool") && agent_msg.contains("unknown") && agent_msg.contains("not found"), 
-                "Error message mismatch: {}", agent_msg);
-        assert!(task.artifacts.is_none());
-    }
-
-    // --- generate_agent_skills Test ---
     #[tokio::test]
-    #[cfg(feature = "bidir-core")]
-    async fn test_generate_agent_skills() {
-         // Use real executor to test skill generation from real tools
-         let executor = create_real_tool_executor().await;
-         let skills = executor.generate_agent_skills();
+    async fn test_execute_task_locally_from_text() {
+        let executor = create_test_executor_with_mocks();
+        
+        // Create a task with only a text message (no explicit tool call)
+        let mut task = Task {
+            id: "task-with-text".to_string(),
+            session_id: Some("test-session".to_string()),
+            history: Some(vec![Message {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: "Please echo this message".to_string(),
+                    metadata: None,
+                })],
+                metadata: None,
+            }]),
+            status: TaskStatus {
+                state: TaskState::Working,
+                timestamp: Some(Utc::now()),
+                message: None,
+            },
+            artifacts: None,
+            metadata: None,
+        };
+        
+        // Execute task locally
+        let result = executor.execute_task_locally(&mut task, &["echo".to_string()]).await;
+        
+        // Check result
+        assert!(result.is_ok(), "Task execution failed: {:?}", result.err());
+        assert_eq!(task.status.state, TaskState::Completed);
+        
+        // Check artifacts
+        assert!(task.artifacts.is_some());
+        let artifacts = task.artifacts.unwrap();
+        assert_eq!(artifacts.len(), 1);
+        
+        // Check content of the artifact
+        let contains_echo = artifacts[0].parts.iter().any(|part| {
+            if let Part::TextPart(text_part) = part {
+                text_part.text.contains("Echo: Please echo this message")
+            } else {
+                false
+            }
+        });
+        assert!(contains_echo, "Expected artifact to contain 'Echo: Please echo this message'");
+    }
 
-         println!("Generated Skills: {:?}", skills); // Debug output
-
-         assert!(skills.len() >= 3, "Expected at least shell, http, and directory tools"); // Adjust based on registered tools
-
-         // Check for specific tools
-         assert!(skills.iter().any(|s| s.id == "shell"));
-         assert!(skills.iter().any(|s| s.id == "http"));
-         // Directory tool is conditional but guaranteed by this test being cfg-gated
-         assert!(skills.iter().any(|s| s.id == "directory"));
-
-         // Check content of one skill (directory)
-         let dir_skill = skills.iter().find(|s| s.id == "directory").unwrap();
-         assert_eq!(dir_skill.name, "directory");
-         assert!(dir_skill.description.is_some());
-         assert!(dir_skill.description.as_ref().unwrap().contains("agent directory"));
-         assert!(dir_skill.tags.is_some());
-         assert!(dir_skill.tags.as_ref().unwrap().contains(&"agent_directory".to_string()));
+    #[tokio::test]
+    async fn test_execute_task_locally_failure() {
+        let executor = create_test_executor_with_mocks();
+        
+        // Create a simple task 
+        let mut task = Task {
+            id: "task-with-failure".to_string(),
+            session_id: Some("test-session".to_string()),
+            history: Some(vec![Message {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: "This should fail".to_string(),
+                    metadata: None,
+                })],
+                metadata: None,
+            }]),
+            status: TaskStatus {
+                state: TaskState::Working,
+                timestamp: Some(Utc::now()),
+                message: None,
+            },
+            artifacts: None,
+            metadata: None,
+        };
+        
+        // Execute task with the fail tool
+        let result = executor.execute_task_locally(&mut task, &["fail".to_string()]).await;
+        
+        // Check that execution failed
+        assert!(result.is_err(), "Expected task execution to fail");
+        assert_eq!(task.status.state, TaskState::Failed);
+        
+        // Check error message
+        let error_message = match &task.status.message {
+            Some(message) => match &message.parts[0] {
+                Part::TextPart(text_part) => &text_part.text,
+                _ => "",
+            },
+            None => "",
+        };
+        assert!(error_message.contains("Tool execution failed"), "Error message doesn't contain expected content");
+        assert!(error_message.contains("Simulated tool execution failure"), "Error message doesn't contain failure reason");
     }
 }

@@ -70,7 +70,7 @@ impl AgentRegistry {
     }
 
     // If bidir-core is NOT enabled, provide a constructor that doesn't need AgentDirectory
-    #[cfg(not(feature = "bidir-core"))]
+    
     pub fn new() -> Self {
          Self {
             agents: Arc::new(DashMap::new()),
@@ -209,7 +209,7 @@ impl AgentRegistry {
             // Determine the list of agents to refresh
             
             let agents_to_refresh_result = self.agent_directory.get_active_agents().await;
-            #[cfg(not(feature = "bidir-core"))]
+            
             let agents_to_refresh_result: Result<Vec<(String, String)>> = Ok(self.agents.iter().map(|e| (e.key().clone(), e.value().card.url.clone())).collect());
 
 
@@ -221,7 +221,7 @@ impl AgentRegistry {
                         let agent_id = match agent_entry {
                             
                             agent_entry => agent_entry.agent_id,
-                            #[cfg(not(feature = "bidir-core"))]
+                            
                             (id, _url) => id,
                         };
                         
@@ -243,7 +243,7 @@ impl AgentRegistry {
                 Err(e) => {
                     
                     log::error!(target: "agent_registry", "Failed to get active agents from directory for refresh loop: {:?}", e);
-                    #[cfg(not(feature = "bidir-core"))]
+                    
                      log::error!(target: "agent_registry", "Failed to get agents from internal cache for refresh loop: {:?}", e);
                 }
             }
@@ -255,7 +255,7 @@ impl AgentRegistry {
     }
 }
 
-#[cfg(all(test, feature = "bidir-core"))]
+
 pub(crate) mod tests { // Make module public within crate for reuse in other tests
     use super::*;
     use crate::bidirectional_agent::{

@@ -17,8 +17,8 @@ pub trait LlmClient: Send + Sync {
     /// Simple text completion - send a prompt and get a text response
     async fn complete(&self, prompt: &str) -> Result<String>;
     
-    /// Structured JSON completion - send a prompt and parse response as JSON
-    async fn complete_json<T: DeserializeOwned + Send>(&self, prompt: &str) -> Result<T> {
+    /// Generic JSON completion (non-trait method for dynamic dispatch compatibility)
+    async fn complete_json_value(&self, prompt: &str) -> Result<serde_json::Value> {
         let completion = self.complete(prompt).await?;
         
         // Extract JSON from the completion
@@ -26,7 +26,7 @@ pub trait LlmClient: Send + Sync {
             .context("Failed to extract JSON from LLM response")?;
         
         // Parse JSON
-        let result: T = serde_json::from_str(&json_str)
+        let result: serde_json::Value = serde_json::from_str(&json_str)
             .context("Failed to parse JSON from LLM response")?;
         
         Ok(result)
@@ -99,6 +99,7 @@ pub mod claude;
 pub mod mock;
 pub mod template;
 pub mod integration;
+pub mod llm_client;
 
 #[cfg(test)]
 mod tests;
@@ -106,5 +107,17 @@ mod tests;
 // Re-export concrete implementations
 pub use claude::ClaudeClient;
 pub use mock::MockLlmClient;
+pub use llm_client::{LlmClientConfig, LlmMessage, create_mock_llm_client};
 pub use template::TemplateManager;
 pub use integration::{create_llm_client, create_integrated_llm_router, create_transitional_llm_router};
+
+/// Helper function to convert generic JSON to a specific type
+pub async fn complete_json_typed<T: DeserializeOwned + Send, C: LlmClient + ?Sized>(
+    client: &C, 
+    prompt: &str
+) -> Result<T> {
+    let json_value = client.complete_json_value(prompt).await?;
+    let result: T = serde_json::from_value(json_value)
+        .context("Failed to convert JSON value to requested type")?;
+    Ok(result)
+}

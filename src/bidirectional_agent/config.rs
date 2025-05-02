@@ -1,7 +1,5 @@
 /// Configuration structures for the Bidirectional Agent.
 
-#[cfg(feature = "bidir-core")]
-
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path};
 use anyhow::{Context, Result};
@@ -9,8 +7,7 @@ use serde_json::Value;
 use tempfile::tempdir; // Import tempdir for tests
 use serde::de::DeserializeOwned;
 
-#[cfg(feature = "bidir-local-exec")]
-use crate::bidirectional_agent::llm_routing::{LlmClient, LlmClientConfig};
+use crate::bidirectional_agent::llm_core::{LlmClient, LlmConfig as LlmClientConfig};
 
 /// Main configuration for the Bidirectional Agent.
 #[derive(Deserialize, Debug, Clone)]
@@ -30,33 +27,26 @@ pub struct BidirectionalAgentConfig {
     #[serde(default)]
     pub network: NetworkConfig,
     /// Tool-specific configurations.
-    #[cfg(feature = "bidir-local-exec")]
     #[serde(default)]
     pub tools: ToolConfigs,
     /// LLM configuration for all LLM-powered features.
-    #[cfg(feature = "bidir-local-exec")]
     #[serde(default)]
     pub llm: LlmConfig,
-    /// Agent directory configuration. Included if 'bidir-core' is enabled.
-    #[cfg(feature = "bidir-core")]
+    /// Agent directory configuration.
     #[serde(default)]
     pub directory: DirectoryConfig,
     /// Interval (in minutes) for discovering tools from other agents.
-    /// Only used if 'bidir-delegate' feature is enabled.
-    #[cfg(feature = "bidir-delegate")]
     #[serde(default = "default_tool_discovery_interval")]
     pub tool_discovery_interval_minutes: u64,
     // Add fields for routing policy etc. in later slices
 }
 
 /// Default interval for tool discovery (e.g., 30 minutes).
-#[cfg(feature = "bidir-delegate")]
 fn default_tool_discovery_interval() -> u64 {
     30
 }
 
 /// Tool configurations. Keyed by tool name.
-#[cfg(feature = "bidir-local-exec")]
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct ToolConfigs {
     /// Tool-specific configurations
@@ -65,7 +55,6 @@ pub struct ToolConfigs {
 }
 
 /// Consolidated LLM configuration for all operations.
-#[cfg(feature = "bidir-local-exec")]
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct LlmConfig {
@@ -113,7 +102,6 @@ pub struct LlmConfig {
 }
 
 /// LLM configurations for specific use cases.
-#[cfg(feature = "bidir-local-exec")]
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct LlmUseCases {
     /// Routing-specific configuration.
@@ -130,7 +118,6 @@ pub struct LlmUseCases {
 }
 
 /// Routing-specific LLM configuration.
-#[cfg(feature = "bidir-local-exec")]
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct LlmRoutingConfig {
     /// Model override for routing operations.
@@ -148,7 +135,6 @@ pub struct LlmRoutingConfig {
 }
 
 /// Task decomposition-specific LLM configuration.
-#[cfg(feature = "bidir-local-exec")]
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct LlmDecompositionConfig {
     /// Model override for decomposition operations.
@@ -166,7 +152,6 @@ pub struct LlmDecompositionConfig {
 }
 
 /// Results synthesis-specific LLM configuration.
-#[cfg(feature = "bidir-local-exec")]
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct LlmSynthesisConfig {
     /// Model override for synthesis operations.
@@ -183,37 +168,30 @@ pub struct LlmSynthesisConfig {
     pub prompt_template: String,
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_llm_provider() -> String {
     "claude".to_string()
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_api_key_env_var() -> String {
     "ANTHROPIC_API_KEY".to_string()
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_llm_model() -> String {
     "claude-3-haiku-20240307".to_string()
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_max_tokens() -> u32 {
     2048
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_temperature() -> f32 {
     0.1
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_timeout_seconds() -> u64 {
     30
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_routing_prompt_template() -> String {
     "# Task Routing Decision\n\n\
      You are a task router for a bidirectional A2A agent system. Your job is to determine the best way to handle a task.\n\n\
@@ -244,7 +222,6 @@ fn default_routing_prompt_template() -> String {
      If REMOTE decision, you MUST include a valid agent_id from the available agents list.".to_string()
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_decomposition_prompt_template() -> String {
     "# Task Decomposition\n\n\
      You are an AI assistant that breaks down complex tasks into manageable subtasks.\n\n\
@@ -276,7 +253,6 @@ fn default_decomposition_prompt_template() -> String {
      Your entire response must be valid JSON that can be parsed directly.".to_string()
 }
 
-#[cfg(feature = "bidir-local-exec")]
 fn default_synthesis_prompt_template() -> String {
     "# Task Result Synthesis\n\n\
      You are an AI assistant that synthesizes results from multiple subtasks into a cohesive, comprehensive response.\n\n\
@@ -298,7 +274,6 @@ fn default_synthesis_prompt_template() -> String {
      - Focus on delivering a coherent, unified response as if it were written as a single piece".to_string()
 }
 
-#[cfg(feature = "bidir-local-exec")]
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
@@ -317,7 +292,6 @@ impl Default for LlmConfig {
     }
 }
 
-#[cfg(feature = "bidir-local-exec")]
 impl LlmConfig {
     /// Validates the configuration.
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -592,7 +566,7 @@ pub fn load_config(path: &str) -> Result<BidirectionalAgentConfig> {
     }
     
     // Validate LLM configuration if routing is enabled
-    #[cfg(feature = "bidir-local-exec")]
+    
     if config.llm.use_for_routing {
         config.llm.validate()
             .with_context(|| "Failed to validate LLM configuration")?;
@@ -618,29 +592,23 @@ mod tests {
         assert_eq!(config.auth.server_auth_type, ServerAuthType::None);
         assert!(config.auth.client_credentials.is_empty());
         assert!(config.network.proxy_url.is_none());
-        #[cfg(feature = "bidir-local-exec")]
         assert!(config.tools.specific_configs.is_empty());
-        #[cfg(feature = "bidir-delegate")]
         assert_eq!(config.tool_discovery_interval_minutes, default_tool_discovery_interval()); // Check default
         
         // Check LLM config defaults
-        #[cfg(feature = "bidir-local-exec")]
-        {
-            assert_eq!(config.llm.use_for_routing, false);
-            assert_eq!(config.llm.use_new_core, false);
-            assert_eq!(config.llm.provider, "claude");
-            assert_eq!(config.llm.api_key, None);
-            assert_eq!(config.llm.api_key_env_var, "ANTHROPIC_API_KEY");
-            assert_eq!(config.llm.model, "claude-3-haiku-20240307");
-            assert_eq!(config.llm.api_base_url, None);
-            assert_eq!(config.llm.max_tokens, 2048);
-            assert_eq!(config.llm.temperature, 0.1);
-            assert_eq!(config.llm.timeout_seconds, 30);
-        }
+        assert_eq!(config.llm.use_for_routing, false);
+        assert_eq!(config.llm.use_new_core, false);
+        assert_eq!(config.llm.provider, "claude");
+        assert_eq!(config.llm.api_key, None);
+        assert_eq!(config.llm.api_key_env_var, "ANTHROPIC_API_KEY");
+        assert_eq!(config.llm.model, "claude-3-haiku-20240307");
+        assert_eq!(config.llm.api_base_url, None);
+        assert_eq!(config.llm.max_tokens, 2048);
+        assert_eq!(config.llm.temperature, 0.1);
+        assert_eq!(config.llm.timeout_seconds, 30);
     }
     
     #[test]
-    #[cfg(feature = "bidir-local-exec")]
     fn test_llm_config_parsing() {
         let config_str = r#"
             self_id = "agent1@example.com"
@@ -705,7 +673,6 @@ mod tests {
     }
     
     #[test]
-    #[cfg(feature = "bidir-local-exec")]
     fn test_llm_config_validation() {
         // Test invalid provider
         let config = LlmConfig {
@@ -773,7 +740,6 @@ mod tests {
 
     #[test]
     fn test_load_full_config() {
-        #[cfg(feature = "bidir-local-exec")]
         let config_str = r#"
             self_id = "agent2"
             base_url = "https://agent2.example.com"
@@ -820,37 +786,6 @@ mod tests {
             backoff_seconds = 30
             health_endpoint_path = "/api/v1/status"
 
-            # Add tool discovery interval if delegate feature is on
-            #[cfg(feature = "bidir-delegate")]
-            tool_discovery_interval_minutes = 45
-        "#;
-
-        #[cfg(not(feature = "bidir-local-exec"))]
-        let config_str = r#"
-            self_id = "agent2"
-            base_url = "https://agent2.example.com"
-            discovery = ["http://agent1.example.com", "http://agent3.example.com"]
-
-            [auth]
-            server_auth_type = "bearer"
-            client_credentials = { Bearer = "agent2-secret-token", ApiKey = "xyz789" }
-            client_cert_path = "/path/to/client.crt"
-            client_key_path = "/path/to/client.key"
-
-            [network]
-            proxy_url = "http://proxy.example.com:8080"
-            proxy_auth = ["proxy_user", "proxy_pass"]
-            ca_cert_path = "/path/to/ca.pem"
-
-            [directory] # Add directory config section
-            db_path = "/var/lib/myagent/directory.sqlite"
-            verification_interval_minutes = 10
-            max_failures_before_inactive = 5
-            backoff_seconds = 30
-            health_endpoint_path = "/api/v1/status"
-
-            # Add tool discovery interval if delegate feature is on
-            #[cfg(feature = "bidir-delegate")]
             tool_discovery_interval_minutes = 45
         "#;
 
@@ -864,49 +799,42 @@ mod tests {
         assert_eq!(config.network.proxy_auth, Some(("proxy_user".to_string(), "proxy_pass".to_string())));
         assert_eq!(config.network.ca_cert_path, Some("/path/to/ca.pem".to_string()));
 
-        #[cfg(feature = "bidir-local-exec")]
-        {
-            // Check tool configs
-            assert!(config.tools.specific_configs.contains_key("shell_allowed_commands"));
-            assert!(config.tools.specific_configs.contains_key("http_max_redirects"));
-            assert_eq!(config.tools.specific_configs["http_max_redirects"], Value::Number(5.into())); // Use Value::Number
-            
-            // Check LLM configs
-            assert_eq!(config.llm.use_for_routing, true);
-            assert_eq!(config.llm.use_new_core, true);
-            assert_eq!(config.llm.provider, "claude");
-            assert_eq!(config.llm.api_key, Some("sk-ant-api03-example-key".to_string()));
-            assert_eq!(config.llm.model, "claude-3-opus-20240229");
-            assert_eq!(config.llm.max_tokens, 4096);
-            assert_eq!(config.llm.temperature, 0.5);
-            
-            // Check use case specific configs
-            assert_eq!(config.llm.use_cases.routing.model, Some("claude-3-haiku-20240307".to_string()));
-            assert_eq!(config.llm.use_cases.routing.max_tokens, Some(1024));
-            assert_eq!(config.llm.use_cases.routing.temperature, None);
-            
-            assert_eq!(config.llm.use_cases.decomposition.model, None);
-            assert_eq!(config.llm.use_cases.decomposition.max_tokens, None);
-            assert_eq!(config.llm.use_cases.decomposition.temperature, Some(0.3));
-            
-            assert_eq!(config.llm.use_cases.synthesis.model, None);
-            assert_eq!(config.llm.use_cases.synthesis.max_tokens, Some(8192));
-            assert_eq!(config.llm.use_cases.synthesis.temperature, None);
-        }
+        // Check tool configs
+        assert!(config.tools.specific_configs.contains_key("shell_allowed_commands"));
+        assert!(config.tools.specific_configs.contains_key("http_max_redirects"));
+        assert_eq!(config.tools.specific_configs["http_max_redirects"], Value::Number(5.into())); // Use Value::Number
+        
+        // Check LLM configs
+        assert_eq!(config.llm.use_for_routing, true);
+        assert_eq!(config.llm.use_new_core, true);
+        assert_eq!(config.llm.provider, "claude");
+        assert_eq!(config.llm.api_key, Some("sk-ant-api03-example-key".to_string()));
+        assert_eq!(config.llm.model, "claude-3-opus-20240229");
+        assert_eq!(config.llm.max_tokens, 4096);
+        assert_eq!(config.llm.temperature, 0.5);
+        
+        // Check use case specific configs
+        assert_eq!(config.llm.use_cases.routing.model, Some("claude-3-haiku-20240307".to_string()));
+        assert_eq!(config.llm.use_cases.routing.max_tokens, Some(1024));
+        assert_eq!(config.llm.use_cases.routing.temperature, None);
+        
+        assert_eq!(config.llm.use_cases.decomposition.model, None);
+        assert_eq!(config.llm.use_cases.decomposition.max_tokens, None);
+        assert_eq!(config.llm.use_cases.decomposition.temperature, Some(0.3));
+        
+        assert_eq!(config.llm.use_cases.synthesis.model, None);
+        assert_eq!(config.llm.use_cases.synthesis.max_tokens, Some(8192));
+        assert_eq!(config.llm.use_cases.synthesis.temperature, None);
 
         // Assert directory config is loaded correctly
-        #[cfg(feature = "bidir-core")]
-        {
-            assert_eq!(config.directory.db_path, "/var/lib/myagent/directory.sqlite");
-            assert_eq!(config.directory.verification_interval_minutes, 10);
-            assert_eq!(config.directory.max_failures_before_inactive, 5);
-            assert_eq!(config.directory.backoff_seconds, 30);
-            assert_eq!(config.directory.health_endpoint_path, "/api/v1/status");
-        }
-        #[cfg(feature = "bidir-delegate")]
-        {
-             assert_eq!(config.tool_discovery_interval_minutes, 30); // Check default value
-        }
+        assert_eq!(config.directory.db_path, "/var/lib/myagent/directory.sqlite");
+        assert_eq!(config.directory.verification_interval_minutes, 10);
+        assert_eq!(config.directory.max_failures_before_inactive, 5);
+        assert_eq!(config.directory.backoff_seconds, 30);
+        assert_eq!(config.directory.health_endpoint_path, "/api/v1/status");
+        
+        // Check tool discovery interval
+        assert_eq!(config.tool_discovery_interval_minutes, 45);
     }
 
      #[test]
@@ -932,10 +860,8 @@ mod tests {
         let root_cause = err.root_cause();
         assert!(root_cause.to_string().contains("missing field `self_id`"));
     }
-}
 
 
-#[cfg(feature = "bidir-core")]
 /// Configuration specific to the Agent Directory feature.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(default)] // Makes the whole [directory] section optional in TOML
@@ -957,7 +883,6 @@ pub struct DirectoryConfig {
     pub health_endpoint_path: String,
 }
 
-#[cfg(feature = "bidir-core")]
 impl Default for DirectoryConfig {
     fn default() -> Self {
         Self {

@@ -1,6 +1,6 @@
 //! Extensions for TaskRepository to support tracking task origins.
 
-#![cfg(feature = "bidir-delegate")]
+
 
 use crate::bidirectional_agent::error::AgentError;
 use crate::bidirectional_agent::types::TaskOrigin;

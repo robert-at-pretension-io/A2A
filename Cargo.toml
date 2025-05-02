@@ -5,10 +5,6 @@ edition = "2021"
 
 [features]
 default = []
-# Bidirectional Agent Features (Incremental)
-bidir-core = ["dep:anyhow", "dep:thiserror", "dep:toml", "dep:log", "dep:env_logger", "dep:sqlx"] # Remove tokio-util as it's now required
-bidir-local-exec = ["bidir-core"] # Depends on core features
-bidir-delegate = ["bidir-local-exec"] # Depends on local execution features
 # Fuzzing Feature
 fuzzing = ["dep:libfuzzer-sys"]
 
@@ -36,7 +32,10 @@ libfuzzer-sys = { version = "0.4", optional = true }
 rand = "0.8.5"
 
 # For Agent Directory (SQLite)
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio", "macros", "chrono", "json"], optional = true } # Optional based on bidir-core
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio", "macros", "chrono", "json"] }
+
+# For remote tool support
+dyn-clone = "1.0"
 
 # A2A-specific dependencies
 chrono = { version = "0.4", features = ["serde"] }
@@ -63,15 +62,19 @@ http = "1.3.1" # Changed from 0.2 to 1.3.1
 # tokio is already defined above with different features
 dashmap = { version = "5" }
 async-trait = { version = "0.1.88" }
-log = { version = "0.4", optional = true }
-env_logger = { version = "0.11", optional = true }
-anyhow = { version = "1.0", optional = true }
-thiserror = { version = "1.0", optional = true }
-toml = { version = "0.8", optional = true }
+log = { version = "0.4" }
+env_logger = { version = "0.11" }
+anyhow = { version = "1.0" }
+thiserror = { version = "1.0" }
+toml = { version = "0.8" }
 tokio-util = { version = "0.7", features = ["rt"] } # Required for CancellationToken in sync module
 rustyline = "15.0.0"
 fs2 = "0.4.3"
 indicatif = "0.17.11"
+jsonwebtoken = "8.3.0" # For push notifications
+mime = "0.3.17" # For content negotiation
+tracing = "0.1.37" # For improved logging
+async-stream = "0.3.5" # For SSE streaming
 
 [build-dependencies]
 sha2 = "0.10"
@@ -81,3 +84,7 @@ sha2 = "0.10"
 tempfile = "3.10" # Already present in main dependencies, but good practice for test-only utils
 mockito = "1.2" # Already present in main dependencies
 tokio-test = "0.4" # For blocking on async calls in tests if needed
+
+[[bin]]
+name = "bidirectional_agent"
+path = "src/bidirectional_agent.rs"

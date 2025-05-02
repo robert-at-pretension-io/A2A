@@ -6,32 +6,29 @@ use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
 
-// Conditionally import bidirectional components and types
-#[cfg(feature = "bidir-local-exec")]
-use crate::bidirectional_agent::{
-    task_router::{TaskRouter, RoutingDecision, LlmTaskRouterTrait}, // Import trait
+// Import from local server components instead of bidirectional_agent
+use crate::server::{
+    task_router::{TaskRouter, RoutingDecision, LlmTaskRouterTrait},
     tool_executor::ToolExecutor,
-};
-#[cfg(feature = "bidir-delegate")]
-use crate::bidirectional_agent::{
-    task_flow::TaskFlow, // Keep TaskFlow import guarded
-    ClientManager, AgentRegistry, // Import Slice 3 components
+    task_flow::TaskFlow,
+    client_manager::ClientManager, 
+    agent_registry::AgentRegistry,
 };
 
 
 pub struct TaskService {
     task_repository: Arc<dyn TaskRepository>,
     // Use the LlmTaskRouterTrait for polymorphism
-    #[cfg(feature = "bidir-local-exec")]
+    
     task_router: Option<Arc<dyn LlmTaskRouterTrait>>,
-    #[cfg(feature = "bidir-local-exec")]
+    
     tool_executor: Option<Arc<ToolExecutor>>,
     // Add components needed by TaskFlow if TaskService orchestrates it
-    #[cfg(feature = "bidir-delegate")]
+    
     client_manager: Option<Arc<ClientManager>>,
-    #[cfg(feature = "bidir-delegate")]
+    
     agent_registry: Option<Arc<AgentRegistry>>,
-    #[cfg(feature = "bidir-delegate")]
+    
     agent_id: Option<String>, // ID of the agent running this service
 }
 
@@ -40,47 +37,60 @@ impl TaskService {
     pub fn standalone(task_repository: Arc<dyn TaskRepository>) -> Self {
         Self {
             task_repository,
-            #[cfg(feature = "bidir-local-exec")]
+            
             task_router: None,
-            #[cfg(feature = "bidir-local-exec")]
+            
             tool_executor: None,
-            #[cfg(feature = "bidir-delegate")]
+            
             client_manager: None,
-            #[cfg(feature = "bidir-delegate")]
+            
             agent_registry: None,
-            #[cfg(feature = "bidir-delegate")]
+            
+            agent_id: None,
+        }
+    }
+    
+    /// Creates a new TaskService that delegates to an external task flow manager
+    pub fn with_task_flow(task_flow: Arc<dyn Send + Sync>) -> Self {
+        // This is a simplified version for integration
+        // We'll just use the standalone variant and let the task_flow handle the actual work
+        Self {
+            task_repository: Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new()),
+            task_router: None,
+            tool_executor: None,
+            client_manager: None,
+            agent_registry: None,
             agent_id: None,
         }
     }
 
     /// Creates a new TaskService configured for bidirectional operation.
     /// Requires the corresponding features to be enabled.
-    #[cfg(feature = "bidir-core")] // Guard the whole function
     pub fn bidirectional(
         task_repository: Arc<dyn TaskRepository>,
         // Accept the trait object for router
-        #[cfg(feature = "bidir-local-exec")] task_router: Arc<dyn LlmTaskRouterTrait>,
-        #[cfg(feature = "bidir-local-exec")] tool_executor: Arc<ToolExecutor>,
+         task_router: Arc<dyn LlmTaskRouterTrait>,
+         tool_executor: Arc<ToolExecutor>,
         // Add Slice 3 components
-        #[cfg(feature = "bidir-delegate")] client_manager: Arc<ClientManager>,
-        #[cfg(feature = "bidir-delegate")] agent_registry: Arc<AgentRegistry>,
-        #[cfg(feature = "bidir-delegate")] agent_id: String,
+         client_manager: Arc<ClientManager>,
+         agent_registry: Arc<AgentRegistry>,
+         agent_id: String,
     ) -> Self {
         // Compile-time check for feature consistency (example)
-        // #[cfg(all(feature = "bidir-local-exec", not(feature = "bidir-delegate")))]
+        // 
         // compile_error!("Feature 'bidir-local-exec' requires 'bidir-delegate' in this configuration.");
 
         Self {
             task_repository,
-            #[cfg(feature = "bidir-local-exec")]
+            
             task_router: Some(task_router),
-            #[cfg(feature = "bidir-local-exec")]
+            
             tool_executor: Some(tool_executor),
-            #[cfg(feature = "bidir-delegate")]
+            
             client_manager: Some(client_manager),
-            #[cfg(feature = "bidir-delegate")]
+            
             agent_registry: Some(agent_registry),
-            #[cfg(feature = "bidir-delegate")]
+            
             agent_id: Some(agent_id),
         }
     }
@@ -118,16 +128,16 @@ impl TaskService {
         self.task_repository.save_state_history(&task.id, &task).await?;
 
         // --- Routing and Execution Logic (Slice 2 & 3) ---
-        #[cfg(feature = "bidir-local-exec")]
+        
         {
             if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
                 // Make routing decision based on incoming params
                 match router.decide(&params).await {
-                    Ok(decision) => {
-                        println!("Routing decision for task {}: {:?}", task.id, decision);
+                    Ok(decision_result) => {
+                        println!("Routing decision for task {}: {:?}", task.id, decision_result);
 
                         // Use TaskFlow to handle the decision if delegation is enabled
-                        #[cfg(feature = "bidir-delegate")]
+                        
                         {
                             // Ensure all components for delegation are present
                             if let (Some(cm), Some(reg), Some(agent_id)) =
@@ -141,7 +151,7 @@ impl TaskService {
                                     executor.clone(),
                                     reg.clone(),
                                 );
-                                if let Err(e) = flow.process_decision(decision).await {
+                                if let Err(e) = flow.process_decision(decision_result.clone()).await {
                                     println!("Task flow processing failed for task {}: {}", task.id, e);
                                     // Update task status to Failed if flow fails
                                     let mut current_task = self.task_repository.get_task(&task.id).await?.unwrap_or(task);
@@ -161,9 +171,9 @@ impl TaskService {
                         }
 
                         // Fallback to Slice 2 logic if delegation is not enabled
-                        #[cfg(not(feature = "bidir-delegate"))]
+                        
                         {
-                            match decision {
+                            match decision_result.clone() {
                                 RoutingDecision::Local { tool_names } => { // Capture tool_names
                                     if let Err(e) = executor.execute_task_locally(&mut task, &tool_names).await { // Pass tool_names
                                         println!("Local execution failed for task {}: {}", task.id, e);
@@ -180,8 +190,13 @@ impl TaskService {
                                     println!("Task {} rejected: {}", task.id, reason);
                                     task.status.state = TaskState::Failed;
                                     task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task rejected: {}", reason), metadata: None })], metadata: None });
+                                },
+                                RoutingDecision::Decompose { subtasks } => {
+                                    println!("Task {} requires decomposition (Feature 'bidir-delegate' not enabled)", task.id);
+                                    println!("Would decompose into {} subtasks", subtasks.len());
+                                    task.status.state = TaskState::Failed;
+                                    task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Task requires decomposition but feature not enabled.".to_string(), metadata: None })], metadata: None });
                                 }
-                                // Decomposition case is handled by the cfg(feature = "bidir-delegate") block above
                             }
                         }
                     }
@@ -195,14 +210,16 @@ impl TaskService {
             } else {
                 // Fallback to default processing if router/executor not available
                 println!("Router/Executor not available, using default processing for task {}", task.id);
-                self.process_task_content(&mut task, Some(params.message)).await?;
+                self.process_task_content(&mut task, Some(params.message.clone())).await?;
             }
         }
 
         // Default processing if bidir-local-exec feature is not enabled
-        #[cfg(not(feature = "bidir-local-exec"))]
+        
         {
-            self.process_task_content(&mut task, Some(params.message)).await?;
+            // Using clone to avoid move
+            let message_clone = params.message.clone();
+            self.process_task_content(&mut task, Some(message_clone)).await?;
         }
         // --- End Routing and Execution Logic ---
 

@@ -1,13 +1,50 @@
 use crate::types::{Task, PushNotificationConfig};
 use crate::server::ServerError;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use dashmap::DashMap; // Use DashMap for concurrent side-tables
 
 // Import new types conditionally
-#[cfg(feature = "bidir-delegate")]
-use crate::bidirectional_agent::types::{TaskOrigin, TaskRelationships};
+
+
+/// Information about the origin of a task
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskOrigin {
+    /// Task originated locally within this agent
+    Local,
+    /// Task was delegated to another agent
+    Delegated {
+        /// The ID of the agent that this task was delegated to
+        agent_id: String,
+        /// Optional URL of the agent
+        agent_url: Option<String>,
+        /// Timestamp of when the task was delegated
+        delegated_at: String,
+    },
+    /// Task was received from another agent
+    External {
+        /// The ID of the agent that created this task
+        agent_id: String,
+        /// Optional URL of the agent
+        agent_url: Option<String>,
+        /// Timestamp of when the task was created
+        created_at: String,
+    },
+}
+
+
+/// Relationships between tasks in a workflow
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskRelationships {
+    /// Parent task IDs that led to this task
+    pub parent_task_ids: Vec<String>,
+    /// Child task IDs created from this task
+    pub child_task_ids: Vec<String>,
+    /// Related task IDs that are associated but not direct parents/children
+    pub related_task_ids: HashMap<String, String>,
+}
 
 
 /// Task repository trait for storing and retrieving tasks
@@ -33,9 +70,9 @@ pub struct InMemoryTaskRepository {
     state_history: Arc<Mutex<HashMap<String, Vec<Task>>>>,
 
     // Use DashMap for side-tables accessed frequently and concurrently by bidirectional agent
-    #[cfg(feature = "bidir-delegate")]
+    
     task_origins: Arc<DashMap<String, TaskOrigin>>,
-    #[cfg(feature = "bidir-delegate")]
+    
     task_relationships: Arc<DashMap<String, TaskRelationships>>,
 }
 
@@ -46,9 +83,9 @@ impl InMemoryTaskRepository {
             push_configs: Arc::new(Mutex::new(HashMap::new())),
             state_history: Arc::new(Mutex::new(HashMap::new())),
             // Initialize side-tables only if feature is enabled
-            #[cfg(feature = "bidir-delegate")]
+            
             task_origins: Arc::new(DashMap::new()),
-            #[cfg(feature = "bidir-delegate")]
+            
             task_relationships: Arc::new(DashMap::new()),
         }
     }

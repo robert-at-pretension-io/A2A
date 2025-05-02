@@ -1,6 +1,6 @@
 //! Example HTTP Tool implementation.
 
-#![cfg(feature = "bidir-local-exec")]
+
 
 use super::Tool;
 use crate::bidirectional_agent::tool_executor::ToolError;
@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use tokio::time::{timeout, Duration};
 
 /// A tool for making HTTP requests.
+#[derive(Clone)]
 pub struct HttpTool {
     client: Client,
     default_timeout_ms: u64,
