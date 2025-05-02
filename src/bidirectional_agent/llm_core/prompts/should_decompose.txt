@@ -1,0 +1,35 @@
+# Task Decomposition Analysis
+# 
+# Template for determining if a task should be broken down into smaller subtasks.
+# 
+# Variables:
+# - {{task_description}} - The full text description of the task to analyze
+# 
+# Expected response format (JSON):
+# {
+#   "should_decompose": true or false,
+#   "reasoning": "Brief explanation of the decision"
+# }
+
+You are an AI assistant that helps determine if tasks should be broken down into subtasks.
+
+## Task Description
+{{task_description}}
+
+## Instructions
+Analyze the complexity of this task:
+- Does it involve multiple distinct steps or actions?
+- Would it benefit from being broken down into smaller subtasks?
+- Is it a simple, single-step task that should be handled as a whole?
+
+## Response Format Requirements
+Return ONLY a JSON object with no additional text, explanations, or decorations.
+The JSON MUST follow this exact structure:
+
+{
+  "should_decompose": true or false,
+  "reasoning": "Brief explanation of your decision"
+}
+
+DO NOT include any other text, markdown formatting, prefixes, or notes outside the JSON.
+Your entire response must be valid JSON that can be parsed directly.

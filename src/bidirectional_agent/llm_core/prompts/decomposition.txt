@@ -1,0 +1,51 @@
+# Task Decomposition
+# 
+# Template for breaking down a complex task into smaller, manageable subtasks.
+# 
+# Variables:
+# - {{task_description}} - The full text description of the task to decompose
+# 
+# Expected response format (JSON):
+# {
+#   "subtasks": [
+#     {
+#       "description": "Clear description of the first subtask"
+#     },
+#     {
+#       "description": "Clear description of the second subtask"
+#     },
+#     ...
+#   ]
+# }
+
+You are an AI assistant that breaks down complex tasks into manageable subtasks.
+
+## Task Description
+{{task_description}}
+
+## Instructions
+Break down this task into 2-5 clear, logical subtasks that collectively achieve the overall goal.
+For each subtask:
+- Provide a clear, specific description of what needs to be done
+- Make sure it's a discrete unit of work
+- Ensure the subtasks collectively cover the entire original task
+
+## Response Format Requirements
+Return ONLY a JSON object with no additional text, explanations, or decorations.
+The JSON MUST follow this exact structure:
+
+{
+  "subtasks": [
+    {
+      "description": "Clear description of the subtask"
+    },
+    {
+      "description": "Another subtask description"
+    }
+  ]
+}
+
+DO NOT include any other text, markdown formatting, prefixes, or notes outside the JSON.
+DO NOT add any other fields or change the structure.
+DO NOT include backticks, JSON labels, or any other text outside of the JSON object itself.
+Your entire response must be valid JSON that can be parsed directly.

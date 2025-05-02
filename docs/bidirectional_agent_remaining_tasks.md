@@ -2411,3 +2411,265 @@ I recommend implementing these features in the following order:
    ```
 
 By implementing these LLM-powered features, the A2A Test Suite will gain sophisticated intelligence for handling complex, fuzzy decisions across all aspects of agent operations, from task routing and delegation to error recovery and synthesis, while maintaining compatibility with the core A2A protocol.
+
+## Critique of Implementation Plan
+
+While the proposed implementation plan is comprehensive and well-structured, there are several areas that could benefit from refinement:
+
+1. **Test-Driven Development Alignment**: The current plan lacks explicit test creation steps before implementation, which contradicts the project's TDD principles outlined in CLAUDE.md. Each feature should begin with test creation before any implementation code.
+
+2. **Error Handling Complexity**: The error handling approaches are highly sophisticated but may be overengineered for initial implementation. A phased approach starting with basic error cases would be more practical, with advanced recovery mechanisms added later.
+
+3. **Resource Efficiency**: Many of the proposed LLM prompts are verbose and would result in high token consumption. The design should include prompt optimization strategies to reduce costs while maintaining effectiveness.
+
+4. **Interface Stability**: The frequent introduction of new struct types and JSON schemas could lead to interface instability. A more gradual evolution of the API would be preferable, with emphasis on backward compatibility.
+
+5. **Integration Testing Gap**: While unit tests are mentioned, there's insufficient detail on integration testing across components, which is critical for a system where LLM decisions impact multiple subsystems.
+
+6. **Performance Considerations**: The plan doesn't adequately address potential latency issues from sequential LLM calls. Caching strategies and parallel processing optimizations should be more explicitly detailed.
+
+7. **Versioning Strategy**: Missing is a clear approach to versioning prompt templates and LLM response formats, which will be essential as models and capabilities evolve.
+
+Implementing LLM-powered capabilities is a promising direction, but the implementation approach should be more iterative, with stronger emphasis on testing, performance optimization, and interface stability.
+
+
+
+          
+Critique of docs/bidirectional_agent_remaining_tasks.md      
+( “LLM-Driven Future Implementation Road-map” )              
+
+─────────────────────────────────────────────────────────────
+───────────                                                  
+
+ 1 HIGH-LEVEL ASSESSMENT                                     
+   ──────────────────────────────────────────────────────────
+   ────────────── • Ambition vs. Reality                     
+   The roadmap is visionary, but it assumes a green-field    
+   agent.                                                    
+   The current code base already implements:                 
+   – AgentDirectory (sqlite + health checks)                 
+   – AgentRegistry / ClientManager caches                    
+   – LlmTaskRouter (LOCAL / REMOTE / REJECT)                 
+   – ToolExecutor with pluggable remote tools                
+   – Result streaming / TaskManager in REPL                  
+
+Many sections of the roadmap re-implement these layers       
+instead of extending them, risking duplicated logic.         
+
+• Breadth                                                    
+It spans error resilience, delegation planning, synthesis,   
+discovery, scheduling, learning, quality evaluation and      
+degraded-mode governance. Attempting all in one sprint will  
+stall progress; we need staging.                             
+
+• Dependencies                                               
+Everything hangs on a “generic LlmClient” abstraction that   
+does not yet exist, plus heavy prompt engineering, costly    
+tokens, and new schema contracts that are not versioned.     
+
+• Testing Strategy                                           
+Doctrine in CLAUDE.md says TDD first; the roadmap mentions   
+tests only in passing.  Several proposed APIs have no        
+acceptance criteria.                                         
+
+─────────────────────────────────────────────────────────────
+─────────── 2.  STRENGTHS OF THE PLAN                        
+─────────────────────────────────────────────────────────────
+─────────── ✓ Unified LLM interface with JSON parsing helpers
+– highly valuable.                                           
+✓ Prompt templates stored in files – maintainable.           
+✓ Clear JSON output contracts – aids validation & property   
+tests.                                                       
+✓ Phased “Core → Resilience → Delegation …” idea (needs      
+sharper cuts).                                               
+
+─────────────────────────────────────────────────────────────
+─────────── 3.  KEY GAPS / RISKS                             
+─────────────────────────────────────────────────────────────
+───────────                                                  
+
+ 1 Overlapping Components                                    
+   • RoutingAgent vs. LlmTaskRouter vs. future               
+   EnhancedRoutingAgent.                                     
+   → Danger of three routers with divergent logic.           
+ 2 Un-scoped Data Stores                                     
+   • New history / learning managers imply a DB schema but   
+   none is specified (migrations? retention?).               
+ 3 Feature-Flag Explosion                                    
+   • We already rely on bidir-core / bidir-local-exec /      
+   bidir-delegate. Roadmap adds synthesis, resilience,       
+   tooling flags: compile matrix will blow up if not planned.
+ 4 Latency & Token Cost                                      
+   • Many chained LLM calls (error analysis → recovery plan →
+   step execution) could 3-4× current latency & cost.        
+ 5 Prompt Versioning                                         
+   • No concrete strategy for prompt evolution, rollback, A/B
+   testing.                                                  
+ 6 Conflicting Config Roots                                  
+   • BidirectionalAgentConfig vs. multiple *_config structs  
+   in the roadmap – risk of drift.                           
+
+
+─────────────────────────────────────────────────────────────
+             ─────────── 4.  ACTIONABLE FEEDBACK             
+─────────────────────────────────────────────────────────────
+        ─────────── PHASE 0 – HOUSEKEEPING (1–2 days)        
+
+A.  Central LlmClient trait                                  
+• Extract a minimal trait now (complete, complete_json).     
+• Provide a mock implementation for tests.                   
+• Refactor LlmTaskRouter & interpret_input to use it.        
+
+B.  Prompt Template Loader                                   
+• Put templates under src/bidirectional_agent/prompts/*.txt. 
+• Provide helper render(name, vars) -> String.               
+• Add unit test that all templates compile without “{{“      
+residues.                                                    
+
+
+           PHASE 1 – ROUTING & TOOLING (3–5 days)            
+
+ 1 Merge RoutingAgent & LlmTaskRouter                        
+   • Keep decide, should_decompose, decompose_task.          
+   • Expose a single async trait RoutingAgentTrait (already  
+   exists) and register one instance in BidirectionalAgent.  
+ 2 Remote-Tool Execution Path                                
+   • Finish stub in ClientManager::send_task (Slice 1        
+   comment).                                                 
+   • Expose REPL commands list remote tools, execute remote  
+   tool.                                                     
+   • Write integration test: remote echo tool via mock agent.
+ 3 Config Consolidation                                      
+   • Extend BidirectionalAgentConfig with llm subsection     
+   rather than new LlmRoutingConfig nested structures.       
+
+
+            PHASE 2 – ERROR & RESILIENCE (1 week)            
+
+ 1 LlmErrorAnalyzer + RecoveryAction list only (no           
+   orchestrator yet).                                        
+   • Wire to existing ReplError translation pathway.         
+   • Add property test: any ClientError maps to valid        
+   RecoveryAction.                                           
+ 2 PredictiveFailureDetector (risk scoring) – read-only      
+   reporting; don’t gate execution yet.                      
+
+
+          PHASE 3 – DELEGATION & SYNTHESIS (later)           
+
+• Requires bidir-delegate feature; blocked until Phase 1     
+stabilises.                                                  
+• Prototype on synthetic tasks with special echo tools.      
+• Add slice-by-slice integration (decompose → delegate →     
+synthesize).                                                 
+
+─────────────────────────────────────────────────────────────
+─────────── 5.  LOW-LEVEL GUIDANCE                           
+─────────────────────────────────────────────────────────────
+─────────── •  Concurrency                                   
+– Use tokio::task::spawn_blocking for heavy prompt rendering 
+if you load template files each call.                        
+
+•  Database / Persistence                                    
+– Put new tables (routing_history, error_events) behind a    
+feature flag and sqlx migration; test with in-memory :memory:
+for CI.                                                      
+
+•  Feature Flags                                             
+– Group them:                                                
+llm-routing, llm-resilience, llm-delegate, llm-synthesis.    
+– Avoid cross-feature cycles.                                
+
+•  Testing Pattern                                           
+– For each new module:                                       
+1. unit test with MockLlmClient,                             
+2. property test (quick-check style) ensuring JSON produced  
+validates via validator::validate_json,                      
+3. integration test behind the feature flag.                 
+
+•  Logging & Metrics                                         
+– Wrap every LLM call with timing + token count (Anthropic   
+header anthropic-version gives usage).                       
+– Emit Prometheus metrics (llm_request_total,                
+tokens_sent_total) so we see cost regressions.               
+
+•  Prompt Token Budget                                       
+– Add a compile-time constant MAX_PROMPT_TOKENS = 4096 and   
+assert in tests that rendered prompt length < 12 kB.         
+
+─────────────────────────────────────────────────────────────
+─────────── 6.  SUMMARY                                      
+─────────────────────────────────────────────────────────────
+─────────── The roadmap is solid but too broad for the       
+current maturity level of the bidirectional agent.  Adopt an 
+incremental plan:                                            
+
+ 1 Finish generic LLM client + unify existing routing code.  
+ 2 Expose remote-tool execution end-to-end.                  
+ 3 Layer basic error-analysis & recovery suggestions.        
+ 4 Only then tackle decomposition, synthesis, and            
+   degraded-mode logic.               
+
+
+
+  The feedback is comprehensive and provides specific, actionable guidance for implementing
+  the LLM-driven features. Here's my response addressing the key points:
+
+  Response to Additional Feedback
+
+  Your detailed critique offers excellent structure and practical steps for implementing LLM
+  capabilities in the A2A Test Suite. I completely agree with your assessment that the
+  original roadmap, while ambitious, needs a more incremental approach aligned with the
+  existing codebase.
+
+  Strengths of Your Approach
+
+  1. Recognizing Current Implementation: Your feedback correctly identifies that we already
+  have working components (AgentDirectory, AgentRegistry, LlmTaskRouter, etc.) that should be
+  extended rather than reimplemented.
+  2. Practical Phasing: The suggested four-phase approach (Housekeeping → Routing & Tooling →
+  Error & Resilience → Delegation & Synthesis) provides a clear, incremental path that aligns
+  with our development resources.
+  3. Concrete Technical Guidance: The low-level suggestions on concurrency, database design,
+  feature flags, testing patterns, and performance metrics are extremely valuable.
+
+  Implementation Strategy
+
+  I'll follow your recommended phased approach:
+
+  Phase 0 (Housekeeping):
+
+  - Extract a minimal LlmClient trait with core methods
+  - Implement the prompt template system with file-based templates
+  - Add tests to verify template rendering
+
+  Phase 1 (Routing & Tooling):
+
+  - Merge and consolidate the routing components to avoid duplication
+  - Complete the remote-tool execution path
+  - Extend existing configuration structures rather than creating parallel hierarchies
+
+  Phase 2 (Error & Resilience):
+
+  - Implement basic error analysis and recovery suggestions
+  - Add risk scoring that provides information without blocking execution
+  - Add property testing for error mapping
+
+  Phase 3 (Delegation & Synthesis):
+
+  - Implement only after previous phases are stable
+  - Start with controlled test scenarios using specialized echo tools
+  - Build integration incrementally
+
+  This approach addresses the fundamental issues you've identified while still moving toward
+  the enhanced LLM capabilities we need.
+
+  Additional Considerations
+
+  - Testing Priority: I'll ensure we maintain our TDD approach, creating tests before
+  implementation
+  - Token Budget Control: The suggestion to enforce prompt token limits is excellent for
+  controlling costs
+  - Feature Flag Organization: Grouping related flags will keep the compilation matrix
+  manageable
+  - Performance Monitoring: Adding Prometheus metrics will help track token usage and latency

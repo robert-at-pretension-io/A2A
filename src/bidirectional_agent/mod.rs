@@ -49,6 +49,10 @@ pub mod tools;
 pub mod llm_routing; // LLM-based routing module
 #[cfg(feature = "bidir-local-exec")]
 pub mod task_router_llm; // LLM task router implementation
+#[cfg(feature = "bidir-local-exec")]
+pub mod task_router_llm_refactored; // Refactored LLM task router using new LLM core
+#[cfg(feature = "bidir-local-exec")]
+pub mod llm_core; // Core LLM infrastructure
 
 // Slice 3: Delegation & Synthesis
 #[cfg(feature = "bidir-delegate")]
@@ -79,7 +83,11 @@ pub use task_router::{TaskRouter, LlmTaskRouterTrait}; // Export standard router
 #[cfg(feature = "bidir-local-exec")]
 pub use task_router_llm::{LlmTaskRouter, create_llm_task_router}; // Export LLM router implementation and factory
 #[cfg(feature = "bidir-local-exec")]
+pub use task_router_llm_refactored::{RefactoredLlmTaskRouter, create_refactored_llm_task_router}; // Export refactored router
+#[cfg(feature = "bidir-local-exec")]
 pub use llm_routing::{LlmRoutingConfig, RoutingAgent}; // SynthesisAgent is gated by bidir-delegate
+#[cfg(feature = "bidir-local-exec")]
+pub use llm_core::{create_transitional_llm_router, LlmClient, TemplateManager}; // Export LLM core utilities
 // Add imports for Slice 3 components
 #[cfg(feature = "bidir-delegate")]
 pub use llm_routing::SynthesisAgent; // Import SynthesisAgent only when delegate is enabled
@@ -167,12 +175,22 @@ impl BidirectionalAgent {
                      }
                  });
 
-                 // Create LLM task router using the factory
-                 // Note: the LLM config is not used in the current implementation
-                 create_llm_task_router( // Use the factory function directly
-                     registry_for_router,
-                     executor_for_router
-                 )
+                 // Try to use the new LLM core if possible, with fallback to legacy implementation
+                 if config_arc.tools.use_new_llm_core {
+                     println!("🔄 Using new LLM core infrastructure (with fallback)");
+                     create_transitional_llm_router(
+                         registry_for_router,
+                         executor_for_router,
+                         llm_config
+                     )
+                 } else {
+                     // Create legacy LLM task router using the factory
+                     println!("👴 Using legacy LLM infrastructure");
+                     create_llm_task_router(
+                         registry_for_router,
+                         executor_for_router
+                     )
+                 }
             } else {
                  // Use the standard task router if LLM routing is not enabled
                  println!("📝 Using standard rule-based task router");
