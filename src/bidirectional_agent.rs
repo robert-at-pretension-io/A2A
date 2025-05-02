@@ -4,13 +4,13 @@
 //! that can both serve requests and delegate them to other agents.
 
 // Import from other modules in the crate
-use a2a_test_suite::client::{
+use crate::client::{
     A2aClient,
     errors::ClientError,
     streaming::{StreamingResponse, StreamingResponseStream},
 };
 
-use a2a_test_suite::server::{
+use crate::server::{
     repositories::task_repository::{TaskRepository, InMemoryTaskRepository},
     services::{
         task_service::TaskService,
@@ -20,13 +20,13 @@ use a2a_test_suite::server::{
     run_server,
 };
 
-use a2a_test_suite::types::{
+use crate::types::{
     Task, TaskState, Message, Part, TextPart, Role, AgentCard,
     TaskSendParams, TaskQueryParams, TaskIdParams, PushNotificationConfig,
     DataPart, FilePart,
 };
 
-use a2a_test_suite::bidirectional_agent::task_router;
+use crate::bidirectional_agent::task_router;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
