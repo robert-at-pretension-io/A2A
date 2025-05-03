@@ -456,9 +456,10 @@ impl BidirectionalTaskRouter {
         if task_text.is_empty() {
             // If still empty after checking history and initial message
             warn!("Task text is empty after checking history and message, defaulting to local execution with 'echo' tool.");
-            return Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
+            // Use tool_name and add default params
+            return Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) });
         }
-
+ 
         // Get the list of available agents from the local directory
         debug!("Fetching available agents for routing prompt.");
         let available_agents = self.directory.list_active_agents();

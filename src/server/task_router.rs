@@ -101,7 +101,9 @@ impl TaskRouter {
     pub fn route(&self, _params: &TaskSendParams) -> RoutingDecision {
         // Simple implementation: always use local tools
         RoutingDecision::Local {
-            tool_names: self.tools.clone(),
+            // Use the first tool as the tool_name, provide empty params
+            tool_name: self.tools.first().cloned().unwrap_or_else(|| "echo".to_string()),
+            params: json!({}),
         }
     }
 }

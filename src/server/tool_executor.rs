@@ -581,12 +581,16 @@ impl ToolExecutor {
         // Default to echo tool for simple follow-up processing
         let tool_name = "echo";
         tracing::debug!(%tool_name, "Using default tool for follow-up."); // Add tracing
-
+ 
         // Extract parameters from the follow-up message
-        tracing::debug!("Extracting parameters from follow-up message."); // Add tracing
-        let params = self.extract_params_from_message(&message); // Logs internally
+        tracing::debug!("Creating simple parameters for follow-up message."); // Add tracing
+        // Create simple {"text": ...} params for the echo tool
+        let follow_up_text = message.parts.iter()
+            .filter_map(|p| match p { Part::TextPart(tp) => Some(tp.text.as_str()), _ => None })
+            .collect::<Vec<_>>().join("\n");
+        let params = json!({"text": follow_up_text});
         tracing::trace!(?params, "Parameters extracted for follow-up tool execution."); // Add tracing
-
+ 
         // Execute the tool
         tracing::info!("Executing follow-up tool '{}'.", tool_name); // Add tracing
         match self.execute_tool(tool_name, params).await {
