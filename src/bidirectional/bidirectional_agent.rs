@@ -625,7 +625,8 @@ If no specific parameters are needed or mentioned in the task, respond with an e
                             json_value
                         },
                         Err(e) => {
-                            warn!(error = %e, params_str = %params_str, "LLM returned invalid JSON for parameters. Falling back to {\"text\": \"original_task_text\"}.");
+                            // Escape the braces in the format string
+                            warn!(error = %e, params_str = %params_str, "LLM returned invalid JSON for parameters. Falling back to {{\"text\": \"original_task_text\"}}.");
                             // Fallback: Use original text if JSON parsing fails
                             json!({"text": task_text})
                         }
