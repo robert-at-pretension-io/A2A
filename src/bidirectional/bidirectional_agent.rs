@@ -485,6 +485,10 @@ pub struct BidirectionalAgent {
     // A2A client for making outbound requests to other agents
     // This is a simple client that can be expanded later
     pub client: Option<A2aClient>,
+    
+    // Session management
+    current_session_id: Option<String>,
+    session_tasks: Arc<DashMap<String, Vec<String>>>, // Map session ID to task IDs
 }
 
 impl BidirectionalAgent {
@@ -561,137 +565,121 @@ impl BidirectionalAgent {
             
             // Store the A2A client (if configured)
             client,
+            
+            // Initialize session management
+            current_session_id: None,
+            session_tasks: Arc::new(DashMap::new()),
         })
     }
 
     /// Process a message (Example: could be used for direct interaction or testing)
-    /// Note: This bypasses the standard A2A server flow.
     pub async fn process_message_directly(&self, message_text: &str) -> Result<String> {
-        // Create a representative Task structure (matching types.rs)
-        let task_id = Uuid::new_v4().to_string();
+        // Check if we're continuing an existing task that is in InputRequired state
+        let mut continue_task_id = None;
+        
+        if let Some(session_id) = &self.current_session_id {
+            if let Some(task_ids) = self.session_tasks.get(session_id) {
+                // Check the last task in the session
+                if let Some(last_task_id) = task_ids.iter().last() {
+                    // Get the task to check its state
+                    let params = TaskQueryParams {
+                        id: last_task_id.clone(),
+                        history_length: None,
+                        metadata: None,
+                    };
+                    
+                    if let Ok(task) = self.task_service.get_task(params).await {
+                        if task.status.state == TaskState::InputRequired {
+                            // We should continue this task instead of creating a new one
+                            continue_task_id = Some(last_task_id.clone());
+                        }
+                    }
+                }
+            }
+        }
+    
+        // Create a unique task ID if not continuing an existing task
+        let task_id = if let Some(id) = continue_task_id {
+            id
+        } else {
+            Uuid::new_v4().to_string()
+        };
+        
+        // Create the message
         let initial_message = Message {
             role: Role::User,
             parts: vec![Part::TextPart(TextPart {
                 text: message_text.to_string(),
-                metadata: None, // Add missing field
-                type_: "text".to_string(), // Add missing field
+                metadata: None,
+                type_: "text".to_string(),
             })],
-            metadata: None, // Add missing field
-        };
-        let task = Task {
-            id: task_id.clone(),
-            // Use status field
-            status: TaskStatus {
-                state: TaskState::Submitted, // Start as submitted
-                timestamp: Some(Utc::now()), // Timestamp is Option<DateTime>
-                message: None, // Add missing field
-            },
-            // Use history field
-            history: Some(vec![initial_message.clone()]),
-            artifacts: None, // Field is Option<Vec<Artifact>>
             metadata: None,
-            session_id: None,
-            // created_at, updated_at don't exist directly on Task
         };
-
-        // Use the BidirectionalTaskRouter's helper to decide execution mode
-        // We need an instance of it. Let's assume we create one temporarily or have access.
-        // For simplicity, let's recreate the router logic here or assume access.
-        // This part is tricky as the router is normally part of the TaskService flow.
-        // Let's simulate the routing decision directly for this example method.
-
-        // Simulate routing (replace with actual router call if possible)
-        let router = BidirectionalTaskRouter::new(self.llm.clone(), self.agent_directory.clone());
-        let decision = router.decide_execution_mode(&task).await?;
-
-
-        match decision {
-            ExecutionMode::Local => {
-                // Option 1: Use LLM directly
-                info!("Processing message locally using LLM.");
-                let prompt = format!("Process this request and provide a helpful response:\n\n{}", message_text);
-                self.llm.complete(&prompt).await
-
-                // Option 2: Simulate tool execution (if applicable)
-                // info!("Processing message locally using Tool Executor.");
-                // let executor = BidirectionalToolExecutor::new();
-                // let result_messages = executor.execute(&task, &["default_local_tool".to_string()]).await?;
-                // // Extract text from result messages
-                // Ok(result_messages.iter().flat_map(|m| m.parts.iter()).filter_map(|p| match p {
-                //     Part::TextPart(tp) => Some(tp.text.clone()),
-                //     _ => None,
-                // }).collect::<Vec<_>>().join("\n"))
-            },
-            ExecutionMode::Remote { agent_id } => {
-                 info!("Delegating message to agent: {}", agent_id);
-                // Use the canonical ClientManager to delegate
-                let mut client = self.client_manager.get_or_create_client(&agent_id).await?; // Use get_or_create_client
-
-                // Construct TaskSendParams
-                let metadata_map: Option<Map<String, Value>> = Some(
-                    serde_json::from_value(json!({
-                        "origin": {
-                            "agent_id": self.agent_id.clone(), // Clone agent_id
-                            "timestamp": Utc::now().to_rfc3339(),
-                        }
-                    }))? // Convert Value to Map
-                );
-
-                // Convert the task message to a string for the client API
-                let message_text = match &initial_message.parts.first() {
-                    Some(Part::TextPart(tp)) => tp.text.clone(),
-                    _ => "No text content available".to_string(),
-                };
-                
-                // Convert metadata to JSON string for client API
-                let metadata_json_string = if let Some(metadata) = metadata_map {
-                    match serde_json::to_string(&metadata) {
-                        Ok(json) => Some(json),
-                        Err(_) => None,
-                    }
-                } else {
-                    None
-                };
-
-                // Send the task using send_task_with_metadata
-                let delegated_task = match &metadata_json_string {
-                    Some(json_str) => client.send_task_with_metadata(&message_text, Some(json_str)).await?,
-                    None => client.send_task_with_metadata(&message_text, None).await?,
-                };
-                info!("Delegated task ID: {}", delegated_task.id);
-
-                // Wait for the task to complete (simplified polling)
-                let mut completed_task = delegated_task.clone(); // Clone initial response
-                for i in 0..30 { // Poll for 30 seconds max
-                    let current_state = completed_task.status.state;
-                    info!("Polling delegated task... Attempt {}, State: {:?}", i+1, current_state);
-                    if current_state == TaskState::Completed ||
-                       current_state == TaskState::Failed ||
-                       current_state == TaskState::Canceled {
-                        break;
-                    }
-
-                    sleep(std::time::Duration::from_secs(1)).await;
-                    // Use get_task which requires &mut self and TaskQueryParams
-                    completed_task = client.get_task(&delegated_task.id).await?;
-                }
-
-                // Extract the response from the final task state's history
-                let response = completed_task.history.as_ref().map(|history| {
-                    history.iter()
-                        .filter(|m| m.role == Role::Agent) // Use Agent role
-                        .flat_map(|m| m.parts.iter())
-                        .filter_map(|p| match p {
-                            Part::TextPart(tp) => Some(tp.text.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }).unwrap_or_else(|| "No response found in history.".to_string()); // Handle no history
-
-                Ok(response)
+        
+        // Create TaskSendParams
+        let params = TaskSendParams {
+            id: task_id.clone(),
+            message: initial_message,
+            session_id: self.current_session_id.clone(),
+            metadata: None,
+            history_length: None,
+            push_notification: None,
+        };
+        
+        // Use task_service to process the task
+        let task = self.task_service.process_task(params).await
+            .map_err(|e| anyhow!("Failed to process task: {}", e))?;
+        
+        // Save task to history
+        self.save_task_to_history(task.clone()).await?;
+        
+        // Extract response from task
+        let mut response = self.extract_text_from_task(&task);
+        
+        // If the task is in InputRequired state, indicate that in the response
+        if task.status.state == TaskState::InputRequired {
+            response.push_str("\n\n[The agent needs more information. Your next message will continue this task.]");
+        }
+        
+        Ok(response)
+    }
+    
+    // Helper to extract text from task
+    fn extract_text_from_task(&self, task: &Task) -> String {
+        // First check the status message
+        if let Some(ref message) = task.status.message {
+            let text = message.parts.iter()
+                .filter_map(|p| match p {
+                    Part::TextPart(tp) => Some(tp.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            
+            if !text.is_empty() {
+                return text;
             }
         }
+        
+        // Then check history if available
+        if let Some(history) = &task.history {
+            let agent_messages = history.iter()
+                .filter(|m| m.role == Role::Agent)
+                .flat_map(|m| m.parts.iter())
+                .filter_map(|p| match p {
+                    Part::TextPart(tp) => Some(tp.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            
+            if !agent_messages.is_empty() {
+                return agent_messages;
+            }
+        }
+        
+        // Fallback
+        "No response text available.".to_string()
     }
 
     /// Run an interactive REPL (Read-Eval-Print Loop)
@@ -711,6 +699,15 @@ impl BidirectionalAgent {
         println!("  :remote MSG      - Send message as task to connected agent");
         println!("  :listen PORT     - Start listening server on specified port");
         println!("  :stop            - Stop the currently running server");
+        println!("  :session new     - Create a new conversation session");
+        println!("  :session show    - Show the current session ID");
+        println!("  :history         - Show message history for current session");
+        println!("  :tasks           - List all tasks in the current session");
+        println!("  :task ID         - Show details for a specific task");
+        println!("  :artifacts ID    - Show artifacts for a specific task");
+        println!("  :cancelTask ID   - Cancel a running task");
+        println!("  :file PATH MSG   - Send message with a file attachment");
+        println!("  :data JSON MSG   - Send message with JSON data");
         println!("  :quit            - Exit the REPL");
         println!("========================================\n");
         
@@ -733,6 +730,94 @@ impl BidirectionalAgent {
                     Err(_) => {
                         println!("🔗 Connected to: {}", url);
                     }
+                }
+            }
+        }
+        
+        // Flag to track if we have a listening server running
+        let mut server_running = false;
+        let mut server_shutdown_token: Option<CancellationToken> = None;
+        
+        // Check if auto-listen flag is set in environment variable
+        let auto_listen = std::env::var("AUTO_LISTEN").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false);
+        
+        // Start server automatically if auto-listen is enabled
+        if auto_listen {
+            println!("🚀 Auto-starting server on port {}...", self.port);
+            
+            // Create a cancellation token
+            let token = CancellationToken::new();
+            server_shutdown_token = Some(token.clone());
+            
+            // Create a channel to communicate server start status back to REPL
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            
+            // Clone what we need for the task
+            let task_service = self.task_service.clone();
+            let streaming_service = self.streaming_service.clone();
+            let notification_service = self.notification_service.clone();
+            let bind_address = self.bind_address.clone();
+            let port = self.port;
+            let agent_card = serde_json::to_value(self.create_agent_card()).unwrap_or_else(|e| {
+                warn!("Failed to serialize agent card: {}", e);
+                serde_json::json!({})
+            });
+            
+            tokio::spawn(async move {
+                match run_server(
+                    port,
+                    &bind_address,
+                    task_service,
+                    streaming_service,
+                    notification_service,
+                    token.clone(),
+                    Some(agent_card),
+                ).await {
+                    Ok(handle) => {
+                        // Send success status back to REPL
+                        let _ = tx.send(Ok(()));
+                        
+                        // Wait for the server to complete or be cancelled
+                        match handle.await {
+                            Ok(()) => info!("Server shut down gracefully."),
+                            Err(e) => error!("Server error: {}", e),
+                        }
+                    },
+                    Err(e) => {
+                        // Send error status back to REPL
+                        let _ = tx.send(Err(format!("{}", e)));
+                        error!("Failed to start server: {}", e);
+                    }
+                }
+            });
+            
+            // Wait for the server start status
+            // Use a short timeout to avoid blocking the REPL if something goes wrong
+            match tokio::time::timeout(std::time::Duration::from_secs(2), rx).await {
+                Ok(Ok(Ok(()))) => {
+                    server_running = true;
+                    println!("✅ Server started on http://{}:{}", self.bind_address, port);
+                    println!("The server will run until you exit the REPL or send :stop");
+                },
+                Ok(Ok(Err(e))) => {
+                    println!("❌ Error starting server: {}", e);
+                    println!("The server could not be started. Try a different port or check for other services using this port.");
+                    
+                    // Clean up the token since the server didn't start
+                    server_shutdown_token = None;
+                },
+                Ok(Err(_)) => {
+                    println!("❌ Error: Server initialization failed due to channel error");
+                    server_shutdown_token = None;
+                },
+                Err(_) => {
+                    println!("❌ Timeout waiting for server to start");
+                    println!("The server is taking too long to start. It might be starting in the background or could have failed.");
+                    println!("You can try :stop to cancel any server processes that might be running.");
+                    
+                    // Since we're not sure if the server started, keep the running flag true
+                    // so the user can try to stop it
+                    server_running = true;
                 }
             }
         }
@@ -779,6 +864,15 @@ impl BidirectionalAgent {
                     println!("  :remote MSG      - Send message as task to connected agent");
                     println!("  :listen PORT     - Start listening server on specified port");
                     println!("  :stop            - Stop the currently running server");
+                    println!("  :session new     - Create a new conversation session");
+                    println!("  :session show    - Show the current session ID");
+                    println!("  :history         - Show message history for current session");
+                    println!("  :tasks           - List all tasks in the current session");
+                    println!("  :task ID         - Show details for a specific task");
+                    println!("  :artifacts ID    - Show artifacts for a specific task");
+                    println!("  :cancelTask ID   - Cancel a running task");
+                    println!("  :file PATH MSG   - Send message with a file attachment");
+                    println!("  :data JSON MSG   - Send message with JSON data");
                     println!("  :quit            - Exit the REPL");
                     println!("========================================\n");
                 } else if input == ":quit" {
@@ -849,12 +943,11 @@ impl BidirectionalAgent {
                             continue;
                         }
                         
-                        // Create a new client with the provided URL
-                        self.client = Some(A2aClient::new(target));
-                        println!("🔗 Connected to remote agent: {}", target);
+                        // Create a new client with the provided URL, but don't assume connection will succeed
+                        let client = A2aClient::new(target);
                         
                         // Try to get the agent card to verify connection
-                        match self.get_remote_agent_card().await {
+                        let connect_result = match client.get_agent_card().await {
                             Ok(card) => {
                                 println!("✅ Successfully connected to agent: {}", card.name);
                                 
@@ -862,14 +955,36 @@ impl BidirectionalAgent {
                                 if !known_servers.iter().any(|(_, url)| url == target) {
                                     known_servers.push((card.name.clone(), target.to_string()));
                                 }
+                                
+                                // Store the client since connection was successful
+                                self.client = Some(client);
+                                
+                                // IMPORTANT: Add the agent to the agent directory for routing
+                                // Use the agent name as the ID
+                                self.agent_directory.add_or_update_agent(card.name.clone(), card.clone());
+                                
+                                // This sets up the bidirectional agent so it can route tasks to this agent
+                                println!("🔄 Added agent to directory for task routing");
+                                
+                                true
                             },
                             Err(e) => {
-                                println!("⚠️ Connected, but couldn't retrieve agent card: {}", e);
-                                
-                                // Still add to known servers
-                                if !known_servers.iter().any(|(_, url)| url == target) {
-                                    known_servers.push(("Unknown Agent".to_string(), target.to_string()));
-                                }
+                                println!("❌ Failed to connect to agent at {}: {}", target, e);
+                                println!("Please check that the server is running and the URL is correct.");
+                                false
+                            }
+                        };
+                        
+                        // Only add to known servers if we got a connection, and it's not already in the list
+                        if !connect_result && !known_servers.iter().any(|(_, url)| url == target) {
+                            // Ask the user if they want to add the server anyway
+                            println!("Do you want to add this server to the known servers list anyway? (y/n)");
+                            let mut answer = String::new();
+                            io::stdin().read_line(&mut answer).unwrap_or_default();
+                            
+                            if answer.trim().to_lowercase() == "y" {
+                                known_servers.push(("Unknown Agent".to_string(), target.to_string()));
+                                println!("Added server to known servers list.");
                             }
                         }
                     }
@@ -905,6 +1020,9 @@ impl BidirectionalAgent {
                                 serde_json::json!({})
                             });
                             
+                            // Create a channel to communicate server start status back to REPL
+                            let (tx, rx) = tokio::sync::oneshot::channel();
+                            
                             tokio::spawn(async move {
                                 match run_server(
                                     port,
@@ -916,6 +1034,9 @@ impl BidirectionalAgent {
                                     Some(agent_card),
                                 ).await {
                                     Ok(handle) => {
+                                        // Send success status back to REPL
+                                        let _ = tx.send(Ok(()));
+                                        
                                         // Wait for the server to complete or be cancelled
                                         match handle.await {
                                             Ok(()) => info!("Server shut down gracefully."),
@@ -923,14 +1044,42 @@ impl BidirectionalAgent {
                                         }
                                     },
                                     Err(e) => {
+                                        // Send error status back to REPL
+                                        let _ = tx.send(Err(format!("{}", e)));
                                         error!("Failed to start server: {}", e);
                                     }
                                 }
                             });
                             
-                            server_running = true;
-                            println!("✅ Server started on http://{}:{}", self.bind_address, port);
-                            println!("The server will run until you exit the REPL or send :stop");
+                            // Wait for the server start status
+                            // Use a short timeout to avoid blocking the REPL if something goes wrong
+                            match tokio::time::timeout(std::time::Duration::from_secs(2), rx).await {
+                                Ok(Ok(Ok(()))) => {
+                                    server_running = true;
+                                    println!("✅ Server started on http://{}:{}", self.bind_address, port);
+                                    println!("The server will run until you exit the REPL or send :stop");
+                                },
+                                Ok(Ok(Err(e))) => {
+                                    println!("❌ Error starting server: {}", e);
+                                    println!("The server could not be started. Try a different port or check for other services using this port.");
+                                    
+                                    // Clean up the token since the server didn't start
+                                    server_shutdown_token = None;
+                                },
+                                Ok(Err(_)) => {
+                                    println!("❌ Error: Server initialization failed due to channel error");
+                                    server_shutdown_token = None;
+                                },
+                                Err(_) => {
+                                    println!("❌ Timeout waiting for server to start");
+                                    println!("The server is taking too long to start. It might be starting in the background or could have failed.");
+                                    println!("You can try :stop to cancel any server processes that might be running.");
+                                    
+                                    // Since we're not sure if the server started, keep the running flag true
+                                    // so the user can try to stop it
+                                    server_running = true;
+                                }
+                            }
                         },
                         Err(_) => {
                             println!("❌ Error: Invalid port number. Please provide a valid port.");
@@ -991,6 +1140,169 @@ impl BidirectionalAgent {
                             println!("❌ Error sending task: {}", e);
                         }
                     }
+                } else if input == ":session new" {
+                    let session_id = self.create_new_session();
+                    println!("✅ Created new session: {}", session_id);
+                } else if input == ":session show" {
+                    if let Some(session_id) = &self.current_session_id {
+                        println!("🔍 Current session: {}", session_id);
+                    } else {
+                        println!("⚠️ No active session. Use :session new to create one.");
+                    }
+                } else if input == ":history" {
+                    if let Some(session_id) = &self.current_session_id {
+                        let tasks = self.get_current_session_tasks().await?;
+                        if tasks.is_empty() {
+                            println!("📭 No messages in current session.");
+                        } else {
+                            println!("\n📝 Session History:");
+                            for (i, task) in tasks.iter().enumerate() {
+                                if let Some(history) = &task.history {
+                                    for message in history {
+                                        let role_icon = match message.role {
+                                            Role::User => "👤",
+                                            Role::Agent => "🤖",
+                                            _ => "➡️",
+                                        };
+                                        
+                                        // Extract text from parts
+                                        let text = message.parts.iter()
+                                            .filter_map(|p| match p {
+                                                Part::TextPart(tp) => Some(tp.text.clone()),
+                                                _ => None,
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+                                        
+                                        // Truncate long messages for display
+                                        let display_text = if text.len() > 100 {
+                                            format!("{}...", &text[..97])
+                                        } else {
+                                            text
+                                        };
+                                        
+                                        println!("{} {}: {}", role_icon, message.role, display_text);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        println!("⚠️ No active session. Use :session new to create one.");
+                    }
+                } else if input == ":tasks" {
+                    if let Some(session_id) = &self.current_session_id {
+                        let tasks = self.get_current_session_tasks().await?;
+                        if tasks.is_empty() {
+                            println!("📭 No tasks in current session.");
+                        } else {
+                            println!("\n📋 Tasks in Current Session:");
+                            for (i, task) in tasks.iter().enumerate() {
+                                println!("  {}. {} - Status: {:?}", i + 1, task.id, task.status.state);
+                            }
+                        }
+                    } else {
+                        println!("⚠️ No active session. Use :session new to create one.");
+                    }
+                } else if input.starts_with(":task ") {
+                    let task_id = input.trim_start_matches(":task ").trim();
+                    if task_id.is_empty() {
+                        println!("❌ Error: No task ID provided. Use :task TASK_ID");
+                    } else {
+                        // Get task details
+                        let params = TaskQueryParams {
+                            id: task_id.to_string(),
+                            history_length: None,
+                            metadata: None,
+                        };
+                        
+                        match self.task_service.get_task(params).await {
+                            Ok(task) => {
+                                println!("\n🔍 Task Details:");
+                                println!("  ID: {}", task.id);
+                                println!("  Status: {:?}", task.status.state);
+                                println!("  Session: {}", task.session_id.unwrap_or_else(|| "None".to_string()));
+                                println!("  Timestamp: {}", task.status.timestamp.map(|t| t.to_rfc3339()).unwrap_or_else(|| "None".to_string()));
+                                
+                                // Show artifacts count if any
+                                if let Some(artifacts) = &task.artifacts {
+                                    println!("  Artifacts: {} (use :artifacts {} to view)", artifacts.len(), task.id);
+                                } else {
+                                    println!("  Artifacts: None");
+                                }
+                                
+                                // Show last message if any
+                                if let Some(message) = &task.status.message {
+                                    let text = message.parts.iter()
+                                        .filter_map(|p| match p {
+                                            Part::TextPart(tp) => Some(tp.text.clone()),
+                                            _ => None,
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    
+                                    println!("\n  Last Message: {}", text);
+                                }
+                            },
+                            Err(e) => {
+                                println!("❌ Error: Failed to get task: {}", e);
+                            }
+                        }
+                    }
+                } else if input.starts_with(":artifacts ") {
+                    let task_id = input.trim_start_matches(":artifacts ").trim();
+                    if task_id.is_empty() {
+                        println!("❌ Error: No task ID provided. Use :artifacts TASK_ID");
+                    } else {
+                        // Get task details with artifacts
+                        let params = TaskQueryParams {
+                            id: task_id.to_string(),
+                            history_length: None,
+                            metadata: None,
+                        };
+                        
+                        match self.task_service.get_task(params).await {
+                            Ok(task) => {
+                                if let Some(artifacts) = &task.artifacts {
+                                    if artifacts.is_empty() {
+                                        println!("📦 No artifacts for task {}", task.id);
+                                    } else {
+                                        println!("\n📦 Artifacts for Task {}:", task.id);
+                                        for (i, artifact) in artifacts.iter().enumerate() {
+                                            println!("  {}. {} ({})", i + 1, 
+                                                     artifact.name.clone().unwrap_or_else(|| format!("Artifact {}", artifact.index)),
+                                                     artifact.description.clone().unwrap_or_else(|| "No description".to_string()));
+                                        }
+                                    }
+                                } else {
+                                    println!("📦 No artifacts for task {}", task.id);
+                                }
+                            },
+                            Err(e) => {
+                                println!("❌ Error: Failed to get task: {}", e);
+                            }
+                        }
+                    }
+                } else if input.starts_with(":cancelTask ") {
+                    let task_id = input.trim_start_matches(":cancelTask ").trim();
+                    if task_id.is_empty() {
+                        println!("❌ Error: No task ID provided. Use :cancelTask TASK_ID");
+                    } else {
+                        // Cancel the task
+                        let params = TaskIdParams {
+                            id: task_id.to_string(),
+                            metadata: None,
+                        };
+                        
+                        match self.task_service.cancel_task(params).await {
+                            Ok(task) => {
+                                println!("✅ Successfully canceled task {}", task.id);
+                                println!("  Current state: {:?}", task.status.state);
+                            },
+                            Err(e) => {
+                                println!("❌ Error: Failed to cancel task: {}", e);
+                            }
+                        }
+                    }
                 } else {
                     println!("❌ Unknown command: {}", input);
                     println!("Type :help for a list of commands");
@@ -1009,6 +1321,46 @@ impl BidirectionalAgent {
         }
         
         Ok(())
+    }
+    
+    /// Create a new session
+    pub fn create_new_session(&mut self) -> String {
+        let session_id = format!("session-{}", Uuid::new_v4());
+        self.current_session_id = Some(session_id.clone());
+        self.session_tasks.insert(session_id.clone(), Vec::new());
+        session_id
+    }
+    
+    /// Add task to current session
+    async fn save_task_to_history(&self, task: Task) -> Result<()> {
+        if let Some(session_id) = &self.current_session_id {
+            if let Some(mut tasks) = self.session_tasks.get_mut(session_id) {
+                tasks.push(task.id.clone());
+            }
+        }
+        Ok(())
+    }
+    
+    /// Get tasks for current session
+    pub async fn get_current_session_tasks(&self) -> Result<Vec<Task>> {
+        let mut tasks = Vec::new();
+        if let Some(session_id) = &self.current_session_id {
+            if let Some(task_ids) = self.session_tasks.get(session_id) {
+                for task_id in task_ids.iter() {
+                    // Use TaskQueryParams to get task with history
+                    let params = TaskQueryParams {
+                        id: task_id.clone(),
+                        history_length: None, // Get full history
+                        metadata: None,
+                    };
+                    
+                    if let Ok(task) = self.task_service.get_task(params).await {
+                        tasks.push(task);
+                    }
+                }
+            }
+        }
+        Ok(tasks)
     }
     
     /// Get the URL of the currently connected client
@@ -1191,6 +1543,10 @@ pub struct ModeConfig {
     // Remote agent operations
     pub get_agent_card: bool,
     pub remote_task: Option<String>,
+    
+    // Auto-listen on server port at startup
+    #[serde(default)]
+    pub auto_listen: bool,
 }
 
 // Default functions
@@ -1326,12 +1682,36 @@ pub async fn main() -> Result<()> {
         }
     }
     
-    // Process command line argument if provided
-    if args.len() > 1 {
-        let arg = &args[1];
+    // Process command line arguments
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
         
-        // Check if the argument is in the format "server:port"
-        if arg.contains(':') {
+        if arg == "--listen" || arg == "-l" {
+            // Enable auto-listen mode
+            config.mode.auto_listen = true;
+            std::env::set_var("AUTO_LISTEN", "true");
+            
+            // If a port is provided after the flag, use it
+            if i + 1 < args.len() {
+                if let Ok(port) = args[i + 1].parse::<u16>() {
+                    config.server.port = port;
+                    info!("Will auto-listen on port {}", port);
+                    i += 1; // Skip the port argument in the next iteration
+                }
+            }
+        } else if arg.starts_with("--port=") {
+            // Parse port from --port=NNNN format
+            if let Ok(port) = arg.trim_start_matches("--port=").parse::<u16>() {
+                config.server.port = port;
+                if config.mode.auto_listen {
+                    info!("Will auto-listen on port {}", port);
+                }
+            } else {
+                warn!("Invalid port format in '{}'. Using default port.", arg);
+            }
+        } else if arg.contains(':') {
+            // Check if the argument is in the format "server:port"
             let parts: Vec<&str> = arg.split(':').collect();
             if parts.len() == 2 {
                 let server = parts[0];
@@ -1349,7 +1729,7 @@ pub async fn main() -> Result<()> {
                 warn!("Invalid argument format '{}'. Expected 'server:port'. Using default configuration.", arg);
             }
         } else {
-            // If the argument doesn't contain ':', treat it as a config file path
+            // If the argument doesn't match any flag, treat it as a config file path
             let config_path = arg;
             info!("Loading configuration from {}", config_path);
             
@@ -1366,7 +1746,11 @@ pub async fn main() -> Result<()> {
                 }
             }
         }
-    } else {
+        
+        i += 1;
+    }
+    
+    if args.len() <= 1 {
         info!("No arguments provided. Using default configuration.");
     }
     

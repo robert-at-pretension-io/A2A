@@ -1,0 +1,14 @@
+[server]
+port = 4201
+bind_address = "0.0.0.0"
+agent_id = "bidirectional-agent-2"
+
+[client]
+target_url = "http://localhost:4200"
+
+[llm]
+# API key set via environment variable
+system_prompt = "You are an AI agent that can communicate with other agents."
+
+[mode]
+repl = true

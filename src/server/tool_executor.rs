@@ -144,26 +144,57 @@ impl ToolExecutor {
 
     /// Executes a task locally using the specified tool(s).
     pub async fn execute_task_locally(&self, task: &mut Task, tool_names: &[String]) -> Result<(), ServerError> {
+        // Use the echo tool as a default fallback if no tool is specified
+        let default_tool_name = "echo";
+        
         // For now, assume only one tool is specified or use the first one.
-        let tool_name = match tool_names.first() {
+        let requested_tool_name = match tool_names.first() {
             Some(name) => name.as_str(),
             None => {
-                // Update task status to Failed
-                task.status = TaskStatus {
-                    state: TaskState::Failed,
-                    timestamp: Some(Utc::now()),
-                    message: Some(Message {
-                        role: Role::Agent,
-                        parts: vec![Part::TextPart(TextPart {
-                            type_: "text".to_string(),
-                            text: "Local execution failed: No tool specified.".to_string(),
-                            metadata: None,
-                        })],
+                // Update task with warning about no tool specified
+                let warning_msg = format!("No tool specified - using default '{}' tool instead.", default_tool_name);
+                
+                // Add this warning to task history for debugging
+                let mut history = task.history.clone().unwrap_or_default();
+                history.push(Message {
+                    role: Role::Agent, // Using Agent role as system role isn't available
+                    parts: vec![Part::TextPart(TextPart {
+                        type_: "text".to_string(),
+                        text: warning_msg.clone(),
                         metadata: None,
-                    }),
-                };
-                return Err(ServerError::InvalidParameters("No tool specified for local execution".to_string()));
+                    })],
+                    metadata: None,
+                });
+                task.history = Some(history);
+                
+                // Use the default tool
+                default_tool_name
             }
+        };
+        
+        // Check if the requested tool exists
+        let tool_name = if self.tools.contains_key(requested_tool_name) {
+            requested_tool_name
+        } else {
+            // Tool doesn't exist, use the default tool with a warning
+            let warning_msg = format!("Tool '{}' not found - using default '{}' tool instead.", 
+                                     requested_tool_name, default_tool_name);
+            
+            // Add this warning to task history for debugging
+            let mut history = task.history.clone().unwrap_or_default();
+            history.push(Message {
+                role: Role::Agent, // Using Agent role as system role isn't available
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: warning_msg.clone(),
+                    metadata: None,
+                })],
+                metadata: None,
+            });
+            task.history = Some(history);
+            
+            // Use the default tool
+            default_tool_name
         };
 
         // Extract parameters from the task message

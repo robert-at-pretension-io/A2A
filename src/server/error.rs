@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerError {
@@ -31,16 +31,20 @@ impl fmt::Display for ServerError {
             ServerError::MethodNotFound(method) => write!(f, "Method not found: {}", method),
             ServerError::InvalidParameters(msg) => write!(f, "Invalid parameters: {}", msg),
             ServerError::Internal(msg) => write!(f, "Internal server error: {}", msg),
-            ServerError::PushNotificationNotSupported(msg) => write!(f, "Push notifications not supported: {}", msg),
+            ServerError::PushNotificationNotSupported(msg) => {
+                write!(f, "Push notifications not supported: {}", msg)
+            }
             ServerError::AuthenticationError(msg) => write!(f, "Authentication error: {}", msg),
             ServerError::FileNotFound(id) => write!(f, "File not found: {}", id),
             ServerError::SkillNotFound(id) => write!(f, "Skill not found: {}", id),
             ServerError::BatchNotFound(id) => write!(f, "Batch not found: {}", id),
-            ServerError::A2aClientError(_) => todo!(),
-            ServerError::AgentNotFound(_) => todo!(),
-            ServerError::UnsupportedOperation(_) => todo!(),
-            ServerError::ConfigError(_) => todo!(),
-            ServerError::ServerTaskExecutionFailed(_) => todo!(),
+            ServerError::A2aClientError(msg) => write!(f, "A2A client error: {}", msg),
+            ServerError::AgentNotFound(id) => write!(f, "Agent not found: {}", id),
+            ServerError::UnsupportedOperation(msg) => write!(f, "Unsupported operation: {}", msg),
+            ServerError::ConfigError(msg) => write!(f, "Configuration error: {}", msg),
+            ServerError::ServerTaskExecutionFailed(msg) => {
+                write!(f, "Server task execution failed: {}", msg)
+            }
         }
     }
 }
@@ -59,12 +63,12 @@ impl ServerError {
             ServerError::FileNotFound(_) => -32005,
             ServerError::SkillNotFound(_) => -32001,
             ServerError::BatchNotFound(_) => -32001,
-            ServerError::A2aClientError(_) => todo!(),
-ServerError::AgentNotFound(_) => todo!(),
-            ServerError::UnsupportedOperation(_) => todo!(),
-ServerError::ConfigError(_) => todo!(),
-            ServerError::ServerTaskExecutionFailed(_) => todo!(),
-                    }
+            ServerError::A2aClientError(_) => -32010,
+            ServerError::AgentNotFound(_) => -32011,
+            ServerError::UnsupportedOperation(_) => -32012,
+            ServerError::ConfigError(_) => -32013,
+            ServerError::ServerTaskExecutionFailed(_) => -32014,
+        }
     }
 }
 
