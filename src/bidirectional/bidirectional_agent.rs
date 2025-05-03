@@ -1822,6 +1822,7 @@ impl Default for ServerConfig {
             port: default_port(),
             bind_address: default_bind_address(),
             agent_id: default_agent_id(),
+            agent_name: None, // Initialize the optional agent_name field
         }
     }
 }
