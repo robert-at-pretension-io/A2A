@@ -2164,9 +2164,11 @@ pub async fn main() -> Result<()> {
         .with(console_layer);
 
     if let Some(file_layer) = file_layer {
-         subscriber_builder.with(file_layer).init();
+    // Initialize differently based on whether file_layer is Some or None
+    if let Some(file_layer) = file_layer {
+         subscriber_builder.with(file_layer).init(); // Pass the unwrapped Box<dyn Layer...>
     } else {
-         subscriber_builder.init();
+         subscriber_builder.init(); // Initialize without the file layer
     }
 
     // --- Logging is now fully initialized ---
