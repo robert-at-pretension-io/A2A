@@ -129,7 +129,7 @@ async fn test_get_completed_task() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Task to complete").await?;
+    let task = client.send_task("Task to complete", None).await?; // Add None for session_id
     // Allow time if server had delays, though mock is instant
     sleep(Duration::from_millis(50)).await; 
     let retrieved_task = client.get_task(&task.id).await?;
