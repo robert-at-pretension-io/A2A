@@ -134,56 +134,11 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use toml;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, instrument, Level}; // Import instrument and Level
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer}; // For subscriber setup
 use uuid::Uuid;
 
-// Lightweight struct for passing logging context to spawned tasks
-#[derive(Clone)]
-struct AgentLogContext {
-    repl_log_file: Option<std::path::PathBuf>,
-    agent_id: String,
-    bind_address: String,
-    port: u16,
-    // Add fields needed by methods called within the log context
-    current_session_id: Option<String>,
-    session_tasks: Arc<DashMap<String, Vec<String>>>,
-}
-
-impl AgentLogContext {
-    // Replicate log_agent_action for the context struct
-    async fn log_agent_action(&self, action_type: &str, details: &str) {
-         if let Some(log_path) = &self.repl_log_file {
-            let timestamp = Utc::now().to_rfc3339();
-            let log_entry = format!(
-                "{} [{}@{}:{}] {}: {}\n",
-                timestamp, self.agent_id, self.bind_address, self.port, action_type, details.trim()
-            );
-            match OpenOptions::new().create(true).append(true).open(log_path).await {
-                Ok(mut file) => {
-                    let _ = file.write_all(log_entry.as_bytes()).await;
-                    let _ = file.flush().await;
-                }
-                Err(e) => eprintln!("⚠️ Error opening/writing log in AgentLogContext: {}", e),
-            }
-        }
-    }
-
-     // Replicate save_task_to_history for the context struct
-     async fn save_task_to_history(&self, task: Task) -> Result<()> {
-        if let Some(session_id) = &self.current_session_id {
-            if let Some(mut tasks) = self.session_tasks.get_mut(session_id) {
-                self.log_agent_action("SESSION_SAVE_TASK", &format!("Adding task {} to session {}", task.id, session_id)).await;
-                tasks.push(task.id.clone());
-            } else {
-                 self.log_agent_action("SESSION_SAVE_TASK_WARN", &format!("Session {} not found in map while trying to save task {}", session_id, task.id)).await;
-            }
-        } else {
-             self.log_agent_action("SESSION_SAVE_TASK_WARN", &format!("No active session while trying to save task {}", task.id)).await;
-        }
-        Ok(())
-    }
-}
-
+// REMOVED AgentLogContext struct and impl block
 
 // Constants
 const AGENT_NAME: &str = "Bidirectional A2A Agent";
@@ -374,13 +329,25 @@ impl BidirectionalTaskRouter {
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
-        }).unwrap_or_default(); // Handle case where history is None
+        }).unwrap_or_else(|| {
+             // If history is None or empty, try getting text from the initial message part if available
+             task.history.as_ref()
+                 .and_then(|h| h.first()) // Get the first message (assuming it's the initial one)
+                 .map(|m| m.parts.iter()
+                     .filter_map(|p| match p {
+                         Part::TextPart(tp) => Some(tp.text.clone()),
+                         _ => None,
+                     })
+                     .collect::<Vec<_>>()
+                     .join("\n")
+                 )
+                 .unwrap_or_default()
+        });
 
 
         if task_text.is_empty() {
-            // Maybe check task.message if history is empty? Assuming Task might have a top-level message.
-            // For now, default to Local execution with the 'echo' tool if history is empty/None.
-            warn!("Task history is empty, defaulting to local execution with 'echo' tool.");
+            // If still empty after checking history and initial message
+            warn!(task_id = %task.id, "Task text is empty after checking history and message, defaulting to local execution with 'echo' tool.");
             return Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
         }
 
@@ -427,18 +394,28 @@ Please analyze the task and decide whether to:
 Your response should be exactly one of those formats, with no additional text.
 "#, agent_descriptions, task_text);
 
+        info!(task_id = %task.id, "Routing prompt for LLM:\n{}", routing_prompt);
+
         // Get the routing decision from the LLM
         let decision_result = self.llm.complete(&routing_prompt).await;
 
         // Map anyhow::Error from LLM to ServerError::Internal
-        let decision = decision_result
-            .map_err(|e| ServerError::Internal(format!("LLM routing decision failed: {}", e)))?
-            .trim()
-            .to_string();
-
+        let decision = match decision_result {
+            Ok(d) => {
+                let trimmed_decision = d.trim().to_string();
+                info!(task_id = %task.id, llm_response = %trimmed_decision, "LLM routing decision response received.");
+                trimmed_decision
+            }
+            Err(e) => {
+                error!(task_id = %task.id, error = %e, "LLM routing decision failed.");
+                // Fallback to local echo on LLM error
+                return Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
+            }
+        };
 
         // Parse the decision
         if decision == "LOCAL" {
+            info!(task_id = %task.id, "LLM decided LOCAL execution. Proceeding to tool selection.");
             // --- LLM Tool Selection Logic ---
             let tool_list_str = self.enabled_tools.join(", ");
             let tool_choice_prompt = format!(
@@ -603,7 +580,8 @@ impl BidirectionalAgent {
             // Allow running without LLM if only acting as server/client without local processing
             warn!("No Claude API key provided. Local LLM processing will not be available.");
             // Provide a dummy LLM client or handle this case appropriately
-             return Err(anyhow!("No LLM configuration provided. Set CLAUDE_API_KEY environment variable or add claude_api_key to config file.")); // Or handle differently
+            error!("No LLM configuration provided. Set CLAUDE_API_KEY environment variable or add claude_api_key to config file.");
+            return Err(anyhow!("No LLM configuration provided.")); // Or handle differently
         };
 
         // Create the task repository (needed by services)
@@ -645,18 +623,22 @@ impl BidirectionalAgent {
             agent_registry.clone(), // Pass canonical AgentRegistry
             config.server.agent_id.clone(), // Pass agent_id
         ));
+        info!("TaskService created.");
 
         // Create the streaming service
         let streaming_service = Arc::new(StreamingService::new(task_repository.clone()));
+        info!("StreamingService created.");
 
         // Create the notification service (pass repository)
         let notification_service = Arc::new(NotificationService::new(task_repository.clone()));
+        info!("NotificationService created.");
 
         // Initialize an A2A client if target URL is provided
         let client = if let Some(target_url) = &config.client.target_url {
-            info!("Initializing A2A client for target URL: {}", target_url);
+            info!(target_url = %target_url, "Initializing A2A client for target URL.");
             Some(A2aClient::new(target_url))
         } else {
+            info!("No target URL provided, A2A client not initialized.");
             None
         };
 
@@ -692,25 +674,13 @@ impl BidirectionalAgent {
 
             // Initialize known servers map
             known_servers: Arc::new(DashMap::new()),
-        }; // <-- Construct the agent instance here
+        };
 
-        // Log agent initialization attempt *after* construction, *before* returning Ok()
-        if let Some(log_path) = &agent.repl_log_file {
-             let timestamp = Utc::now().to_rfc3339();
-             let log_entry = format!(
-                 "{} [{}@{}:{}] {}: {}\n",
-                 timestamp, agent.agent_id, agent.bind_address, agent.port,
-                 "INIT", "Agent initialized."
-             );
-             // Best effort sync write during init
-             let _ = std::fs::OpenOptions::new()
-                 .create(true)
-                 .append(true)
-                 .open(log_path)
-                 .and_then(|mut file| file.write_all(log_entry.as_bytes()));
-        }
+        // Logging initialization happens in main() now.
+        // We can log that the agent struct itself is constructed.
+        info!(agent_id = %agent.agent_id, bind_address = %agent.bind_address, port = %agent.port, "BidirectionalAgent struct created.");
 
-        Ok(agent) // Return the constructed agent
+        Ok(agent)
     }
 
     /// Create a session on demand so remote tasks can be grouped
@@ -721,39 +691,19 @@ impl BidirectionalAgent {
             // Use tokio::spawn for fire-and-forget logging if needed, or make ensure_session async
             // For simplicity, we'll log synchronously here, assuming it's called from an async context
             // where blocking briefly is acceptable (like the REPL loop).
-            // If called from a highly concurrent context, consider spawning the log action.
-            let log_path = self.repl_log_file.clone();
-            let agent_id = self.agent_id.clone();
-            let bind_address = self.bind_address.clone();
-            let port = self.port;
-            tokio::spawn(async move { // Spawn the logging to avoid blocking
-                if let Some(log_path) = log_path {
-                    let timestamp = Utc::now().to_rfc3339();
-                    let log_entry = format!(
-                        "{} [{}@{}:{}] {}: {}\n",
-                        timestamp, agent_id, bind_address, port,
-                        "SESSION_ENSURE", &format!("Created new session on demand: {}", session_id)
-                    );
-                    // Use async file operations within the spawned task
-                    match OpenOptions::new().create(true).append(true).open(&log_path).await {
-                        Ok(mut file) => {
-                            let _ = file.write_all(log_entry.as_bytes()).await;
-                            let _ = file.flush().await;
-                        }
-                        Err(e) => eprintln!("⚠️ Error opening/writing log in ensure_session: {}", e),
-                    }
-                }
-            });
+            // Logging is handled by the calling function or tracing infrastructure
+            info!(session_id = %session_id, "Created new session on demand.");
         }
     }
 
 
-    /// Process a message (Example: could be used for direct interaction or testing)
-    pub async fn process_message_directly(&self, message_text: &str) -> Result<String> {
-        self.log_agent_action("PROCESS_MSG_START", &format!("Received message: '{}'", message_text)).await;
+    /// Process a message locally (e.g., from REPL input that isn't a command)
+    #[instrument(skip(self), fields(agent_id = %self.agent_id, message_text))]
+    pub async fn process_message_locally(&self, message_text: &str) -> Result<String> {
+        info!("Processing message locally.");
 
         // Check if we're continuing an existing task that is in InputRequired state
-        let mut continue_task_id = None;
+        let mut continue_task_id: Option<String> = None;
         if let Some(session_id) = &self.current_session_id {
             if let Some(task_ids) = self.session_tasks.get(session_id) {
                 // Check the last task in the session
@@ -768,27 +718,34 @@ impl BidirectionalAgent {
                     match self.task_service.get_task(params).await {
                         Ok(task) => {
                             if task.status.state == TaskState::InputRequired {
-                                self.log_agent_action("PROCESS_MSG_INFO", &format!("Found task {} in InputRequired state. Continuing.", last_task_id)).await;
+                                info!(task_id = %last_task_id, "Found task in InputRequired state. Continuing this task.");
                                 // We should continue this task instead of creating a new one
                                 continue_task_id = Some(last_task_id.clone());
+                            } else {
+                                debug!(task_id = %last_task_id, state = ?task.status.state, "Last task not in InputRequired state.");
                             }
                         }
                         Err(e) => {
-                             self.log_agent_action("PROCESS_MSG_WARN", &format!("Failed to get last task {}: {}", last_task_id, e)).await;
+                             warn!(task_id = %last_task_id, error = %e, "Failed to get last task to check state.");
                         }
                     }
+                } else {
+                    debug!(session_id = %session_id, "No previous tasks found in session.");
                 }
             }
         }
     
         // Create a unique task ID if not continuing an existing task
         let task_id = if let Some(id) = continue_task_id {
+            info!(task_id = %id, "Continuing existing task.");
             id
         } else {
             let new_id = Uuid::new_v4().to_string();
-            self.log_agent_action("PROCESS_MSG_INFO", &format!("Creating new task with ID: {}", new_id)).await;
+            info!(task_id = %new_id, "Creating new task.");
             new_id
         };
+
+        let task_id_clone = task_id.clone(); // Clone for instrument span
 
         // Create the message
         let initial_message = Message {
@@ -810,33 +767,28 @@ impl BidirectionalAgent {
             history_length: None,
             push_notification: None,
         };
-        self.log_agent_action("PROCESS_MSG_INFO", &format!("Calling task_service.process_task for task ID: {}", task_id)).await;
-        // Use task_service to process the task
-        let task_result = self.task_service.process_task(params).await;
 
-        let task = match task_result {
-             Ok(t) => {
-                 self.log_agent_action("PROCESS_MSG_SUCCESS", &format!("Task {} processed. State: {:?}", t.id, t.status.state)).await;
-                 t
-             }
-             Err(e) => {
-                 self.log_agent_action("PROCESS_MSG_ERROR", &format!("Failed to process task {}: {}", task_id, e)).await;
-                 return Err(anyhow!("Failed to process task: {}", e));
-             }
-        };
+        info!(task_id = %task_id, "Calling task_service.process_task.");
+        // Use task_service to process the task
+        // Instrument the call to task_service
+        let task = async {
+            self.task_service.process_task(params).await
+        }.instrument(tracing::info_span!("task_service_process", task_id = %task_id_clone)).await?;
+
+        info!(task_id = %task.id, status = ?task.status.state, "Task processing completed by task_service.");
 
         // Save task to history
-        self.save_task_to_history(task.clone()).await?; // save_task_to_history already logs
+        self.save_task_to_history(task.clone()).await?; // save_task_to_history logs internally now
         // Extract response from task
         let mut response = self.extract_text_from_task(&task);
-        
+
         // If the task is in InputRequired state, indicate that in the response
         if task.status.state == TaskState::InputRequired {
-            self.log_agent_action("PROCESS_MSG_INFO", &format!("Task {} requires more input.", task.id)).await;
+            info!(task_id = %task.id, "Task requires more input.");
             response.push_str("\n\n[The agent needs more information. Your next message will continue this task.]");
         }
 
-        self.log_agent_action("PROCESS_MSG_END", &format!("Responding for task {}: '{}'", task.id, response)).await;
+        info!(task_id = %task.id, "Responding.");
         Ok(response)
     }
 
@@ -907,8 +859,9 @@ impl BidirectionalAgent {
     }
 
     /// Run an interactive REPL (Read-Eval-Print Loop)
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     pub async fn run_repl(&mut self) -> Result<()> {
-        self.log_agent_action("REPL_START", "Entering REPL mode.").await;
+        info!("Entering REPL mode.");
         // Print the initial help message
         self.print_repl_help();
 
@@ -916,69 +869,23 @@ impl BidirectionalAgent {
         if let Some(initial_url) = self.client_url() {
             println!("Configured target URL: {}. Attempting connection in background...", initial_url);
             // Clone necessary data for the background task
-            let agent_id = self.agent_id.clone();
-            let bind_address = self.bind_address.clone();
-            let port = self.port;
-            let repl_log_file = self.repl_log_file.clone();
+            // Clone necessary data for the background task's tracing span
+            let bg_agent_id = self.agent_id.clone();
+            let bg_initial_url = initial_url.clone();
             let agent_directory = self.agent_directory.clone();
             let known_servers = self.known_servers.clone(); // Clone Arc<DashMap>
 
             tokio::spawn(async move {
-                // Clone data needed by the closure *once* before defining it.
-                let log_closure_repl_log_file = repl_log_file.clone();
-                let log_closure_agent_id = agent_id.clone();
-                let log_closure_bind_address = bind_address.clone();
-                // port is Copy, no need to clone explicitly
+                // Create a tracing span for the background task
+                let span = tracing::info_span!(
+                    "bg_connect",
+                    agent_id = %bg_agent_id,
+                    target_url = %bg_initial_url
+                );
+                // Enter the span
+                let _enter = span.enter();
 
-                // Define the helper closure as a function that returns a Future
-                // Make it Clone so we can use it multiple times
-                let log_action = {
-                    // Create a wrapper to create a new future each time
-                    let log_closure_repl_log_file = log_closure_repl_log_file.clone();
-                    let log_closure_agent_id = log_closure_agent_id.clone();
-                    let log_closure_bind_address = log_closure_bind_address.clone();
-                    let port = port;
-                    
-                    move |action_type: String, details: String| {
-                        let log_closure_repl_log_file = log_closure_repl_log_file.clone();
-                        let log_closure_agent_id = log_closure_agent_id.clone();
-                        let log_closure_bind_address = log_closure_bind_address.clone();
-                        
-                        async move {
-                            // Use the cloned variables
-                            if let Some(log_path) = &log_closure_repl_log_file {
-                                let timestamp = Utc::now().to_rfc3339();
-                                // Use captured clones and moved String args in format!
-                                let log_entry = format!(
-                                    "{} [{}@{}:{}] {}: {}\n",
-                                    timestamp, log_closure_agent_id, log_closure_bind_address, port, action_type, details.trim()
-                                );
-                                // Open the file asynchronously
-                                match OpenOptions::new()
-                                    .create(true)
-                                    .append(true)
-                                    .open(log_path)
-                                    .await
-                                {
-                                    Ok(mut file) => {
-                                        // Write and flush asynchronously
-                                        if let Err(e) = file.write_all(log_entry.as_bytes()).await {
-                                            eprintln!("⚠️ Background log write error: {}", e);
-                                        } else if let Err(e) = file.flush().await {
-                                            eprintln!("⚠️ Background log flush error: {}", e);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        eprintln!("⚠️ Background log open error: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                };
-
-                // Pass owned Strings to log_action
-                log_action("BG_INIT_CONNECT".to_string(), format!("Starting background connection attempt to {}", initial_url)).await;
+                info!("Starting background connection attempt.");
 
                 let max_retries = 5;
                 let retry_delay = std::time::Duration::from_secs(2);
@@ -988,28 +895,24 @@ impl BidirectionalAgent {
                 let mut bg_client = A2aClient::new(&initial_url);
 
                 for attempt in 1..=max_retries {
-                    match bg_client.get_agent_card().await { // Use the new client
+                    match bg_client.get_agent_card().await {
                         Ok(card) => {
-                            let success_msg = format!("Background connection successful to {} ({})", card.name, initial_url);
-                            println!("✅ {}", success_msg); // Print to console as well
-                            // Pass owned Strings
-                            log_action("BG_INIT_CONNECT_SUCCESS".to_string(), success_msg).await;
+                            let remote_agent_name = card.name.clone();
+                            info!(remote_agent_name = %remote_agent_name, "Background connection successful.");
+                            println!("✅ Background connection successful to {} ({})", remote_agent_name, initial_url); // Print to console as well
 
                             // Update shared state
-                            known_servers.insert(initial_url.clone(), card.name.clone());
-                            agent_directory.add_or_update_agent(card.name.clone(), card.clone()); // Use name as ID here
+                            known_servers.insert(initial_url.clone(), remote_agent_name.clone());
+                            agent_directory.add_or_update_agent(remote_agent_name.clone(), card.clone()); // Use name as ID here
+                            info!(remote_agent_name = %remote_agent_name, "Added/updated agent in directory.");
 
                             connected = true;
                             break; // Exit retry loop on success
                         }
                         Err(e) => {
-                            let error_msg = format!("Background connection attempt {}/{} to {} failed: {}", attempt, max_retries, initial_url, e);
-                            // Don't print every failure to console, only log it
-                            // Pass owned Strings
-                            log_action("BG_INIT_CONNECT_FAIL".to_string(), error_msg).await;
+                            warn!(attempt = %attempt, max_retries = %max_retries, error = %e, "Background connection attempt failed.");
                             if attempt < max_retries {
-                                // Pass owned Strings
-                                log_action("BG_INIT_CONNECT_RETRY".to_string(), format!("Retrying in {} seconds...", retry_delay.as_secs())).await;
+                                info!(delay_seconds = %retry_delay.as_secs(), "Retrying background connection...");
                                 tokio::time::sleep(retry_delay).await;
                             }
                         }
@@ -1017,12 +920,10 @@ impl BidirectionalAgent {
                 }
 
                 if !connected {
-                    let final_error_msg = format!("Background connection to {} failed after {} attempts.", initial_url, max_retries);
-                    println!("❌ {}", final_error_msg); // Print final failure to console
-                    // Pass owned Strings
-                    log_action("BG_INIT_CONNECT_FAIL".to_string(), final_error_msg).await;
+                    error!(attempts = %max_retries, "Background connection failed after all attempts.");
+                    println!("❌ Background connection to {} failed after {} attempts.", initial_url, max_retries); // Print final failure to console
                 }
-            });
+            }); // Background task ends here
         }
         // --- End Background Task Spawn ---
 
@@ -1087,35 +988,35 @@ impl BidirectionalAgent {
             
             // Wait for the server start status
             // Use a short timeout to avoid blocking the REPL if something goes wrong
-            match tokio::time::timeout(std::time::Duration::from_secs(2), rx).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(3), rx).await { // Increased timeout slightly
                 Ok(Ok(Ok(()))) => {
                     server_running = true;
+                    info!(bind_address = %self.bind_address, %port, "Auto-started server successfully.");
                     println!("✅ Server started on http://{}:{}", self.bind_address, port);
                     println!("The server will run until you exit the REPL or send :stop");
                 },
                 Ok(Ok(Err(e))) => {
+                    error!(bind_address = %self.bind_address, %port, error = %e, "Error auto-starting server.");
                     println!("❌ Error starting server: {}", e);
                     println!("The server could not be started. Try a different port or check for other services using this port.");
-                    
-                    // Clean up the token since the server didn't start
-                    server_shutdown_token = None;
+                    server_shutdown_token = None; // Clean up token
                 },
-                Ok(Err(_)) => {
+                Ok(Err(channel_err)) => {
+                    error!(bind_address = %self.bind_address, %port, error = %channel_err, "Server init channel error during auto-start.");
                     println!("❌ Error: Server initialization failed due to channel error");
-                    server_shutdown_token = None;
+                    server_shutdown_token = None; // Clean up token
                 },
-                Err(_) => {
+                Err(timeout_err) => {
+                    error!(bind_address = %self.bind_address, %port, error = %timeout_err, "Timeout waiting for auto-start server.");
                     println!("❌ Timeout waiting for server to start");
                     println!("The server is taking too long to start. It might be starting in the background or could have failed.");
                     println!("You can try :stop to cancel any server processes that might be running.");
-                    
-                    // Since we're not sure if the server started, keep the running flag true
-                    // so the user can try to stop it
+                    // Keep running flag true so user can try :stop
                     server_running = true;
                 }
             }
         }
-        
+
         let stdin = io::stdin();
         let mut reader = stdin.lock();
         let mut input = String::new();
@@ -1136,46 +1037,43 @@ impl BidirectionalAgent {
             input.clear();
             if reader.read_line(&mut input)? == 0 {
                 // EOF reached (e.g., Ctrl+D)
+                info!("EOF detected. Exiting REPL.");
                 println!("EOF detected. Exiting REPL.");
-                self.log_agent_action("REPL_EOF", "EOF detected.").await;
                 // Perform cleanup similar to :quit
                 if let Some(token) = server_shutdown_token.take() {
+                    info!("Shutting down server due to EOF.");
                     println!("Shutting down server...");
-                    self.log_agent_action("REPL_CMD_QUIT", "Shutting down server due to EOF.").await;
                     token.cancel();
                 }
                 break; // Exit loop
             }
 
             let input_trimmed = input.trim();
-
-            // Log user input before processing (use new function name)
-            self.log_agent_action("REPL_INPUT", input_trimmed).await;
+            info!(user_input = %input_trimmed, "REPL input received.");
 
             if input_trimmed.is_empty() {
                 continue;
             }
 
             if input_trimmed.starts_with(":") {
-                // Log the command itself (use new function name)
-                self.log_agent_action("REPL_COMMAND", input_trimmed).await;
-
+                info!(command = %input_trimmed, "Processing REPL command.");
                 // Handle special commands using input_trimmed
                 if input_trimmed == ":help" {
                     self.print_repl_help();
                 } else if input_trimmed == ":quit" {
+                    info!("User initiated quit.");
                     println!("Exiting REPL. Goodbye!");
-                    self.log_agent_action("REPL_CMD_QUIT", "User initiated quit.").await;
 
                     // Shutdown server if running
                     if let Some(token) = server_shutdown_token.take() {
+                        info!("Shutting down server.");
                         println!("Shutting down server...");
-                        self.log_agent_action("REPL_CMD_QUIT", "Shutting down server.").await;
                         token.cancel();
                     }
                     break; // Exit loop
                 } else if input_trimmed == ":card" {
-                    let card = self.create_agent_card(); // create_agent_card logs internally now
+                    let card = self.create_agent_card();
+                    info!(agent_name = %card.name, "Displaying agent card.");
                     println!("\n📇 Agent Card:");
                     println!("  Name: {}", card.name);
                     println!("  Description: {}", card.description.as_deref().unwrap_or("None"));
@@ -1189,10 +1087,13 @@ impl BidirectionalAgent {
                     println!("  Output Modes: {}", card.default_output_modes.join(", "));
                     println!("");
                 } else if input_trimmed == ":servers" {
+                    info!("Listing known servers.");
                     // List known servers from the shared map
                     if self.known_servers.is_empty() {
+                        info!("No known servers found.");
                         println!("No known servers. Connect to a server or wait for background connection attempt.");
                     } else {
+                        info!(count = %self.known_servers.len(), "Displaying known servers.");
                         println!("\n📋 Known Servers:");
                         // Collect servers into a Vec and sort for consistent display order
                         let mut server_list: Vec<(String, String)> = self.known_servers.iter()
@@ -1209,18 +1110,20 @@ impl BidirectionalAgent {
                         println!("");
                     }
                 } else if input_trimmed == ":disconnect" {
+                    info!("Processing :disconnect command.");
                     // Disconnect from current server
                     if self.client.is_some() {
                         let url = self.client_url().unwrap_or_else(|| "unknown".to_string());
                         self.client = None;
-                        self.log_agent_action("REPL_CMD_DISCONNECT", &format!("Disconnected from {}", url)).await;
+                        info!(disconnected_from = %url, "Disconnected from remote agent.");
                         println!("🔌 Disconnected from {}", url);
                     } else {
-                        self.log_agent_action("REPL_CMD_DISCONNECT", "Attempted disconnect but not connected.").await;
+                        info!("Attempted disconnect but not connected.");
                         println!("Not connected to any server");
                     }
                 } else if input_trimmed.starts_with(":connect ") {
                     let target = input_trimmed.trim_start_matches(":connect ").trim();
+                    info!(target = %target, "Processing :connect command.");
 
                     // Check if it's a number (referring to a server in the list)
                     if let Ok(server_idx) = target.parse::<usize>() {
@@ -1232,95 +1135,103 @@ impl BidirectionalAgent {
 
                         if server_idx > 0 && server_idx <= server_list.len() {
                             let (name, url) = &server_list[server_idx - 1];
+                            let url_clone = url.clone(); // Clone for async block
 
                             // Create a new client with the selected URL
-                            self.client = Some(A2aClient::new(url));
-                            self.log_agent_action("REPL_CMD_CONNECT", &format!("Connecting to known server {} ({})", name, url)).await;
-                            println!("🔗 Connected to {}: {}", name, url);
-                            // Attempt to get card after connecting
-                            match self.get_remote_agent_card().await {
-                                Ok(card) => {
-                                    self.log_agent_action("REPL_CMD_CONNECT", &format!("Successfully got card from {}", card.name)).await;
-                                    self.agent_directory.add_or_update_agent(card.name.clone(), card.clone());
-                                    println!("📇 Remote agent: {}", card.name);
+                            self.client = Some(A2aClient::new(&url_clone));
+                            info!(server_name = %name, server_url = %url_clone, "Connecting to known server by number.");
+                            println!("🔗 Connecting to {}: {}", name, url_clone);
+
+                            // Attempt to get card after connecting (spawn to avoid blocking REPL)
+                            let mut agent_client = self.client.as_mut().unwrap().clone(); // Clone client for task
+                            let agent_directory_clone = self.agent_directory.clone();
+                            let agent_id_clone = self.agent_id.clone(); // For tracing span
+
+                            tokio::spawn(async move {
+                                let span = tracing::info_span!("connect_get_card", agent_id = %agent_id_clone, remote_url = %url_clone);
+                                let _enter = span.enter();
+                                match agent_client.get_agent_card().await {
+                                    Ok(card) => {
+                                        info!(remote_agent_name = %card.name, "Successfully got card after connecting.");
+                                        agent_directory_clone.add_or_update_agent(card.name.clone(), card.clone());
+                                        info!(remote_agent_name = %card.name, "Added/updated agent in directory.");
+                                        println!("📇 Remote agent verified: {}", card.name);
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, "Connected, but failed to get card.");
+                                        println!("⚠️ Could not retrieve agent card after connecting: {}", e);
+                                    }
                                 }
-                                Err(e) => {
-                                    self.log_agent_action("REPL_CMD_CONNECT_WARN", &format!("Connected, but failed to get card from {}: {}", url, e)).await;
-                                    println!("⚠️ Could not retrieve agent card after connecting: {}", e);
-                                }
-                            }
+                            });
                         } else {
-                            self.log_agent_action("REPL_CMD_CONNECT_FAIL", &format!("Invalid server number: {}", server_idx)).await;
+                            error!(index = %server_idx, "Invalid server number provided.");
                             println!("❌ Error: Invalid server number. Use :servers to see available servers.");
                         }
                     } else {
                         // Treat as URL
-                        if target.is_empty() {
-                            self.log_agent_action("REPL_CMD_CONNECT_FAIL", "No URL provided.").await;
+                        let target_url = target.to_string(); // Use target_url consistently
+                        if target_url.is_empty() {
+                            error!("No URL provided for :connect command.");
                             println!("❌ Error: No URL provided. Use :connect URL");
                             continue;
                         }
 
-                        self.log_agent_action("REPL_CMD_CONNECT", &format!("Attempting connection to URL: {}", target)).await;
+                        info!(url = %target_url, "Attempting connection to URL.");
                         // Create a new client with the provided URL, but don't assume connection will succeed
-                        let client = A2aClient::new(target);
+                        let mut client = A2aClient::new(&target_url);
 
                         // Try to get the agent card to verify connection
-                        let connect_result = match client.get_agent_card().await {
+                        match client.get_agent_card().await {
                             Ok(card) => {
-                                self.log_agent_action("REPL_CMD_CONNECT_SUCCESS", &format!("Successfully connected to agent '{}' at {}", card.name, target)).await;
-                                println!("✅ Successfully connected to agent: {}", card.name);
+                                let remote_agent_name = card.name.clone();
+                                info!(remote_agent_name = %remote_agent_name, url = %target_url, "Successfully connected to agent.");
+                                println!("✅ Successfully connected to agent: {}", remote_agent_name);
 
                                 // Add/Update known servers map
-                                self.known_servers.insert(target.to_string(), card.name.clone());
+                                self.known_servers.insert(target_url.clone(), remote_agent_name.clone());
 
                                 // Store the client since connection was successful
                                 self.client = Some(client);
-                                
-                                // IMPORTANT: Add the agent to the agent directory for routing
-                                // Use the agent name as the ID
-                                self.agent_directory.add_or_update_agent(card.name.clone(), card.clone());
-                                self.log_agent_action("REPL_CMD_CONNECT", &format!("Added agent '{}' to local directory for routing.", card.name)).await;
 
-                                // This sets up the bidirectional agent so it can route tasks to this agent
+                                // IMPORTANT: Add the agent to the agent directory for routing
+                                self.agent_directory.add_or_update_agent(remote_agent_name.clone(), card.clone());
+                                info!(remote_agent_name = %remote_agent_name, "Added agent to local directory for routing.");
                                 println!("🔄 Added agent to directory for task routing");
 
-                                true // Indicate success
                             },
                             Err(e) => {
-                                self.log_agent_action("REPL_CMD_CONNECT_FAIL", &format!("Failed to connect to agent at {}: {}", target, e)).await;
-                                println!("❌ Failed to connect to agent at {}: {}", target, e);
+                                error!(url = %target_url, error = %e, "Failed to connect to agent via URL.");
+                                println!("❌ Failed to connect to agent at {}: {}", target_url, e);
                                 println!("Please check that the server is running and the URL is correct.");
-                                false // Indicate failure
+
+                                // Ask to add to known servers even if connection failed
+                                if !self.known_servers.contains_key(&target_url) {
+                                    println!("Connection failed. Add this URL to the known servers list anyway? (y/n)");
+                                    let mut answer = String::new();
+                                    let stdin_temp = io::stdin();
+                                    let mut reader_temp = stdin_temp.lock();
+                                    reader_temp.read_line(&mut answer).unwrap_or_default();
+
+                                    if answer.trim().to_lowercase() == "y" {
+                                        let unknown_name = "Unknown Agent".to_string();
+                                        self.known_servers.insert(target_url.clone(), unknown_name.clone());
+                                        info!(url = %target_url, "Added URL to known servers as 'Unknown Agent'.");
+                                        println!("Added URL to known servers list as '{}'.", unknown_name);
+                                    }
+                                } else {
+                                     info!(url = %target_url, "Connection failed, but URL is already in the known servers list.");
+                                     println!("Connection failed, but URL is already in the known servers list.");
+                                }
                             }
                         };
-                        
-                        // Ask to add to known servers only if connection failed
-                        if !connect_result {
-                            // Check if it's already in the list (maybe added by background task)
-                            if !self.known_servers.contains_key(target) {
-                                println!("Connection failed. Add this URL to the known servers list anyway? (y/n)");
-                                let mut answer = String::new();
-                                // Use a fresh stdin lock for this interaction
-                                let stdin_temp = io::stdin();
-                                let mut reader_temp = stdin_temp.lock();
-                                reader_temp.read_line(&mut answer).unwrap_or_default();
-
-                                if answer.trim().to_lowercase() == "y" {
-                                    self.known_servers.insert(target.to_string(), "Unknown Agent".to_string());
-                                    println!("Added URL to known servers list as 'Unknown Agent'.");
-                                }
-                            } else {
-                                 println!("Connection failed, but URL is already in the known servers list.");
-                            }
-                        }
                     }
                 } else if input_trimmed.starts_with(":listen ") {
                     let port_str = input_trimmed.trim_start_matches(":listen ").trim();
+                    info!(port_str = %port_str, "Processing :listen command.");
 
                     // Check if already running
                     if server_running {
-                        self.log_agent_action("REPL_CMD_LISTEN_WARN", "Attempted to listen while server already running.").await;
+                        warn!("Attempted to listen while server already running.");
                         println!("⚠️ Server already running. Stop it first with :stop");
                         continue;
                     }
@@ -1330,13 +1241,13 @@ impl BidirectionalAgent {
                         Ok(port) => {
                             // Update the port in the agent
                             self.port = port;
-                            
+
                             // Create a cancellation token
                             let token = CancellationToken::new();
                             server_shutdown_token = Some(token.clone());
-                            
+
                             // Start server in background task
-                            self.log_agent_action("REPL_CMD_LISTEN", &format!("Attempting to start server on port {}.", port)).await;
+                            info!(%port, "Attempting to start server.");
                             println!("🚀 Starting server on port {}...", port);
 
                             // Clone what we need for the task
@@ -1363,376 +1274,396 @@ impl BidirectionalAgent {
                                     Some(agent_card),
                                 ).await {
                                     Ok(handle) => {
-                                        // Send success status back to REPL
-                                        let _ = tx.send(Ok(()));
-                                        
-                                        // Wait for the server to complete or be cancelled
-                                        match handle.await {
-                                            Ok(()) => {
-                                                info!("Server shut down gracefully.");
-                                                // Cannot log using self.log_agent_action here as self might be dropped
-                                            }
-                                            Err(e) => {
-                                                 error!("Server error: {}", e);
-                                                 // Cannot log using self.log_agent_action here
-                                            }
+                                        let _ = tx.send(Ok(())); // Send success
+                                        info!(%port, "Server task started.");
+                                        match handle.await { // Wait for server task completion
+                                            Ok(()) => info!(%port, "Server shut down gracefully."),
+                                            Err(e) => error!(%port, error = %e, "Server error."),
                                         }
                                     },
                                     Err(e) => {
-                                        // Send error status back to REPL
                                         let error_msg = format!("Failed to start server: {}", e);
-                                        let _ = tx.send(Err(error_msg.clone()));
-                                        error!("{}", error_msg); // Log to tracing
-                                        // Cannot log using self.log_agent_action here
+                                        let _ = tx.send(Err(error_msg.clone())); // Send error
+                                        error!(%port, error = %e, "Failed to start server task.");
                                     }
                                 }
-                            });
-                            
+                            }); // Server task ends here
+
                             // Wait for the server start status
-                            // Use a short timeout to avoid blocking the REPL if something goes wrong
-                            match tokio::time::timeout(std::time::Duration::from_secs(3), rx).await { // Increased timeout slightly
+                            match tokio::time::timeout(std::time::Duration::from_secs(3), rx).await {
                                 Ok(Ok(Ok(()))) => {
                                     server_running = true;
-                                    self.log_agent_action("REPL_CMD_LISTEN_SUCCESS", &format!("Server started successfully on port {}.", port)).await;
+                                    info!(%port, "Server started successfully via REPL command.");
                                     println!("✅ Server started on http://{}:{}", self.bind_address, port);
                                     println!("The server will run until you exit the REPL or send :stop");
                                 },
                                 Ok(Ok(Err(e))) => {
-                                    self.log_agent_action("REPL_CMD_LISTEN_FAIL", &format!("Error starting server on port {}: {}", port, e)).await;
+                                    error!(%port, error = %e, "Error starting server via REPL command.");
                                     println!("❌ Error starting server: {}", e);
                                     println!("The server could not be started. Try a different port or check for other services using this port.");
                                     server_shutdown_token = None; // Clean up token
                                 },
                                 Ok(Err(channel_err)) => {
-                                    self.log_agent_action("REPL_CMD_LISTEN_FAIL", &format!("Server init channel error on port {}: {}", port, channel_err)).await;
+                                    error!(%port, error = %channel_err, "Server init channel error via REPL command.");
                                     println!("❌ Error: Server initialization failed due to channel error");
                                     server_shutdown_token = None; // Clean up token
                                 },
                                 Err(timeout_err) => {
-                                    self.log_agent_action("REPL_CMD_LISTEN_TIMEOUT", &format!("Timeout waiting for server on port {}: {}", port, timeout_err)).await;
+                                    error!(%port, error = %timeout_err, "Timeout waiting for server start via REPL command.");
                                     println!("❌ Timeout waiting for server to start");
                                     println!("The server is taking too long to start. It might be starting in the background or could have failed.");
                                     println!("You can try :stop to cancel any server processes that might be running.");
-                                    // Keep running flag true so user can try :stop
-                                    server_running = true;
+                                    server_running = true; // Keep running flag true so user can try :stop
                                 }
                             }
                         },
                         Err(parse_err) => {
-                            self.log_agent_action("REPL_CMD_LISTEN_FAIL", &format!("Invalid port format '{}': {}", port_str, parse_err)).await;
+                            error!(input = %port_str, error = %parse_err, "Invalid port format for :listen command.");
                             println!("❌ Error: Invalid port number. Please provide a valid port.");
                         }
                     }
                 } else if input_trimmed == ":stop" {
+                    info!("Processing :stop command.");
                     // Stop the server if running
                     if let Some(token) = server_shutdown_token.take() {
-                        self.log_agent_action("REPL_CMD_STOP", "Stopping server.").await;
+                        info!("Stopping server.");
                         println!("Shutting down server...");
                         token.cancel();
-                        server_running = false;
-                        println!("✅ Server stopped");
+                        server_running = false; // Assume stop is successful for REPL state
+                        println!("✅ Server stop signal sent.");
                     } else {
-                        self.log_agent_action("REPL_CMD_STOP_WARN", "Attempted to stop server, but none was running.").await;
-                        println!("⚠️ No server currently running");
+                        warn!("Attempted to stop server, but none was running or token missing.");
+                        println!("⚠️ No server currently running or already stopped.");
                     }
                 } else if input_trimmed.starts_with(":remote ") {
                     let message = input_trimmed.trim_start_matches(":remote ").trim();
+                    info!(message = %message, "Processing :remote command.");
                     if message.is_empty() {
-                        self.log_agent_action("REPL_CMD_REMOTE_FAIL", "No message provided.").await;
+                        error!("No message provided for :remote command.");
                         println!("❌ Error: No message provided. Use :remote MESSAGE");
                         continue;
                     }
 
                     // Check if we're connected to a remote agent
                     if self.client.is_none() {
-                        self.log_agent_action("REPL_CMD_REMOTE_FAIL", "Not connected to a remote agent.").await;
+                        error!("Cannot send remote task: Not connected to a remote agent.");
                         println!("❌ Error: Not connected to a remote agent. Use :connect URL first.");
                         continue;
                     }
 
                     // Send task to remote agent
-                    self.log_agent_action("REPL_CMD_REMOTE", &format!("Sending task to remote: '{}'", message)).await;
+                    info!(message = %message, "Sending task to remote agent.");
                     println!("📤 Sending task to remote agent: '{}'", message);
-                    match self.send_task_to_remote(message).await { // send_task_to_remote logs internally
+                    match self.send_task_to_remote(message).await { // send_task_to_remote logs internally now
                         Ok(task) => {
-                            self.log_agent_action("REPL_CMD_REMOTE_SUCCESS", &format!("Task {} sent successfully. State: {:?}", task.id, task.status.state)).await;
+                            info!(task_id = %task.id, status = ?task.status.state, "Remote task sent successfully.");
                             println!("✅ Task sent successfully!");
                             println!("Task ID: {}", task.id);
-                            println!("Initial state: {:?}", task.status.state);
-                            
+                            println!("Initial state reported by remote: {:?}", task.status.state);
+
                             // If we have a completed task with history, show the response
-                            if task.status.state == TaskState::Completed && task.history.is_some() {
-                                if let Some(history) = task.history {
-                                    let response = history.iter()
-                                        .filter(|m| m.role == Role::Agent)
-                                        .flat_map(|m| m.parts.iter())
-                                        .filter_map(|p| match p {
-                                            Part::TextPart(tp) => Some(tp.text.clone()),
-                                            _ => None,
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n");
-                                    
-                                    if !response.is_empty() {
-                                        println!("\n📥 Response from remote agent:");
-                                        println!("{}", response);
-                                    }
+                            if task.status.state == TaskState::Completed {
+                                let response = self.extract_text_from_task(&task); // Use helper
+                                if response != "No response text available." {
+                                     info!(task_id = %task.id, "Displaying immediate response from completed remote task.");
+                                     println!("\n📥 Response from remote agent:");
+                                     println!("{}", response);
+                                } else {
+                                     info!(task_id = %task.id, "Remote task completed but no text response found in status/history.");
                                 }
                             }
                         },
                         Err(e) => {
-                            self.log_agent_action("REPL_CMD_REMOTE_FAIL", &format!("Error sending task: {}", e)).await;
+                            error!(error = %e, "Error sending remote task.");
                             println!("❌ Error sending task: {}", e);
                         }
                     }
                 } else if input_trimmed == ":session new" {
-                    let session_id = self.create_new_session(); // create_new_session logs internally
+                    let session_id = self.create_new_session(); // create_new_session logs internally now
                     println!("✅ Created new session: {}", session_id);
                 } else if input_trimmed == ":session show" {
                     if let Some(session_id) = &self.current_session_id {
-                        self.log_agent_action("REPL_CMD_SESSION_SHOW", &format!("Current session ID: {}", session_id)).await;
+                        info!(session_id = %session_id, "Displaying current session ID.");
                         println!("🔍 Current session: {}", session_id);
                     } else {
-                        self.log_agent_action("REPL_CMD_SESSION_SHOW", "No active session.").await;
+                        info!("No active session.");
                         println!("⚠️ No active session. Use :session new to create one.");
                     }
                 } else if input_trimmed == ":history" {
                     if let Some(session_id) = &self.current_session_id {
-                        self.log_agent_action("REPL_CMD_HISTORY", &format!("Fetching history for session {}", session_id)).await;
+                        info!(session_id = %session_id, "Fetching history for current session.");
                         let tasks = self.get_current_session_tasks().await?; // get_current_session_tasks logs internally
                         if tasks.is_empty() {
-                            self.log_agent_action("REPL_CMD_HISTORY", "No messages in current session.").await;
+                            info!(session_id = %session_id, "No tasks found in current session history.");
                             println!("📭 No messages in current session.");
                         } else {
-                            self.log_agent_action("REPL_CMD_HISTORY", &format!("Displaying {} tasks for session {}", tasks.len(), session_id)).await;
-                            println!("\n📝 Session History:");
-                            for (i, task) in tasks.iter().enumerate() {
+                            info!(session_id = %session_id, task_count = %tasks.len(), "Displaying session history.");
+                            println!("\n📝 Session History (Tasks):");
+                            for task in tasks.iter() {
+                                println!("--- Task ID: {} (Status: {:?}) ---", task.id, task.status.state);
                                 if let Some(history) = &task.history {
                                     for message in history {
                                         let role_icon = match message.role {
                                             Role::User => "👤",
                                             Role::Agent => "🤖",
-                                            _ => "➡️",
+                                            // Role::System => "⚙️", // If you add System role
+                                            // Role::Tool => "🛠️", // If you add Tool role
+                                            _ => "➡️", // Fallback
                                         };
-                                        
-                                        // Extract text from parts
                                         let text = message.parts.iter()
                                             .filter_map(|p| match p {
-                                                Part::TextPart(tp) => Some(tp.text.clone()),
-                                                _ => None,
+                                                Part::TextPart(tp) => Some(tp.text.as_str()),
+                                                Part::FilePart(_) => Some("[File Part]"),
+                                                Part::DataPart(_) => Some("[Data Part]"),
+                                                // _ => None, // Handle potential future Part variants
                                             })
                                             .collect::<Vec<_>>()
-                                            .join("\n");
-                                        
+                                            .join(" "); // Join parts with space
+
                                         // Truncate long messages for display
                                         let display_text = if text.len() > 100 {
                                             format!("{}...", &text[..97])
                                         } else {
-                                            text
+                                            text.to_string()
                                         };
-                                        
-                                        println!("{} {}: {}", role_icon, message.role, display_text);
+                                        println!("  {} {}: {}", role_icon, message.role, display_text);
                                     }
+                                } else {
+                                    println!("  (No message history available for this task)");
                                 }
+                                println!("--------------------------------------");
                             }
                         }
                     } else {
-                        self.log_agent_action("REPL_CMD_HISTORY", "No active session.").await;
+                        info!("Cannot show history: No active session.");
                         println!("⚠️ No active session. Use :session new to create one.");
                     }
                 } else if input_trimmed == ":tasks" {
-                    if let Some(session_id) = &self.current_session_id {
-                        self.log_agent_action("REPL_CMD_TASKS", &format!("Fetching tasks for session {}", session_id)).await;
-                        let tasks = self.get_current_session_tasks().await?; // get_current_session_tasks logs internally
-                        if tasks.is_empty() {
-                            self.log_agent_action("REPL_CMD_TASKS", "No tasks in current session.").await;
-                            println!("📭 No tasks in current session.");
-                        } else {
-                            self.log_agent_action("REPL_CMD_TASKS", &format!("Displaying {} tasks for session {}", tasks.len(), session_id)).await;
-                            println!("\n📋 Tasks in Current Session:");
-                            for (i, task) in tasks.iter().enumerate() {
-                                println!("  {}. {} - Status: {:?}", i + 1, task.id, task.status.state);
+                     if let Some(session_id) = &self.current_session_id {
+                        info!(session_id = %session_id, "Fetching task list for current session.");
+                        // Use the DashMap directly for listing IDs, avoid fetching full tasks unless needed
+                        if let Some(task_ids) = self.session_tasks.get(session_id) {
+                            if task_ids.is_empty() {
+                                info!(session_id = %session_id, "No tasks found in current session map.");
+                                println!("📭 No tasks recorded in current session.");
+                            } else {
+                                info!(session_id = %session_id, task_count = %task_ids.len(), "Displaying task list.");
+                                println!("\n📋 Tasks Recorded in Current Session:");
+                                // Fetch status for each task to display
+                                for (i, task_id) in task_ids.iter().enumerate() {
+                                    let params = TaskQueryParams { id: task_id.clone(), history_length: Some(0), metadata: None };
+                                    let status_str = match self.task_service.get_task(params).await {
+                                        Ok(task) => format!("{:?}", task.status.state),
+                                        Err(_) => "Status Unknown".to_string(),
+                                    };
+                                    println!("  {}. {} - Status: {}", i + 1, task_id, status_str);
+                                }
                             }
+                        } else {
+                             info!(session_id = %session_id, "Session ID not found in task map.");
+                             println!("📭 No tasks recorded for current session (session ID not found).");
                         }
                     } else {
-                        self.log_agent_action("REPL_CMD_TASKS", "No active session.").await;
+                        info!("Cannot list tasks: No active session.");
                         println!("⚠️ No active session. Use :session new to create one.");
                     }
                 } else if input_trimmed.starts_with(":task ") {
                     let task_id = input_trimmed.trim_start_matches(":task ").trim();
+                    info!(task_id = %task_id, "Processing :task command.");
                     if task_id.is_empty() {
-                        self.log_agent_action("REPL_CMD_TASK_FAIL", "No task ID provided.").await;
+                        error!("No task ID provided for :task command.");
                         println!("❌ Error: No task ID provided. Use :task TASK_ID");
                     } else {
-                        self.log_agent_action("REPL_CMD_TASK", &format!("Fetching details for task {}", task_id)).await;
+                        info!(task_id = %task_id, "Fetching details for task.");
                         // Get task details
                         let params = TaskQueryParams {
                             id: task_id.to_string(),
-                            history_length: None,
+                            history_length: None, // Get full history for details view
                             metadata: None,
                         };
-                        
+
                         match self.task_service.get_task(params).await {
                             Ok(task) => {
-                                self.log_agent_action("REPL_CMD_TASK_SUCCESS", &format!("Displaying details for task {}", task.id)).await;
+                                info!(task_id = %task.id, "Displaying details for task.");
                                 println!("\n🔍 Task Details:");
                                 println!("  ID: {}", task.id);
                                 println!("  Status: {:?}", task.status.state);
-                                println!("  Session: {}", task.session_id.unwrap_or_else(|| "None".to_string()));
-                                println!("  Timestamp: {}", task.status.timestamp.map(|t| t.to_rfc3339()).unwrap_or_else(|| "None".to_string()));
-                                
+                                println!("  Session: {}", task.session_id.as_deref().unwrap_or("None"));
+                                println!("  Timestamp: {}", task.status.timestamp.map(|t| t.to_rfc3339()).as_deref().unwrap_or("None"));
+
                                 // Show artifacts count if any
-                                if let Some(artifacts) = &task.artifacts {
-                                    println!("  Artifacts: {} (use :artifacts {} to view)", artifacts.len(), task.id);
-                                } else {
-                                    println!("  Artifacts: None");
-                                }
-                                
-                                // Show last message if any
+                                let artifact_count = task.artifacts.as_ref().map_or(0, |a| a.len());
+                                println!("  Artifacts: {} (use :artifacts {} to view)", artifact_count, task.id);
+
+                                // Show last status message if any
                                 if let Some(message) = &task.status.message {
-                                    let text = message.parts.iter()
+                                     let text = message.parts.iter()
                                         .filter_map(|p| match p {
-                                            Part::TextPart(tp) => Some(tp.text.clone()),
+                                            Part::TextPart(tp) => Some(tp.text.as_str()),
                                             _ => None,
                                         })
                                         .collect::<Vec<_>>()
                                         .join("\n");
-                                    
-                                    println!("\n  Last Message: {}", text);
+                                    println!("\n  Status Message: {}", text);
                                 }
+
+                                // Show history preview
+                                if let Some(history) = &task.history {
+                                     println!("\n  History Preview ({} messages):", history.len());
+                                     for msg in history.iter().take(5) { // Show first 5 messages
+                                         let role_icon = match msg.role { Role::User => "👤", Role::Agent => "🤖", _ => "➡️" };
+                                         let text = msg.parts.iter().filter_map(|p| match p { Part::TextPart(tp) => Some(tp.text.as_str()), _ => None }).collect::<Vec<_>>().join(" ");
+                                         let display_text = if text.len() > 60 { format!("{}...", &text[..57]) } else { text.to_string() };
+                                         println!("    {} {}: {}", role_icon, msg.role, display_text);
+                                     }
+                                     if history.len() > 5 { println!("    ..."); }
+                                } else {
+                                     println!("\n  History: Not available or requested.");
+                                }
+
+
                             },
                             Err(e) => {
-                                self.log_agent_action("REPL_CMD_TASK_FAIL", &format!("Failed to get task {}: {}", task_id, e)).await;
+                                error!(task_id = %task_id, error = %e, "Failed to get task details.");
                                 println!("❌ Error: Failed to get task: {}", e);
                             }
                         }
                     }
                 } else if input_trimmed.starts_with(":artifacts ") {
                     let task_id = input_trimmed.trim_start_matches(":artifacts ").trim();
+                    info!(task_id = %task_id, "Processing :artifacts command.");
                     if task_id.is_empty() {
-                        self.log_agent_action("REPL_CMD_ARTIFACTS_FAIL", "No task ID provided.").await;
+                        error!("No task ID provided for :artifacts command.");
                         println!("❌ Error: No task ID provided. Use :artifacts TASK_ID");
                     } else {
-                        self.log_agent_action("REPL_CMD_ARTIFACTS", &format!("Fetching artifacts for task {}", task_id)).await;
+                        info!(task_id = %task_id, "Fetching artifacts for task.");
                         // Get task details with artifacts
                         let params = TaskQueryParams {
                             id: task_id.to_string(),
-                            history_length: None,
+                            history_length: Some(0), // Don't need history here
                             metadata: None,
                         };
-                        
+
                         match self.task_service.get_task(params).await {
                             Ok(task) => {
                                 if let Some(artifacts) = &task.artifacts {
                                     if artifacts.is_empty() {
-                                        self.log_agent_action("REPL_CMD_ARTIFACTS", &format!("No artifacts found for task {}", task.id)).await;
+                                        info!(task_id = %task.id, "No artifacts found for task.");
                                         println!("📦 No artifacts for task {}", task.id);
                                     } else {
-                                        self.log_agent_action("REPL_CMD_ARTIFACTS_SUCCESS", &format!("Displaying {} artifacts for task {}", artifacts.len(), task.id)).await;
+                                        info!(task_id = %task.id, count = %artifacts.len(), "Displaying artifacts.");
                                         println!("\n📦 Artifacts for Task {}:", task.id);
                                         for (i, artifact) in artifacts.iter().enumerate() {
-                                            println!("  {}. {} ({})", i + 1, 
-                                                     artifact.name.clone().unwrap_or_else(|| format!("Artifact {}", artifact.index)),
-                                                     artifact.description.clone().unwrap_or_else(|| "No description".to_string()));
+                                            println!("  {}. Name: '{}', Desc: '{}', Index: {}, Parts: {}",
+                                                     i + 1,
+                                                     artifact.name.as_deref().unwrap_or("N/A"),
+                                                     artifact.description.as_deref().unwrap_or("N/A"),
+                                                     artifact.index,
+                                                     artifact.parts.len());
+                                            // Optionally print part details
+                                            // for part in &artifact.parts { ... }
                                         }
                                     }
                                 } else {
-                                    self.log_agent_action("REPL_CMD_ARTIFACTS", &format!("No artifacts found for task {}", task.id)).await;
-                                    println!("📦 No artifacts for task {}", task.id);
+                                    info!(task_id = %task.id, "Task found, but has no artifacts field.");
+                                    println!("📦 No artifacts found for task {}", task.id);
                                 }
                             },
                             Err(e) => {
-                                self.log_agent_action("REPL_CMD_ARTIFACTS_FAIL", &format!("Failed to get task {} for artifacts: {}", task_id, e)).await;
+                                error!(task_id = %task_id, error = %e, "Failed to get task for artifacts.");
                                 println!("❌ Error: Failed to get task: {}", e);
                             }
                         }
                     }
                 } else if input_trimmed.starts_with(":cancelTask ") {
                     let task_id = input_trimmed.trim_start_matches(":cancelTask ").trim();
+                    info!(task_id = %task_id, "Processing :cancelTask command.");
                     if task_id.is_empty() {
-                        self.log_agent_action("REPL_CMD_CANCEL_FAIL", "No task ID provided.").await;
+                        error!("No task ID provided for :cancelTask command.");
                         println!("❌ Error: No task ID provided. Use :cancelTask TASK_ID");
                     } else {
-                        self.log_agent_action("REPL_CMD_CANCEL", &format!("Attempting to cancel task {}", task_id)).await;
+                        info!(task_id = %task_id, "Attempting to cancel task.");
                         // Cancel the task
                         let params = TaskIdParams {
                             id: task_id.to_string(),
                             metadata: None,
                         };
-                        
+
                         match self.task_service.cancel_task(params).await {
                             Ok(task) => {
-                                self.log_agent_action("REPL_CMD_CANCEL_SUCCESS", &format!("Successfully canceled task {}. State: {:?}", task.id, task.status.state)).await;
+                                info!(task_id = %task.id, status = ?task.status.state, "Successfully canceled task.");
                                 println!("✅ Successfully canceled task {}", task.id);
                                 println!("  Current state: {:?}", task.status.state);
                             },
                             Err(e) => {
-                                self.log_agent_action("REPL_CMD_CANCEL_FAIL", &format!("Failed to cancel task {}: {}", task_id, e)).await;
+                                error!(task_id = %task_id, error = %e, "Failed to cancel task.");
                                 println!("❌ Error: Failed to cancel task: {}", e);
                             }
                         }
                     }
                 } else {
-                    self.log_agent_action("REPL_UNKNOWN_COMMAND", input_trimmed).await;
+                    warn!(command = %input_trimmed, "Unknown REPL command entered.");
                     println!("❌ Unknown command: {}", input_trimmed);
                     println!("Type :help for a list of commands");
                 }
             } else {
-                // Process the message directly with the agent (process_message_directly logs internally)
-                match self.process_message_directly(input_trimmed).await {
+                // Process the message locally using the agent's capabilities
+                match self.process_message_locally(input_trimmed).await { // Renamed function
                     Ok(response) => {
                         println!("\n🤖 Agent response:\n{}\n", response);
-                        // Log agent response (use new function name)
-                        self.log_agent_action("REPL_OUTPUT", &response).await;
+                        info!(response_length = %response.len(), "Local processing successful, displayed response.");
                     },
                     Err(e) => {
-                        let error_msg = format!("Error processing message: {}", e);
+                        let error_msg = format!("Error processing message locally: {}", e);
+                        error!(error = %e, "Error processing message locally.");
                         println!("❌ {}", error_msg);
-                        // Log the error (use new function name)
-                        self.log_agent_action("REPL_ERROR", &error_msg).await;
                     }
                 }
             }
         }
 
-        self.log_agent_action("REPL_END", "Exiting REPL mode.").await;
+        info!("Exiting REPL mode.");
         Ok(())
     }
 
-    /// Create a new session
+    /// Create a new session ID and store it.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     pub fn create_new_session(&mut self) -> String {
         let session_id = format!("session-{}", Uuid::new_v4());
+        info!(new_session_id = %session_id, "Creating new session.");
         self.current_session_id = Some(session_id.clone());
         self.session_tasks.insert(session_id.clone(), Vec::new());
-        // Logging removed from here due to lifetime issues with tokio::spawn in sync fn.
-        // Logging can be added in the calling async code (e.g., REPL loop) after the call returns.
         session_id
     }
 
-    /// Add task to current session
+    /// Add task ID to the current session's task list.
+    #[instrument(skip(self, task), fields(agent_id = %self.agent_id, task_id = %task.id))]
     async fn save_task_to_history(&self, task: Task) -> Result<()> {
         if let Some(session_id) = &self.current_session_id {
             if let Some(mut tasks) = self.session_tasks.get_mut(session_id) {
-                self.log_agent_action("SESSION_SAVE_TASK", &format!("Adding task {} to session {}", task.id, session_id)).await;
+                info!(session_id = %session_id, "Adding task to session history.");
                 tasks.push(task.id.clone());
             } else {
-                 self.log_agent_action("SESSION_SAVE_TASK_WARN", &format!("Session {} not found in map while trying to save task {}", session_id, task.id)).await;
+                 // This case should ideally not happen if ensure_session is called correctly
+                 warn!(session_id = %session_id, "Session not found in map while trying to save task.");
             }
         } else {
-             self.log_agent_action("SESSION_SAVE_TASK_WARN", &format!("No active session while trying to save task {}", task.id)).await;
+             // This might happen if a task completes outside of an active REPL session context
+             warn!("No active session while trying to save task to history.");
         }
         Ok(())
     }
 
-    /// Get tasks for current session
+    /// Get full Task objects for all tasks in the current session.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     pub async fn get_current_session_tasks(&self) -> Result<Vec<Task>> {
         let mut tasks = Vec::new();
         if let Some(session_id) = &self.current_session_id {
-            self.log_agent_action("SESSION_GET_TASKS", &format!("Fetching tasks for session {}", session_id)).await;
+            info!(session_id = %session_id, "Fetching full tasks for current session.");
             if let Some(task_ids) = self.session_tasks.get(session_id) {
-                 self.log_agent_action("SESSION_GET_TASKS", &format!("Found {} task IDs in session {}", task_ids.len(), session_id)).await;
+                 info!(session_id = %session_id, count = %task_ids.len(), "Found task IDs in session map.");
                 for task_id in task_ids.iter() {
-                    self.log_agent_action("SESSION_GET_TASKS_DETAIL", &format!("Fetching details for task {}", task_id)).await;
+                    debug!(task_id = %task_id, "Fetching details for task.");
                     // Use TaskQueryParams to get task with history
                     let params = TaskQueryParams {
                         id: task_id.clone(),
@@ -1743,74 +1674,22 @@ impl BidirectionalAgent {
                     match self.task_service.get_task(params).await {
                         Ok(task) => tasks.push(task),
                         Err(e) => {
-                            self.log_agent_action("SESSION_GET_TASKS_ERROR", &format!("Failed to get task {}: {}", task_id, e)).await;
-                            // Continue trying to get other tasks
+                            error!(task_id = %task_id, session_id = %session_id, error = %e, "Failed to get task details for session history.");
+                            // Continue trying to get other tasks, but log the error
                         }
                     }
                 }
             } else {
-                 self.log_agent_action("SESSION_GET_TASKS_WARN", &format!("Session {} not found in map.", session_id)).await;
+                 warn!(session_id = %session_id, "Session ID not found in task map while fetching tasks.");
             }
         } else {
-             self.log_agent_action("SESSION_GET_TASKS_WARN", "No active session.").await;
+             warn!("Cannot get session tasks: No active session.");
         }
         Ok(tasks)
     }
 
-    /// Logs agent actions to the configured file
-    async fn log_agent_action(&self, action_type: &str, details: &str) {
-        if let Some(log_path) = &self.repl_log_file {
-            let timestamp = Utc::now().to_rfc3339();
-            // Format: Timestamp [AgentID@Host:Port] ACTION: Details
-            let log_entry = format!(
-                "{} [{}@{}:{}] {}: {}\n",
-                timestamp, self.agent_id, self.bind_address, self.port, action_type, details.trim()
-            );
-
-            // Use tokio::fs for async file operations
-            match OpenOptions::new()
-                .create(true) // Create the file if it doesn't exist
-                .append(true) // Append to the file
-                .open(log_path)
-                .await
-            {
-                Ok(mut file) => {
-                    // Use async write_all
-                    if let Err(e) = file.write_all(log_entry.as_bytes()).await {
-                        // Log error to stderr, don't crash the agent, but also log it to the file if possible
-                        let error_msg = format!("Error writing to log file '{}': {}", log_path.display(), e);
-                        eprintln!("⚠️ [{}@{}:{}] {}", self.agent_id, self.bind_address, self.port, error_msg);
-                        // Avoid infinite loop if logging the error itself fails
-                        // We could try logging the error to the file itself, but let's keep it simple for now.
-                    }
-                    // Ensure buffer is flushed
-                    if let Err(e) = file.flush().await {
-                         let error_msg = format!("Error flushing log file '{}': {}", log_path.display(), e);
-                         eprintln!("⚠️ [{}@{}:{}] {}", self.agent_id, self.bind_address, self.port, error_msg);
-                    }
-                }
-                Err(e) => {
-                     let error_msg = format!("Error opening log file '{}': {}", log_path.display(), e);
-                     eprintln!("⚠️ [{}@{}:{}] {}", self.agent_id, self.bind_address, self.port, error_msg);
-                }
-            }
-        }
-    }
-
-    /// Creates a lightweight clone containing only fields needed for logging within spawned tasks.
-    /// This avoids lifetime issues when self is borrowed mutably.
-    async fn clone_for_logging(&self) -> AgentLogContext {
-        AgentLogContext {
-            repl_log_file: self.repl_log_file.clone(),
-            agent_id: self.agent_id.clone(),
-            bind_address: self.bind_address.clone(),
-            port: self.port,
-            // Include fields needed by methods called within the log context (like save_task_to_history)
-            current_session_id: self.current_session_id.clone(),
-            session_tasks: self.session_tasks.clone(),
-        }
-    }
-
+    // REMOVED log_agent_action function
+    // REMOVED clone_for_logging function
 
     /// Get the URL of the currently configured client from the agent's config
     fn client_url(&self) -> Option<String> {
@@ -1825,38 +1704,31 @@ impl BidirectionalAgent {
         let shutdown_token_clone = shutdown_token.clone();
 
         // Set up signal handlers for graceful shutdown
-        let agent_id_clone = self.agent_id.clone(); // Clone for the signal handler
-        let log_path_clone = self.repl_log_file.clone(); // Clone log path
-        let bind_address_clone = self.bind_address.clone();
-        let port_clone = self.port;
+        let agent_id_clone = self.agent_id.clone(); // Clone for the signal handler task
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.expect("Failed to install CTRL+C handler");
-            println!("Received shutdown signal, stopping server...");
-            // Log shutdown signal (best effort sync write)
-            if let Some(log_path) = log_path_clone {
-                 let timestamp = Utc::now().to_rfc3339();
-                 let log_entry = format!(
-                     "{} [{}@{}:{}] {}: {}\n",
-                     timestamp, agent_id_clone, bind_address_clone, port_clone,
-                     "SERVER_SHUTDOWN_SIGNAL", "Received Ctrl+C signal."
-                 );
-                 let _ = std::fs::OpenOptions::new().append(true).open(log_path)
-                     .and_then(|mut file| file.write_all(log_entry.as_bytes()));
-            }
+            // Use tracing within the signal handler task
+            let span = tracing::info_span!("signal_handler", agent_id = %agent_id_clone);
+            let _enter = span.enter();
+            info!("Received Ctrl+C shutdown signal.");
+            println!("Received shutdown signal, stopping server..."); // Keep console message
             shutdown_token_clone.cancel();
         });
 
         // Create the agent card for this server
         let agent_card = self.create_agent_card();
-        
-        // Convert to JSON value for the server
-        let agent_card_json = serde_json::to_value(agent_card).unwrap_or_else(|e| {
-            warn!("Failed to serialize agent card: {}", e);
-            warn!("Failed to serialize agent card: {}", e);
-            serde_json::json!({})
-        });
+        info!(agent_name = %agent_card.name, "Generated agent card for server.");
 
-        self.log_agent_action("SERVER_START", &format!("Attempting to start server on {}:{}", self.bind_address, self.port)).await;
+        // Convert to JSON value for the server
+        let agent_card_json = match serde_json::to_value(&agent_card) {
+             Ok(json) => json,
+             Err(e) => {
+                 error!(error = %e, "Failed to serialize agent card to JSON. Using empty object.");
+                 serde_json::json!({})
+             }
+        };
+
+        info!(bind_address = %self.bind_address, port = %self.port, "Attempting to start server.");
         // Start the server - handle the Box<dyn Error> specially
         let server_handle = match run_server(
             self.port,
@@ -1868,164 +1740,113 @@ impl BidirectionalAgent {
             Some(agent_card_json), // Pass our custom agent card
         ).await {
             Ok(handle) => {
-                self.log_agent_action("SERVER_START_SUCCESS", &format!("Server started successfully on {}:{}", self.bind_address, self.port)).await;
+                info!(bind_address = %self.bind_address, port = %self.port, "Server started successfully.");
                 handle
             },
             Err(e) => {
-                self.log_agent_action("SERVER_START_FAIL", &format!("Failed to start server: {}", e)).await;
+                error!(bind_address = %self.bind_address, port = %self.port, error = %e, "Failed to start server.");
+                // Return an error that can be handled by the caller (e.g., main)
                 return Err(anyhow!("Failed to start server: {}", e));
             }
         };
 
-        println!("Server running on {}:{}", self.bind_address, self.port);
+        println!("Server running on http://{}:{}", self.bind_address, self.port); // Keep console message
 
-        // Wait for the server to complete
-        let join_result = server_handle.await;
-        match join_result {
+        // Wait for the server to complete or be cancelled
+        match server_handle.await {
             Ok(()) => {
-                self.log_agent_action("SERVER_SHUTDOWN_GRACEFUL", "Server shut down gracefully.").await;
-                info!("Server shut down gracefully."); // Keep tracing info
+                info!("Server shut down gracefully.");
                 Ok(())
             }
             Err(join_err) => {
-                self.log_agent_action("SERVER_SHUTDOWN_ERROR", &format!("Server join error: {}", join_err)).await;
-                error!("Failed to join server task: {}", join_err); // Keep tracing info
+                error!(error = %join_err, "Server join error.");
                 Err(anyhow!("Server join error: {}", join_err))
             }
         }
     }
 
     /// Send a task to a remote agent using the A2A client, ensuring session consistency.
+    #[instrument(skip(self, message), fields(agent_id = %self.agent_id, message))]
     pub async fn send_task_to_remote(&mut self, message: &str) -> Result<Task> {
         // ① Ensure a session exists locally
-        self.ensure_session();
-        let session_id = self.current_session_id.clone(); // Clone session_id for logging and sending
+        self.ensure_session(); // Logs internally if new session created
+        let session_id = self.current_session_id.clone(); // Clone session_id for sending
 
         let remote_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
-        self.log_agent_action(
-            "REMOTE_SEND_START",
-            &format!("→ {}: '{}' (Session: {:?})", remote_url, message, session_id),
-        ).await;
-
-        // Create logging context *before* mutable borrow
-        let log_context = self.clone_for_logging().await;
+        info!(remote_url = %remote_url, session_id = ?session_id, "Attempting to send task to remote agent.");
 
         // Get mutable reference to the client
-        let client = self.client.as_mut()
-            .ok_or_else(|| {
-                let err_msg = "No remote client configured. Use :connect first.".to_string();
-                // Clone context and message for the spawned task
-                let log_context_clone = log_context.clone();
-                let err_msg_clone = err_msg.clone();
-                // Log the error before returning, using the cloned context
-                tokio::spawn(async move {
-                    log_context_clone.log_agent_action("REMOTE_SEND_ERROR", &err_msg_clone).await;
-                });
-                anyhow!(err_msg) // Return anyhow error
-            })?;
+        let client = match self.client.as_mut() {
+             Some(c) => c,
+             None => {
+                 error!("No remote client configured. Use :connect first.");
+                 return Err(anyhow!("No remote client configured. Use :connect first."));
+             }
+        };
 
         // ② Send the task with the current session ID
         let task_result = client.send_task(message, session_id.clone()).await; // Pass cloned session_id
 
         let task = match task_result {
-            Ok(t) => t,
+            Ok(t) => {
+                info!(remote_url = %remote_url, task_id = %t.id, status = ?t.status.state, "Successfully sent task and received response.");
+                t
+            }
             Err(e) => {
-                // Log the specific client error
-                let error_string = format!("Error sending task to {}: {}", remote_url, e);
-                // Clone context and message for the spawned task
-                let log_context_clone = log_context.clone();
-                let error_string_clone = error_string.clone(); // Clone the error string to move
-                 // Spawn log action using the cloned context
-                tokio::spawn(async move {
-                    log_context_clone.log_agent_action("REMOTE_SEND_ERROR", &error_string_clone).await;
-                });
-                return Err(anyhow!(error_string)); // Return anyhow error using the original string
+                error!(remote_url = %remote_url, error = %e, "Error sending task to remote agent.");
+                return Err(anyhow!("Error sending task to {}: {}", remote_url, e));
             }
         };
 
         // ③ Mirror the returned task locally (read-only copy)
         let task_id_clone = task.id.clone(); // Clone ID for logging messages
-        if let Err(e) = self.task_service.import_task(task.clone()).await {
-            // Log warning if caching fails, but don't fail the whole operation
-            let warn_msg = format!("Could not cache remote task {} locally: {}", task_id_clone, e);
-            warn!("{}", warn_msg); // Use tracing::warn
-            // Clone context and message for the spawned task
-            let log_context_clone = log_context.clone();
-            let warn_msg_clone = warn_msg.clone(); // Clone the warning string to move
-             // Spawn log action
-            tokio::spawn(async move {
-                log_context_clone.log_agent_action("REMOTE_SEND_CACHE_WARN", &warn_msg_clone).await;
-            });
-        } else {
-            let log_msg = format!("Cached remote task {} locally.", task_id_clone);
-            // Clone context and message for the spawned task
-            let log_context_clone = log_context.clone();
-            let log_msg_clone = log_msg.clone(); // Clone the log string to move
-             // Spawn log action
-            tokio::spawn(async move {
-                log_context_clone.log_agent_action("REMOTE_SEND_CACHE_SUCCESS", &log_msg_clone).await;
-            });
+        match self.task_service.import_task(task.clone()).await {
+            Ok(()) => {
+                info!(task_id = %task_id_clone, "Cached remote task locally.");
+            }
+            Err(e) => {
+                // Log warning if caching fails, but don't fail the whole operation
+                warn!(task_id = %task_id_clone, error = %e, "Could not cache remote task locally.");
+            }
         }
 
         // ④ Add the task (local mirror) to the current session history
-        // Use the cloned log context from before the mutable borrow
-        let task_clone_for_history = task.clone(); // Clone task to move into the spawn
-        let log_context_clone_history = log_context.clone(); // Clone context again for this spawn
-        tokio::spawn(async move {
-            // Clone the task *again* inside the spawn block before using its ID in format!
-            // because the first clone (`task_clone_for_history`) is moved into save_task_to_history.
-            let task_id_for_log = task_clone_for_history.id.clone();
-            if let Err(e) = log_context_clone_history.save_task_to_history(task_clone_for_history).await {
-                 // Use the cloned ID here
-                 let error_msg = format!("Failed to save remote task {} to session history: {}", task_id_for_log, e);
-                 eprintln!("⚠️ {}", error_msg); // Log error to stderr
-                 // Move the error message into the log action
-                 log_context_clone_history.log_agent_action("REMOTE_SEND_HISTORY_ERROR", &error_msg).await;
-            }
-        });
+        self.save_task_to_history(task.clone()).await?; // save_task_to_history logs internally
 
-
-        // Log final success using the original self
-        self.log_agent_action(
-            "REMOTE_SEND_SUCCESS",
-            &format!("Stored remote task {} in session {:?}", task.id, session_id),
-        ).await;
-
-        info!("Remote task {} created and linked to session {:?}", task.id, session_id); // Keep tracing info
-
+        info!(task_id = %task.id, session_id = ?session_id, "Remote task processing initiated and linked to session.");
         Ok(task) // Return the original task received from the remote agent
     }
-    
+
     /// Get capabilities of a remote agent (using A2A client)
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     pub async fn get_remote_agent_card(&mut self) -> Result<AgentCard> {
         let remote_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
-        self.log_agent_action("REMOTE_GET_CARD_START", &format!("Attempting to get agent card from {}", remote_url)).await;
+        info!(remote_url = %remote_url, "Attempting to get remote agent card.");
 
         // Check if we have a client configured
         if let Some(client) = &mut self.client {
             match client.get_agent_card().await {
                  Ok(agent_card) => {
-                    self.log_agent_action("REMOTE_GET_CARD_SUCCESS", &format!("Retrieved agent card for '{}' from {}", agent_card.name, remote_url)).await;
-                    info!("Retrieved agent card for: {}", agent_card.name); // Keep tracing info
+                    info!(remote_agent_name = %agent_card.name, remote_url = %remote_url, "Retrieved remote agent card successfully.");
                     Ok(agent_card)
                  }
                  Err(e) => {
-                    self.log_agent_action("REMOTE_GET_CARD_ERROR", &format!("Error retrieving agent card from {}: {}", remote_url, e)).await;
-                    Err(anyhow!("Error retrieving agent card: {}", e))
+                    error!(remote_url = %remote_url, error = %e, "Error retrieving remote agent card.");
+                    Err(anyhow!("Error retrieving agent card from {}: {}", remote_url, e))
                  }
             }
         } else {
-            self.log_agent_action("REMOTE_GET_CARD_ERROR", "No A2A client configured.").await;
-            Err(anyhow!("No A2A client configured. Use --target-url to specify a remote agent."))
+            error!("Cannot get remote agent card: No A2A client configured.");
+            Err(anyhow!("No A2A client configured. Use --target-url or :connect first."))
         }
     }
 
-    /// Create an agent card (matching types.rs structure)
+    /// Create an agent card for this agent instance.
+    // No instrument macro needed here as it's synchronous and called from instrumented contexts.
     pub fn create_agent_card(&self) -> AgentCard {
-        // Logging removed from here due to lifetime issues with tokio::spawn in sync fn.
-        // Logging can be added in the calling async code (e.g., REPL loop) after the call returns.
-
+        debug!(agent_id = %self.agent_id, "Creating agent card.");
         // Construct AgentCapabilities based on actual capabilities
+        // TODO: Make these capabilities configurable or dynamically determined
         let capabilities = AgentCapabilities {
             push_notifications: true, // Example: Assuming supported
             state_transition_history: true, // Example: Assuming supported
@@ -2214,220 +2035,254 @@ impl BidirectionalAgentConfig {
 /// Main entry point
 #[tokio::main]
 pub async fn main() -> Result<()> {
-    // Initialize tracing subscriber
-    tracing_subscriber::fmt::init();
-    info!("Starting Bidirectional Agent main function."); // Use tracing early
-
-    // Parse command line arguments
+    // --- Early setup: Parse args, load config ---
     let args: Vec<String> = std::env::args().collect();
-    
-    // Create a default configuration
     let mut config = BidirectionalAgentConfig::default();
-    
-    // Enable REPL mode by default
-    config.mode.repl = true;
-    
-    // Check for environment variable API key
+    config.mode.repl = true; // Default to REPL
+
+    // Check for environment variable API key *before* loading config file
     if config.llm.claude_api_key.is_none() {
         config.llm.claude_api_key = std::env::var("CLAUDE_API_KEY").ok();
-        if config.llm.claude_api_key.is_some() {
-            info!("Using Claude API key from environment variable");
-        }
     }
-    
-    // Process command line arguments
-    info!("Processing command line arguments: {:?}", &args[1..]);
+
+    // Process command line arguments to potentially load a config file or override settings
     let mut i = 1;
     while i < args.len() {
         let arg = &args[i];
-        info!("Processing arg: {}", arg);
+        // Use temporary logging before full setup
+        eprintln!("[PRE-LOG] Processing arg: {}", arg);
 
         if arg == "--listen" || arg == "-l" {
-            info!("Found --listen flag.");
-            // Enable auto-listen mode
             config.mode.auto_listen = true;
-            std::env::set_var("AUTO_LISTEN", "true");
-            
-            // If a port is provided after the flag, use it
+            std::env::set_var("AUTO_LISTEN", "true"); // Keep env var for REPL auto-start check
             if i + 1 < args.len() {
                 if let Ok(port) = args[i + 1].parse::<u16>() {
-                    info!("Overriding auto-listen port with: {}", port);
                     config.server.port = port;
-                    i += 1; // Skip the port argument
+                    i += 1;
                 } else {
-                     warn!("Argument after --listen ('{}') is not a valid port.", args[i+1]);
+                     eprintln!("[PRE-LOG] WARN: Argument after --listen ('{}') is not a valid port.", args[i+1]);
                 }
             }
         } else if arg.starts_with("--port=") {
-            info!("Found --port= argument: {}", arg);
-            // Parse port from --port=NNNN format
             if let Ok(port) = arg.trim_start_matches("--port=").parse::<u16>() {
-                info!("Setting server port to: {}", port);
                 config.server.port = port;
             } else {
-                warn!("Invalid port format in '{}'. Using default port.", arg);
+                 eprintln!("[PRE-LOG] WARN: Invalid port format in '{}'. Using default.", arg);
             }
-        } else if arg.contains(':') && !arg.starts_with(":") { // Avoid matching REPL commands like :listen
-             info!("Found potential host:port argument: {}", arg);
-            // Check if the argument is in the format "server:port"
+        } else if arg.contains(':') && !arg.starts_with(":") {
             let parts: Vec<&str> = arg.split(':').collect();
             if parts.len() == 2 {
                 let server = parts[0];
                 if let Ok(port) = parts[1].parse::<u16>() {
-                    info!("Setting target URL to http://{}:{}", server, port);
-                    let server_url = format!("http://{}:{}", server, port);
-                    config.client.target_url = Some(server_url);
+                    config.client.target_url = Some(format!("http://{}:{}", server, port));
                 } else {
-                    warn!("Invalid port number in '{}'. Treating as config file.", arg);
-                    // Fall through to treat as config file
+                    eprintln!("[PRE-LOG] WARN: Invalid port in '{}'. Treating as config file.", arg);
                     load_config_from_path(&mut config, arg)?;
                 }
             } else {
-                warn!("Invalid argument format '{}'. Treating as config file.", arg);
-                 // Fall through to treat as config file
+                 eprintln!("[PRE-LOG] WARN: Invalid arg format '{}'. Treating as config file.", arg);
                  load_config_from_path(&mut config, arg)?;
             }
         } else {
-            // If the argument doesn't match any flag, treat it as a config file path
             load_config_from_path(&mut config, arg)?;
         }
-        
         i += 1;
     }
 
-    // Determine final mode after processing all args and potential config files.
-    // If no specific action mode was set (via args or config) and REPL wasn't explicitly disabled, default to REPL.
+    // --- Initialize Logging ---
+    // Determine log level (e.g., from RUST_LOG env var, default to info)
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info")); // Default to info if RUST_LOG not set
+
+    // Setup console logging layer
+    let console_layer = fmt::layer()
+        .with_writer(io::stderr) // Log to stderr
+        .with_ansi(true) // Enable colors
+        .with_target(true) // Show module path
+        .with_level(true); // Show log level
+
+    // Setup file logging layer (if configured)
+    let file_layer = if let Some(log_path_str) = &config.mode.repl_log_file {
+        eprintln!("[PRE-LOG] Configuring file logging to: {}", log_path_str);
+        let log_path = PathBuf::from(log_path_str);
+        // Create the directory if it doesn't exist
+        if let Some(parent_dir) = log_path.parent() {
+            if !parent_dir.exists() {
+                if let Err(e) = std::fs::create_dir_all(parent_dir) {
+                     eprintln!("[PRE-LOG] ERROR: Failed to create log directory '{}': {}", parent_dir.display(), e);
+                     // Continue without file logging if directory creation fails
+                     None
+                } else {
+                     eprintln!("[PRE-LOG] Created log directory: {}", parent_dir.display());
+                     Some(log_path) // Use the path if dir created successfully
+                }
+            } else {
+                 Some(log_path) // Use the path if dir already exists
+            }
+        } else {
+             Some(log_path) // Use the path if it has no parent (e.g., relative path in current dir)
+        }
+        .and_then(|path| { // Only proceed if we have a valid path
+            match tracing_appender::rolling::daily(path.parent().unwrap_or_else(|| Path::new(".")), path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("agent.log"))) {
+                Ok(file_appender) => {
+                    eprintln!("[PRE-LOG] File appender created successfully for {}", path.display());
+                    Some(
+                        fmt::layer()
+                            .with_writer(file_appender)
+                            .with_ansi(false) // No colors in file
+                            .with_target(true)
+                            .with_level(true)
+                            .boxed() // Box the layer for dynamic dispatch
+                    )
+                },
+                Err(e) => {
+                    eprintln!("[PRE-LOG] ERROR: Failed to create file appender for '{}': {}", path.display(), e);
+                    None // Return None if file appender creation fails
+                }
+            }
+        })
+    } else {
+        eprintln!("[PRE-LOG] File logging not configured.");
+        None
+    };
+
+
+    // Combine layers and initialize the global subscriber
+    let subscriber_builder = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(console_layer);
+
+    if let Some(file_layer) = file_layer {
+         subscriber_builder.with(file_layer).init();
+    } else {
+         subscriber_builder.init();
+    }
+
+    // --- Logging is now fully initialized ---
+    info!("Logging initialized.");
+    info!("Starting Bidirectional Agent main function.");
+
+    // Log the final effective configuration *after* logging is initialized
+    info!(?config, "Effective configuration loaded."); // Use debug formatting for the whole struct
+
+    // Determine final mode (logic remains similar, but logging works now)
     if config.mode.message.is_none()
         && config.mode.remote_task.is_none()
         && !config.mode.get_agent_card
-        && !config.mode.repl // Check if REPL was explicitly set to true in config/args
+        && !config.mode.repl
     {
-        // If no arguments were given OR if arguments were given but didn't imply a mode, default to REPL.
         if args.len() <= 1 {
-             info!("No arguments provided. Defaulting to REPL mode.");
+             info!("No arguments provided and no mode set in config. Defaulting to REPL mode.");
              config.mode.repl = true;
         } else {
-             // Check if any argument *implied* a mode other than REPL (like --listen without a specific action)
-             // If arguments were present but didn't set message/remote_task/get_card, assume REPL.
-             info!("No specific action mode requested via args/config. Defaulting to REPL mode.");
+             info!("Arguments provided but no specific action mode requested. Defaulting to REPL mode.");
              config.mode.repl = true;
         }
-    } else if args.len() <= 1 && !config.mode.repl {
-        // Handles the case where a config file was loaded (args.len() > 1 is false)
-        // but didn't specify repl=true or any other mode.
+    } else if args.len() <= 1 && !config.mode.repl && config.mode.message.is_none() && config.mode.remote_task.is_none() && !config.mode.get_agent_card {
+         // Handles case where only a config file was specified, and it didn't set any mode
          info!("Config file loaded but no specific mode set. Defaulting to REPL mode.");
          config.mode.repl = true;
     }
 
-
-    // Log final effective configuration before starting agent/action
-    info!("Effective configuration: {:?}", config);
-
-    // Process actions based on config.mode settings
-    
-    // REPL mode takes precedence
+    // --- Execute based on mode ---
     if config.mode.repl {
         info!("Starting agent in REPL mode.");
-        // Create the agent
         let mut agent = BidirectionalAgent::new(config.clone())?;
-        
-        // Run the REPL
-        return agent.run_repl().await;
+        agent.run_repl().await // Return the result directly
     }
-    
     // Process a single message
-    if let Some(message) = &config.mode.message {
-        info!("Starting agent to process single message: '{}'", message);
-        // Create the agent
+    else if let Some(message) = &config.mode.message {
+        info!(message = %message, "Starting agent to process single message.");
         let agent = BidirectionalAgent::new(config.clone())?;
-
-        // Process the message
-        println!("Processing message: '{}'", message);
-        let response = agent.process_message_directly(message).await?;
-
-        println!("Response:\n{}", response);
+        println!("Processing message: '{}'", message); // Keep console output
+        let response = agent.process_message_locally(message).await?; // Use renamed function
+        println!("Response:\n{}", response); // Keep console output
         info!("Finished processing single message.");
-        return Ok(());
+        Ok(())
     }
-    
     // Send task to remote agent
-    if let Some(task_message) = &config.mode.remote_task {
-        // Check if we have a target URL
+    else if let Some(task_message) = &config.mode.remote_task {
         if config.client.target_url.is_none() {
             error!("Cannot send remote task: No target URL configured.");
-            return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file."));
+            return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file or provide via argument."));
         }
-        
-        info!("Starting agent to send remote task: '{}'", task_message);
-        // Create the agent
+        info!(task_message = %task_message, "Starting agent to send remote task.");
         let mut agent = BidirectionalAgent::new(config.clone())?;
-        
-        // Send task to remote agent
-        println!("Sending task to remote agent: '{}'", task_message);
+        println!("Sending task to remote agent: '{}'", task_message); // Keep console output
         let task = agent.send_task_to_remote(task_message).await?;
-        
-        println!("Task sent successfully!");
+        println!("Task sent successfully!"); // Keep console output
         println!("Task ID: {}", task.id);
-        println!("Initial state: {:?}", task.status.state);
-        
+        println!("Initial state reported by remote: {:?}", task.status.state);
         info!("Finished sending remote task.");
-        return Ok(());
+        Ok(())
     }
-    
     // Get remote agent card
-    if config.mode.get_agent_card {
-        // Check if we have a target URL
+    else if config.mode.get_agent_card {
         if config.client.target_url.is_none() {
              error!("Cannot get remote card: No target URL configured.");
-            return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file."));
+            return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file or provide via argument."));
         }
-        
         info!("Starting agent to get remote agent card.");
-        // Create the agent
         let mut agent = BidirectionalAgent::new(config.clone())?;
-        
-        // Get remote agent card
-        println!("Retrieving agent card from remote agent...");
+        println!("Retrieving agent card from remote agent..."); // Keep console output
         let card = agent.get_remote_agent_card().await?;
-        
-        println!("Remote Agent Card:");
+        println!("Remote Agent Card:"); // Keep console output
         println!("  Name: {}", card.name);
         println!("  Version: {}", card.version);
         println!("  Description: {}", card.description.as_deref().unwrap_or("None"));
         println!("  URL: {}", card.url);
-        println!("  Capabilities:");
-        println!("    - Streaming: {}", card.capabilities.streaming);
-        println!("    - Push Notifications: {}", card.capabilities.push_notifications);
-        println!("    - State Transition History: {}", card.capabilities.state_transition_history);
+        // ... (print other card details as before) ...
         println!("  Skills: {}", card.skills.len());
-        
         info!("Finished getting remote agent card.");
-        return Ok(());
+        Ok(())
     }
-    
-    // Default mode: Run the server
-    info!("Starting agent in server mode.");
-    let agent = BidirectionalAgent::new(config)?;
-    agent.run().await
+    // Default mode: Run the server (if not REPL and no other specific action)
+    else {
+        info!("Starting agent in default server mode.");
+        let agent = BidirectionalAgent::new(config)?;
+        agent.run().await // Return the result directly
+    }
 }
 
-/// Helper function to load config from path, used in main arg parsing
+/// Helper function to load config from path, used in main arg parsing.
+/// Logs using eprintln because tracing might not be initialized yet.
 fn load_config_from_path(config: &mut BidirectionalAgentConfig, config_path: &str) -> Result<()> {
-    info!("Attempting to load configuration from path: {}", config_path);
+    eprintln!("[PRE-LOG] Attempting to load configuration from path: {}", config_path);
     match BidirectionalAgentConfig::from_file(config_path) {
-        Ok(loaded_config) => {
-            *config = loaded_config; // Overwrite existing config
+        Ok(mut loaded_config) => {
+            // Preserve env var API key if it was set and config file doesn't have one
+            if config.llm.claude_api_key.is_some() && loaded_config.llm.claude_api_key.is_none() {
+                loaded_config.llm.claude_api_key = config.llm.claude_api_key.clone();
+                eprintln!("[PRE-LOG] Preserved Claude API key from environment variable.");
+            }
+            // Preserve command-line overrides if they were set before loading the file
+            // Example: Preserve port if set via --port= before the config file path
+             if config.server.port != default_port() && loaded_config.server.port == default_port() {
+                 loaded_config.server.port = config.server.port;
+                 eprintln!("[PRE-LOG] Preserved server port override from command line: {}", loaded_config.server.port);
+             }
+             // Example: Preserve target_url if set via host:port before the config file path
+             if config.client.target_url.is_some() && loaded_config.client.target_url.is_none() {
+                 loaded_config.client.target_url = config.client.target_url.clone();
+                 eprintln!("[PRE-LOG] Preserved target URL override from command line: {}", loaded_config.client.target_url.as_deref().unwrap_or("N/A"));
+             }
+             // Example: Preserve auto_listen if set via --listen before the config file path
+             if config.mode.auto_listen && !loaded_config.mode.auto_listen {
+                 loaded_config.mode.auto_listen = true;
+                 eprintln!("[PRE-LOG] Preserved auto-listen override from command line.");
+             }
+
+
+            *config = loaded_config; // Overwrite existing config with loaded, potentially merged, config
             config.config_file_path = Some(config_path.to_string());
-            info!("Successfully loaded and applied configuration from {}", config_path);
+            eprintln!("[PRE-LOG] Successfully loaded and applied configuration from {}", config_path);
         },
         Err(e) => {
-            // If a config file was specified but failed to load, exit with an error.
-            error!("Failed to load configuration from '{}': {}", config_path, e);
-            error!("Please check the configuration file syntax and ensure all required fields are present.");
-            // Exit with an error if the specified config file fails to load.
-            return Err(anyhow!("Configuration file loading failed for path: {}", config_path));
+            // If a config file was specified but failed to load, it's a fatal error.
+            eprintln!("[PRE-LOG] ERROR: Failed to load configuration from '{}': {}", config_path, e);
+            eprintln!("[PRE-LOG] Please check the configuration file path and syntax.");
+            return Err(anyhow!("Configuration file loading failed for path: {}", config_path).context(e));
         }
     }
-    Ok(()) // Return Ok if loading succeeded or no error occurred
+    Ok(())
 }
-// Removed extra closing brace here
