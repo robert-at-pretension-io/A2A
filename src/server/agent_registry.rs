@@ -104,4 +104,12 @@ impl AgentRegistry {
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect()
     }
+
+    /// Returns a list of all agent IDs and their corresponding AgentCards.
+    pub fn list_all_agents(&self) -> Vec<(String, AgentCard)> {
+        self.agents
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().card.clone()))
+            .collect()
+    }
 }
