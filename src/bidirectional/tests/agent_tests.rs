@@ -35,7 +35,9 @@ fn test_agent_card_creation() {
         let card = agent.create_agent_card();
         
         // Verify the card properties
-        assert_eq!(card.name, "Bidirectional A2A Agent");
+        // The name should match the agent_id from the config ("test-agent")
+        // because agent_name was None in the config.
+        assert_eq!(card.name, "test-agent"); 
         assert_eq!(card.version, "1.0.0");
         assert_eq!(card.url, "http://127.0.0.1:9090");
         assert!(card.description.unwrap().contains("bidirectional"));
