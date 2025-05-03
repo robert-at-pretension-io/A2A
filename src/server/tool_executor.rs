@@ -1,9 +1,11 @@
 //! Executes local tools with standard A2A protocol-compliant types and artifacts.
 
 use crate::server::error::ServerError;
+use crate::bidirectional::bidirectional_agent::LlmClient; // Import LlmClient
 use crate::types::{
     Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact
 };
+use anyhow; // Import anyhow for error handling in new tools
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -28,6 +30,9 @@ pub enum ToolError {
 
     #[error("Input/Output Error during tool execution: {0}")]
     IoError(String),
+
+    #[error("Tool execution failed due to external error: {0}")]
+    ExternalError(String), // For wrapping anyhow::Error
 }
 
 // Implement conversion from std::io::Error
@@ -36,6 +41,15 @@ impl From<std::io::Error> for ToolError {
         ToolError::IoError(e.to_string())
     }
 }
+
+// Implement conversion from anyhow::Error
+impl From<anyhow::Error> for ToolError {
+    fn from(e: anyhow::Error) -> Self {
+        // Capture the context of the anyhow error
+        ToolError::ExternalError(format!("{:?}", e))
+    }
+}
+
 
 // Implement conversion to ServerError
 impl From<ToolError> for ServerError {
@@ -47,10 +61,12 @@ impl From<ToolError> for ServerError {
                 ServerError::InvalidParameters(format!("Invalid parameters for tool '{}': {}", tool, msg)),
             ToolError::ExecutionFailed(tool, msg) => 
                 ServerError::ServerTaskExecutionFailed(format!("Tool '{}' execution failed: {}", tool, msg)),
-            ToolError::ConfigError(tool, msg) => 
+            ToolError::ConfigError(tool, msg) =>
                 ServerError::ConfigError(format!("Tool '{}' configuration error: {}", tool, msg)),
-            ToolError::IoError(msg) => 
+            ToolError::IoError(msg) =>
                 ServerError::ServerTaskExecutionFailed(format!("I/O error during tool execution: {}", msg)),
+            ToolError::ExternalError(msg) => // Handle new error variant
+                ServerError::ServerTaskExecutionFailed(format!("External error during tool execution: {}", msg)),
         }
     }
 }
@@ -91,6 +107,53 @@ impl Tool for EchoTool {
     fn capabilities(&self) -> &[&'static str] { &["echo", "text_manipulation"] }
 }
 
+
+// --- New Tools ---
+
+/// Tool that directly uses the LLM based on input text
+pub struct LlmTool { llm: Arc<dyn LlmClient> }
+impl LlmTool { pub fn new(llm: Arc<dyn LlmClient>) -> Self { Self { llm } } }
+
+#[async_trait]
+impl Tool for LlmTool {
+    fn name(&self) -> &str { "llm" }
+    fn description(&self) -> &str { "Ask the LLM directly using the provided text as a prompt" }
+    async fn execute(&self, params: Value) -> Result<Value, ToolError> {
+        let prompt = params.get("text").and_then(|v| v.as_str()).unwrap_or_default();
+        if prompt.is_empty() {
+            return Err(ToolError::InvalidParams("llm".to_string(), "'text' parameter cannot be empty".to_string()));
+        }
+        // Use ? to propagate anyhow::Error, which will be converted by From<anyhow::Error> for ToolError
+        let result = self.llm.complete(prompt).await?;
+        Ok(json!(result))
+    }
+    fn capabilities(&self) -> &[&'static str] { &["llm", "chat", "general_purpose"] }
+}
+
+/// Tool that asks the LLM to summarize the input text
+pub struct SummarizeTool { llm: Arc<dyn LlmClient> }
+impl SummarizeTool { pub fn new(llm: Arc<dyn LlmClient>) -> Self { Self { llm } } }
+
+#[async_trait]
+impl Tool for SummarizeTool {
+    fn name(&self) -> &str { "summarize" }
+    fn description(&self) -> &str { "Summarize the received text using the LLM" }
+    async fn execute(&self, params: Value) -> Result<Value, ToolError> {
+        let text = params.get("text").and_then(|v| v.as_str()).unwrap_or_default();
+         if text.is_empty() {
+            return Err(ToolError::InvalidParams("summarize".to_string(), "'text' parameter cannot be empty".to_string()));
+        }
+        let prompt = format!("Briefly summarize the following text:\n\n{}", text);
+        // Use ? to propagate anyhow::Error
+        let result = self.llm.complete(&prompt).await?;
+        Ok(json!(result))
+    }
+    fn capabilities(&self) -> &[&'static str] { &["summarize", "text_manipulation"] }
+}
+
+// --- End New Tools ---
+
+
 /// Manages and executes available local tools using standard A2A types.
 #[derive(Clone)]
 pub struct ToolExecutor {
@@ -109,8 +172,47 @@ impl ToolExecutor {
         
         Self {
             tools: Arc::new(tools),
+        Self {
+            tools: Arc::new(tools),
         }
     }
+
+    /// Creates a new ToolExecutor with tools enabled via configuration.
+    pub fn with_enabled_tools(
+        enabled: &[String],
+        llm: Arc<dyn LlmClient>, // LLM client needed for some tools
+    ) -> Self {
+        let mut map: HashMap<String, Box<dyn Tool>> = HashMap::new();
+
+        // Always register the echo tool as a fallback
+        map.insert("echo".into(), Box::new(EchoTool));
+        tracing::debug!("Tool 'echo' registered.");
+
+        for name in enabled {
+            match name.as_str() {
+                "llm" => {
+                    if !map.contains_key("llm") {
+                        map.insert("llm".into(), Box::new(LlmTool::new(llm.clone())));
+                        tracing::debug!("Tool 'llm' registered.");
+                    }
+                }
+                "summarize" => {
+                     if !map.contains_key("summarize") {
+                        map.insert("summarize".into(), Box::new(SummarizeTool::new(llm.clone())));
+                        tracing::debug!("Tool 'summarize' registered.");
+                    }
+                }
+                "echo" => { /* already registered */ }
+                unknown => {
+                    tracing::warn!("Unknown tool '{}' in config [tools].enabled, ignoring.", unknown);
+                }
+            }
+        }
+        
+        tracing::info!("ToolExecutor initialized with tools: {:?}", map.keys());
+        Self { tools: Arc::new(map) }
+    }
+
 
     /// Executes a specific tool by name with the given JSON parameters.
     pub async fn execute_tool(&self, tool_name: &str, params: Value) -> Result<Value, ToolError> {

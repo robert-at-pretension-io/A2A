@@ -34,6 +34,12 @@ You are an AI agent assistant that helps with tasks. You can:
 Always think step-by-step about the best way to handle each request.
 """
 
+# Tool configuration
+[tools]
+# List the tools you want to enable. Available: "llm", "summarize", "echo"
+# If empty or missing, only "echo" will be available.
+enabled = ["llm", "echo", "summarize"]
+
 # Mode configuration - uncomment the mode you want to use
 # If no mode is specified, the agent runs in standard server mode
 [mode]

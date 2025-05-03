@@ -290,18 +290,30 @@ impl LlmClient for ClaudeLlmClient {
 pub struct BidirectionalTaskRouter {
     llm: Arc<dyn LlmClient>,
     directory: Arc<AgentDirectory>, // Use the local directory for routing logic
+    enabled_tools: Arc<Vec<String>>, // <-- new: Store enabled tool names
 }
 
 impl BidirectionalTaskRouter {
-     pub fn new(llm: Arc<dyn LlmClient>, directory: Arc<AgentDirectory>) -> Self {
+     pub fn new(
+         llm: Arc<dyn LlmClient>,
+         directory: Arc<AgentDirectory>,
+         enabled_tools: Arc<Vec<String>>, // <-- new parameter
+     ) -> Self {
+        // Ensure "echo" is always considered enabled internally for fallback, even if not in config
+        let mut tools = enabled_tools.as_ref().clone();
+        if !tools.contains(&"echo".to_string()) {
+            tools.push("echo".to_string());
+        }
         Self {
             llm,
             directory,
+            enabled_tools: Arc::new(tools), // Store the potentially modified list
         }
     }
 
-    // Helper to perform the actual routing logic
-    pub async fn decide_execution_mode(&self, task: &Task) -> Result<ExecutionMode> {
+    // Helper to perform the actual routing logic AND tool selection
+    // Now returns RoutingDecision directly
+    pub async fn decide_execution_mode(&self, task: &Task) -> Result<RoutingDecision, ServerError> {
          // Extract the task content for analysis
         // Use history if available, otherwise maybe the top-level message if applicable
         let task_text = task.history.as_ref().map(|history| {
@@ -367,26 +379,68 @@ Your response should be exactly one of those formats, with no additional text.
 "#, agent_descriptions, task_text);
 
         // Get the routing decision from the LLM
-        let decision = self.llm.complete(&routing_prompt).await?;
-        let decision = decision.trim();
+        let decision_result = self.llm.complete(&routing_prompt).await;
+
+        // Map anyhow::Error from LLM to ServerError::Internal
+        let decision = decision_result
+            .map_err(|e| ServerError::Internal(format!("LLM routing decision failed: {}", e)))?
+            .trim()
+            .to_string();
+
 
         // Parse the decision
         if decision == "LOCAL" {
-            Ok(ExecutionMode::Local)
+            // --- LLM Tool Selection Logic ---
+            let tool_list_str = self.enabled_tools.join(", ");
+            let tool_choice_prompt = format!(
+                "You have the following local tools available:\n{}\n\n\
+                Based on the previous TASK description, choose the single best tool (exact name) to handle it.\n\
+                Respond ONLY with the tool name (e.g., 'llm', 'summarize', 'echo').",
+                tool_list_str
+            );
+
+            debug!("Asking LLM to choose tool with prompt: {}", tool_choice_prompt); // Use tracing debug
+
+            let tool_choice_result = self.llm.complete(&tool_choice_prompt).await;
+
+            let chosen_tool_name = match tool_choice_result {
+                 Ok(tool_name_raw) => {
+                    let tool_name = tool_name_raw.trim().to_string();
+                    // Validate the LLM's choice against the enabled tools
+                    if self.enabled_tools.contains(&tool_name) {
+                         debug!("LLM chose tool: {}", tool_name);
+                         tool_name // Use the valid tool chosen by LLM
+                    } else {
+                         warn!("LLM chose an unknown/disabled tool ('{}'). Falling back to 'echo'. Enabled: [{}]", tool_name, tool_list_str);
+                         "echo".to_string() // Fallback to echo if choice is invalid
+                    }
+                 },
+                 Err(e) => {
+                     warn!("LLM failed to choose a tool: {}. Falling back to 'echo'.", e);
+                     "echo".to_string() // Fallback to echo on error
+                 }
+            };
+
+            debug!("Final tool decision: {}", chosen_tool_name);
+            Ok(RoutingDecision::Local { tool_names: vec![chosen_tool_name] })
+            // --- End LLM Tool Selection Logic ---
+
         } else if decision.starts_with("REMOTE: ") {
             let agent_id = decision.strip_prefix("REMOTE: ").unwrap().trim().to_string();
-            
+
             // Verify the agent exists in the local directory
             if self.directory.get_agent(&agent_id).is_none() {
-                 warn!("LLM decided to delegate to unknown agent '{}', falling back to local execution.", agent_id);
-                return Ok(ExecutionMode::Local); // Fall back to local if agent not found
+                 warn!("LLM decided to delegate to unknown agent '{}', falling back to local execution with 'echo' tool.", agent_id);
+                 // Fall back to local if agent not found, using echo tool
+                 Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
+            } else {
+                 debug!("Routing decision: Remote delegation to agent '{}'", agent_id);
+                 Ok(RoutingDecision::Remote { agent_id })
             }
-            
-            Ok(ExecutionMode::Remote { agent_id })
         } else {
-            warn!("LLM routing decision was unclear ('{}'), falling back to local execution.", decision);
-            // Default to local if the decision isn't clear
-            Ok(ExecutionMode::Local)
+            warn!("LLM routing decision was unclear ('{}'), falling back to local execution with 'echo' tool.", decision);
+            // Default to local echo if the decision isn't clear
+            Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
         }
     }
 }
@@ -397,38 +451,22 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
     async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
         // We need a Task object to make the decision based on history/message.
         // Construct a temporary Task from TaskSendParams.
-        // This might be simplified if the trait signature changes or if TaskService provides the Task.
         let task = Task {
             id: params.id.clone(),
             status: TaskStatus { // Default status for routing decision
                 state: TaskState::Submitted,
                 timestamp: Some(Utc::now()),
-                message: None, // Add missing field
+                message: None, // Status message is usually set later
             },
-            history: Some(vec![params.message.clone()]), // Use the incoming message as history start
+            // Use the incoming message as the start of history for decision making
+            history: Some(vec![params.message.clone()]),
             artifacts: None,
             metadata: params.metadata.clone(),
             session_id: params.session_id.clone(),
         };
 
+        // Call the updated decide_execution_mode which now returns RoutingDecision
         self.decide_execution_mode(&task).await
-            .map(|decision| match decision {
-                ExecutionMode::Local => {
-                    // Convert to the server's RoutingDecision
-                    // Provide tool names if applicable, otherwise empty or default
-                    RoutingDecision::Local {
-                        tool_names: vec!["default_local_tool".to_string()] // Example tool name
-                    }
-                },
-                ExecutionMode::Remote { agent_id } => {
-                    // Convert to the server's RoutingDecision
-                    RoutingDecision::Remote {
-                        agent_id: agent_id.clone()
-                    }
-                },
-            })
-            // Map the anyhow::Error to ServerError::Internal
-            .map_err(|e| ServerError::Internal(format!("Routing error: {}", e)))
     }
 
     // Add the required process_follow_up method
@@ -442,10 +480,10 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
     
     // Implement the decide method required by LlmTaskRouterTrait
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
-        // Simply delegate to route_task for now
+        // Delegate to route_task, which now handles the full decision including tool choice
         self.route_task(params).await
     }
-    
+
     // Implement should_decompose method required by LlmTaskRouterTrait
     async fn should_decompose(&self, _params: &TaskSendParams) -> Result<bool, ServerError> {
         // Simple implementation that never decomposes tasks
@@ -530,10 +568,24 @@ impl BidirectionalAgent {
         let client_manager = Arc::new(ClientManager::new(agent_registry.clone()));
 
         // Create our custom task router implementation
-        let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> = Arc::new(BidirectionalTaskRouter::new(llm.clone(), agent_directory.clone()));
+        // Create our custom task router implementation (pass enabled tools later)
+        // We need the list of enabled tools first for the executor
+        let enabled_tools_list = config.tools.enabled.clone();
+        let enabled_tools = Arc::new(enabled_tools_list); // Arc for sharing
 
-        // Create a tool executor using the provided implementation
-        let bidirectional_tool_executor = Arc::new(ToolExecutor::new());
+        // Create a tool executor using the new constructor with enabled tools
+        let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
+            &config.tools.enabled, // Pass slice of enabled tool names
+            llm.clone(),           // Pass LLM client for tools that need it
+        ));
+
+        // Create the task router, passing the enabled tools list
+        let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> =
+            Arc::new(BidirectionalTaskRouter::new(
+                llm.clone(),
+                agent_directory.clone(),
+                enabled_tools.clone(), // Pass Arc<Vec<String>>
+            ));
 
         // Create the task service using the canonical components and our trait implementations
         let task_service = Arc::new(TaskService::bidirectional(
@@ -1851,15 +1903,23 @@ pub struct LlmConfig {
     pub system_prompt: String,
 }
 
+/// Tool configuration section
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ToolsConfig {
+    #[serde(default)]
+    pub enabled: Vec<String>,
+}
+
 /// Configuration for the bidirectional agent
 #[derive(Clone, Debug, Deserialize)]
 pub struct BidirectionalAgentConfig {
     #[serde(default)]
     pub server: ServerConfig,
-    #[serde(default)]
     pub client: ClientConfig,
     #[serde(default)]
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub tools: ToolsConfig, // <-- new
     
     // Mode configuration
     #[serde(default)]
@@ -1946,6 +2006,7 @@ impl Default for BidirectionalAgentConfig {
             server: ServerConfig::default(),
             client: ClientConfig::default(),
             llm: LlmConfig::default(),
+            tools: ToolsConfig::default(), // <-- new
             mode: ModeConfig::default(),
             config_file_path: None,
         }
