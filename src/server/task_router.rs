@@ -39,12 +39,14 @@ impl SubtaskDefinition {
 /// Routing decision enum for determining how to handle a task
 #[derive(Debug, Clone)]
 pub enum RoutingDecision {
-    /// Handle the task locally with the specified tools
+    /// Handle the task locally with the specified tools and parameters
     Local {
-        /// Names of tools to use for local execution
-        tool_names: Vec<String>,
+        /// Name of the single tool to use for local execution
+        tool_name: String, // Changed from Vec<String> to String
+        /// JSON parameters extracted for the tool
+        params: Value,
     },
-    
+
     /// Delegate the task to a remote agent
     Remote {
         /// ID of the agent to delegate to

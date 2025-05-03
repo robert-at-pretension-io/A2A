@@ -434,95 +434,42 @@ impl ToolExecutor {
         }
     }
 
-    /// Helper function to extract parameters from a message for a specific tool
-    #[instrument(skip(self, message), name="extract_params")] // Add tracing span
-    fn extract_params_from_message(&self, message: &Message) -> Value {
-        tracing::trace!("Extracting parameters from message parts."); // Add tracing
-        // Try to extract parameters from text parts
-        for part in &message.parts {
-            tracing::trace!(part_type = ?part, "Checking part for parameters."); // Add tracing
-            if let Part::TextPart(tp) = part {
-                tracing::trace!(text = %tp.text, "Checking TextPart for parameters."); // Add tracing
-                // Check if the text could be JSON
-                let trimmed_text = tp.text.trim(); // Use trimmed text
-                if trimmed_text.starts_with('{') && trimmed_text.ends_with('}') {
-                    // Try to parse as JSON
-                    tracing::trace!("TextPart looks like JSON, attempting parse."); // Add tracing
-                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed_text) { // Use trimmed text
-                        tracing::info!("Successfully parsed JSON parameters from TextPart."); // Add tracing
-                        tracing::trace!(?json_val, "Parsed JSON parameters."); // Add tracing
-                        return json_val;
-                    } else {
-                        tracing::trace!("Failed to parse TextPart as JSON, treating as simple text."); // Add tracing
-                    }
-                }
-                
-                // Default to simple text param if not valid JSON
-                tracing::info!("Using TextPart content as simple 'text' parameter."); // Add tracing
-                return json!({"text": tp.text});
-            } else {
-                tracing::trace!(part_type = ?part, "Skipping non-TextPart for parameter extraction."); // Add tracing
-            }
-        }
-        
-        // Default to empty params if no suitable text part is found
-        tracing::warn!("No suitable TextPart found in message for parameter extraction. Returning empty params."); // Add tracing
-        json!({})
-    }
+    // REMOVED extract_params_from_message function
 
-    /// Executes a task locally using the specified tool(s).
+    /// Executes a task locally using the specified tool and pre-extracted parameters.
     /// Updates the task state and artifacts based on the tool execution result.
-    #[instrument(skip(self, task, tool_names), fields(task_id = %task.id, ?tool_names))] // Add tracing span
-    pub async fn execute_task_locally(&self, task: &mut Task, tool_names: &[String]) -> Result<(), ServerError> {
-        tracing::info!("Executing task locally."); // Add tracing
-        // Use the echo tool as a default fallback if no tool is specified or found
-        let default_tool_name = "echo";
-
-        // Determine the primary tool to use
-        let requested_tool_name = tool_names.first().map(|s| s.as_str()).unwrap_or(default_tool_name);
-        tracing::debug!(%requested_tool_name, "Requested tool name."); // Add tracing
+    #[instrument(skip(self, task, params), fields(task_id = %task.id, tool_name))] // Add tracing span
+    pub async fn execute_task_locally(&self, task: &mut Task, tool_name: &str, params: Value) -> Result<(), ServerError> {
+        tracing::info!("Executing task locally with pre-extracted parameters."); // Add tracing
+        tracing::trace!(?params, "Parameters received for tool execution."); // Add tracing
 
         // Check if the requested tool exists and is registered
-        let tool_name = if self.tools.contains_key(requested_tool_name) {
-            tracing::info!("Requested tool '{}' found and registered.", requested_tool_name); // Add tracing
-            requested_tool_name
+        // If not, fall back to echo tool (but log a warning)
+        let final_tool_name = if self.tools.contains_key(tool_name) {
+            tracing::info!("Requested tool '{}' found and registered.", tool_name); // Add tracing
+            tool_name
         } else {
-            tracing::warn!(%requested_tool_name, %default_tool_name, "Requested tool not found or registered. Falling back to default tool."); // Add tracing
+            let default_tool_name = "echo";
+            tracing::warn!(requested_tool = %tool_name, %default_tool_name, "Requested tool not found or registered. Falling back to default tool."); // Add tracing
             // Add a warning message to the task history
             let warning_msg = format!("Tool '{}' not found - using default '{}' tool instead.",
-                                     requested_tool_name, default_tool_name);
-            
-                
-                task.history.get_or_insert_with(Vec::new).push(Message {
-                    role: Role::Agent, // Using Agent role as system role isn't available
-                    parts: vec![Part::TextPart(TextPart {
-                        type_: "text".to_string(),
-                        text: warning_msg.clone(),
-                        metadata: None,
-                    })],
+                                     tool_name, default_tool_name);
+            task.history.get_or_insert_with(Vec::new).push(Message {
+                role: Role::Agent,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: warning_msg.clone(),
                     metadata: None,
-                });
-                default_tool_name
-            
-        };
-        tracing::info!(%tool_name, "Final tool name selected for execution."); // Add tracing
-
-        // Extract parameters from the task's *initial* message (assuming it contains the input)
-        // If history exists, use the first message; otherwise, use the status message if available.
-        tracing::debug!("Extracting parameters from task message/history."); // Add tracing
-        let params = task.history.as_ref()
-            .and_then(|h| h.first()) // Get the first message from history
-            .map(|first_msg| self.extract_params_from_message(first_msg))
-            .or_else(|| task.status.message.as_ref().map(|status_msg| self.extract_params_from_message(status_msg)))
-            .unwrap_or_else(|| {
-                tracing::warn!("Could not find suitable message in history or status to extract parameters. Using empty params."); // Add tracing
-                json!({}) // Fallback to empty params
+                })],
+                metadata: None,
             });
-        tracing::trace!(?params, "Parameters extracted for tool execution."); // Add tracing
+            default_tool_name
+        };
+        tracing::info!(%final_tool_name, "Final tool name selected for execution."); // Add tracing
 
-        // Execute the tool
-        tracing::info!("Executing tool '{}'.", tool_name); // Add tracing
-        match self.execute_tool(tool_name, params).await {
+        // Execute the tool using the provided parameters
+        tracing::info!("Executing tool '{}'.", final_tool_name); // Add tracing
+        match self.execute_tool(final_tool_name, params).await {
             Ok(result_value) => {
                 tracing::info!("Tool execution successful."); // Add tracing
                 tracing::trace!(result = %result_value, "Tool result value."); // Add tracing
