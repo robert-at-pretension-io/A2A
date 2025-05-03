@@ -38,12 +38,16 @@ pub enum ToolError {
 
 // Implement conversion from std::io::Error
 impl From<std::io::Error> for ToolError {
-    fn from(e: anyhow::Error) -> Self {
-        // Capture the context of the anyhow error
-        ToolError::ExternalError(format!("{:?}", e))
+    fn from(e: std::io::Error) -> Self { // Corrected parameter type
+        ToolError::IoError(e.to_string()) // Use IoError variant
     }
 }
 
+// Implement conversion from anyhow::Error (Moved here)
+impl From<anyhow::Error> for ToolError {
+    fn from(e: anyhow::Error) -> Self {
+        // Capture the context of the anyhow error
+        ToolError::ExternalError(format!("{:?}", e))
 // Implement conversion from ServerError (for registry errors etc.)
 impl From<ServerError> for ToolError {
     fn from(e: ServerError) -> Self {
