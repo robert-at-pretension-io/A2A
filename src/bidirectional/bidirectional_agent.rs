@@ -828,23 +828,8 @@ impl BidirectionalAgent {
         // Flag to track if we have a listening server running
         let mut server_running = false;
         let mut server_shutdown_token: Option<CancellationToken> = None;
-                match self.get_remote_agent_card().await {
-                    Ok(card) => {
-                        println!("📇 Connected to: {} ({})", card.name, url);
-                        // Add to known servers if not already present
-                        if !known_servers.iter().any(|(_, server_url)| server_url == url) {
-                            known_servers.push((card.name.clone(), url.clone()));
-                        }
-                    },
-                    Err(_) => {
-                        println!("🔗 Connected to: {}", url);
-                    }
-                }
-        
-        // Flag to track if we have a listening server running
-        let mut server_running = false;
-        let mut server_shutdown_token: Option<CancellationToken> = None;
-        
+        // Removed misplaced match block and duplicate variable declarations here
+
         // Check if auto-listen flag is set in environment variable
         let auto_listen = std::env::var("AUTO_LISTEN").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false);
         
