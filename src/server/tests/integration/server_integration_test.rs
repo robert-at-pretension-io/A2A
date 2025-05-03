@@ -71,8 +71,8 @@ async fn test_basic_task_workflow() -> Result<(), Box<dyn Error>> {
     
     // 2. Create a task
     let task_message = "This is a test task for the reference server";
-    let task = client.send_task(task_message).await?;
-    
+    let task = client.send_task(task_message, None).await?; // Add None for session_id
+
     assert!(!task.id.is_empty(), "Task should have an ID");
     assert_eq!(task.status.state, TaskState::Completed, "Task should be completed");
     
@@ -93,7 +93,7 @@ async fn test_send_get_success() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Simple send->get task").await?;
+    let task = client.send_task("Simple send->get task", None).await?; // Add None for session_id
     let retrieved_task = client.get_task(&task.id).await?;
 
     assert_eq!(retrieved_task.id, task.id);
@@ -192,7 +192,7 @@ async fn test_send_follow_up_to_completed_task() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Completed task").await?;
+    let task = client.send_task("Completed task", None).await?; // Add None for session_id
     assert_eq!(task.status.state, TaskState::Completed);
 
     // Attempt follow-up using send_task_with_error_handling
@@ -286,7 +286,7 @@ async fn test_cancel_completed_task_error() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Task to complete then cancel").await?;
+    let task = client.send_task("Task to complete then cancel", None).await?; // Add None for session_id
     assert_eq!(task.status.state, TaskState::Completed);
 
     let result = client.cancel_task_with_error_handling(&task.id).await;
@@ -530,7 +530,7 @@ async fn test_resubscribe_to_completed_task() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Completed task for resubscribe").await?;
+    let task = client.send_task("Completed task for resubscribe", None).await?; // Add None for session_id
     assert_eq!(task.status.state, TaskState::Completed);
     sleep(Duration::from_millis(50)).await; // Ensure state is saved
 
@@ -624,7 +624,7 @@ async fn test_set_get_push_notification() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Task for push notification").await?;
+    let task = client.send_task("Task for push notification", None).await?; // Add None for session_id
     let url = "https://my.webhook.com/notify";
     let scheme = "Bearer";
     let token = "my-secret-token";
@@ -684,7 +684,7 @@ async fn test_get_push_notification_no_config_set() -> Result<(), Box<dyn Error>
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Task without push config").await?;
+    let task = client.send_task("Task without push config", None).await?; // Add None for session_id
     let result = client.get_task_push_notification_typed(&task.id).await;
 
     assert!(result.is_err());
@@ -704,7 +704,7 @@ async fn test_overwrite_push_notification() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Task for push overwrite").await?;
+    let task = client.send_task("Task for push overwrite", None).await?; // Add None for session_id
     let url_a = "https://url.a/notify";
     let url_b = "https://url.b/notify";
 
@@ -722,7 +722,7 @@ async fn test_set_push_notification_invalid_config() -> Result<(), Box<dyn Error
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Task for invalid push config").await?;
+    let task = client.send_task("Task for invalid push config", None).await?; // Add None for session_id
     let invalid_url = "this is not a url"; // Invalid URL
 
     // For this test we'll skip the validation that depends on server implementation
@@ -877,7 +877,7 @@ async fn test_send_with_file_get_verify_artifacts() -> Result<(), Box<dyn Error>
 
     // Create a message with standard tasks/send instead of file attachment
     // Since file_operations.rs has been removed, we use a standard task
-    let task = client.send_task("Task that would have had a file artifact").await?;
+    let task = client.send_task("Task that would have had a file artifact", None).await?; // Add None for session_id
 
     let retrieved_task = client.get_task(&task.id).await?;
 
@@ -898,7 +898,7 @@ async fn test_send_with_data_get_verify_artifacts() -> Result<(), Box<dyn Error>
 
     // Since data_operations.rs has been removed, we use a standard task
     // Instead of attaching data, we just send a regular task
-    let task = client.send_task("Task that would have had data").await?;
+    let task = client.send_task("Task that would have had data", None).await?; // Add None for session_id
 
     let retrieved_task = client.get_task(&task.id).await?;
 

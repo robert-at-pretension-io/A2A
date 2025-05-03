@@ -1,4 +1,6 @@
-use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter, ExecutionMode, AgentDirectory};
+// Import RoutingDecision from the correct path
+use crate::server::task_router::RoutingDecision;
+use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter, AgentDirectory}; // Remove ExecutionMode import
 use crate::bidirectional::tests::mocks::MockLlmClient;
 use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities};
 use std::sync::Arc;
@@ -12,18 +14,21 @@ async fn test_router_local_decision() {
     
     // Create an agent directory
     let directory = Arc::new(AgentDirectory::new());
-    
+    // Provide a default list of enabled tools for the test
+    let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, directory);
-    
+    let router = BidirectionalTaskRouter::new(llm, directory, enabled_tools);
+
     // Create a test task
     let task = create_test_task("What is the capital of France?");
     
     // Test the routing decision
     let decision = router.decide_execution_mode(&task).await.unwrap();
-    
-    // Verify that the decision is to execute locally
-    assert!(matches!(decision, ExecutionMode::Local));
+
+    // Verify that the decision is to execute locally (RoutingDecision::Local)
+    // We also check that a tool was selected (e.g., "echo" as fallback)
+    assert!(matches!(decision, RoutingDecision::Local { tool_names } if !tool_names.is_empty()));
 }
 
 #[tokio::test]
@@ -37,18 +42,20 @@ async fn test_router_remote_decision() {
     // Add a test agent to the directory
     let agent_card = create_test_agent_card("http://example.com/agent");
     directory.add_or_update_agent("test-agent".to_string(), agent_card);
-    
+    // Provide a default list of enabled tools for the test
+    let enabled_tools = Arc::new(vec!["echo".to_string()]);
+
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, directory);
-    
+    let router = BidirectionalTaskRouter::new(llm, directory, enabled_tools);
+
     // Create a test task
     let task = create_test_task("Please forward this to test-agent");
     
     // Test the routing decision
     let decision = router.decide_execution_mode(&task).await.unwrap();
-    
-    // Verify that the decision is to execute remotely with the correct agent ID
-    assert!(matches!(decision, ExecutionMode::Remote { agent_id } if agent_id == "test-agent"));
+
+    // Verify that the decision is to execute remotely with the correct agent ID (RoutingDecision::Remote)
+    assert!(matches!(decision, RoutingDecision::Remote { agent_id } if agent_id == "test-agent"));
 }
 
 #[tokio::test]
@@ -58,18 +65,21 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
     
     // Create an agent directory (with no agents)
     let directory = Arc::new(AgentDirectory::new());
-    
+    // Provide a default list of enabled tools for the test
+    let enabled_tools = Arc::new(vec!["echo".to_string()]);
+
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, directory);
-    
+    let router = BidirectionalTaskRouter::new(llm, directory, enabled_tools);
+
     // Create a test task
     let task = create_test_task("Please forward this to unknown-agent");
     
     // Test the routing decision
     let decision = router.decide_execution_mode(&task).await.unwrap();
-    
-    // Verify that the decision falls back to local execution
-    assert!(matches!(decision, ExecutionMode::Local));
+
+    // Verify that the decision falls back to local execution (RoutingDecision::Local)
+    // It should default to the 'echo' tool in this case.
+    assert!(matches!(decision, RoutingDecision::Local { tool_names } if tool_names == vec!["echo".to_string()]));
 }
 
 #[tokio::test]
@@ -79,18 +89,21 @@ async fn test_router_fallback_to_local_for_unclear_decision() {
     
     // Create an agent directory
     let directory = Arc::new(AgentDirectory::new());
-    
+    // Provide a default list of enabled tools for the test
+    let enabled_tools = Arc::new(vec!["echo".to_string()]);
+
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, directory);
-    
+    let router = BidirectionalTaskRouter::new(llm, directory, enabled_tools);
+
     // Create a test task
     let task = create_test_task("What should I do with this?");
     
     // Test the routing decision
     let decision = router.decide_execution_mode(&task).await.unwrap();
-    
-    // Verify that the decision falls back to local execution
-    assert!(matches!(decision, ExecutionMode::Local));
+
+    // Verify that the decision falls back to local execution (RoutingDecision::Local)
+    // It should default to the 'echo' tool in this case.
+    assert!(matches!(decision, RoutingDecision::Local { tool_names } if tool_names == vec!["echo".to_string()]));
 }
 
 #[tokio::test]
@@ -106,10 +119,12 @@ async fn test_router_prompt_formatting() {
     let agent_card2 = create_test_agent_card("http://example.com/agent2");
     directory.add_or_update_agent("test-agent-1".to_string(), agent_card1);
     directory.add_or_update_agent("test-agent-2".to_string(), agent_card2);
-    
+    // Provide a default list of enabled tools for the test
+    let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm.clone(), directory);
-    
+    let router = BidirectionalTaskRouter::new(llm.clone(), directory, enabled_tools);
+
     // Create a test task
     let task = create_test_task("Please route this task appropriately");
     

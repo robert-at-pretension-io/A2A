@@ -118,11 +118,11 @@ async fn test_task_not_cancelable_error() -> Result<(), Box<dyn Error>> {
     
     // Create client
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-    
+
     // First create a task with special ID that will trigger the error
-    let task = client.send_task("test-task-not-cancelable").await?;
+    let task = client.send_task("test-task-not-cancelable", None).await?; // Add None for session_id
     println!("Created task: {}", task.id);
-    
+
     // Task will automatically transition to completed state in our mock server
     // Wait a moment to ensure it completes
     time::sleep(time::Duration::from_millis(100)).await;
@@ -161,10 +161,10 @@ async fn test_authentication_error() -> Result<(), Box<dyn Error>> {
     
     // Create client WITHOUT authentication
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-    
+
     // Attempt to access a protected endpoint
-    let result = client.send_task("This is a test message").await;
-    
+    let result = client.send_task("This is a test message", None).await; // Add None for session_id
+
     // Verify we get the expected error
     assert!(result.is_err(), "Expected error for unauthorized request");
     
@@ -181,11 +181,11 @@ async fn test_authentication_error() -> Result<(), Box<dyn Error>> {
     // Now try with proper authentication
     let mut auth_client = A2aClient::new(&format!("http://localhost:{}", port))
         .with_auth("Authorization", "Bearer test-token");
-    
+
     // This should succeed
-    let task = auth_client.send_task("This is an authenticated request").await?;
+    let task = auth_client.send_task("This is an authenticated request", None).await?; // Add None for session_id
     println!("Successfully created task with authentication: {}", task.id);
-    
+
     Ok(())
 }
 
