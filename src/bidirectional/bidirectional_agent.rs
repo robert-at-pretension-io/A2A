@@ -790,10 +790,25 @@ impl BidirectionalAgent {
                             "{} [{}@{}:{}] {}: {}\n",
                             timestamp, agent_id, bind_address, port, action_type, details.trim()
                         );
-                        let _ = OpenOptions::new()
-                            .create(true).append(true).open(log_path).await
-                            .map(|mut file| async move { file.write_all(log_entry.as_bytes()).await; file.flush().await }) // Ignore errors for simplicity here
-                            .map(|fut| fut.await);
+                        // Open the file asynchronously
+                        match OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(log_path)
+                            .await
+                        {
+                            Ok(mut file) => {
+                                // Write and flush asynchronously
+                                if let Err(e) = file.write_all(log_entry.as_bytes()).await {
+                                    eprintln!("⚠️ Background log write error: {}", e);
+                                } else if let Err(e) = file.flush().await {
+                                     eprintln!("⚠️ Background log flush error: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("⚠️ Background log open error: {}", e);
+                            }
+                        }
                     }
                 };
 
