@@ -498,6 +498,9 @@ pub struct BidirectionalAgent {
 
     // REPL logging
     repl_log_file: Option<std::path::PathBuf>,
+
+    // Known servers discovered/connected to (URL -> Name) - Shared for background updates
+    known_servers: Arc<DashMap<String, String>>,
 }
 
 impl BidirectionalAgent {
@@ -583,6 +586,9 @@ impl BidirectionalAgent {
 
             // Initialize REPL log file path
             repl_log_file: config.mode.repl_log_file.map(std::path::PathBuf::from),
+
+            // Initialize known servers map
+            known_servers: Arc::new(DashMap::new()),
         }; // <-- Construct the agent instance here
 
         // Log agent initialization attempt *after* construction, *before* returning Ok()
@@ -764,66 +770,77 @@ impl BidirectionalAgent {
         println!("  :quit            - Exit the REPL");
         println!("========================================\n");
 
-        // Keep track of known servers
-        let mut known_servers: Vec<(String, String)> = Vec::new(); // (name, url)
+        // --- Spawn Background Task for Initial Connection ---
+        if let Some(initial_url) = self.client_url() {
+            println!("Configured target URL: {}. Attempting connection in background...", initial_url);
+            // Clone necessary data for the background task
+            let agent_id = self.agent_id.clone();
+            let bind_address = self.bind_address.clone();
+            let port = self.port;
+            let repl_log_file = self.repl_log_file.clone();
+            let agent_directory = self.agent_directory.clone();
+            let known_servers = self.known_servers.clone(); // Clone Arc<DashMap>
 
-        // --- Add Initial Connection Retry Logic ---
-        if self.client.is_some() {
-            let initial_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
-            println!("Attempting initial connection to configured target: {}", initial_url);
-            self.log_agent_action("REPL_INIT_CONNECT", &format!("Attempting initial connection to {}", initial_url)).await;
-
-            let max_retries = 5;
-            let retry_delay = std::time::Duration::from_secs(2);
-            let mut connected = false;
-
-            for attempt in 1..=max_retries {
-                match self.get_remote_agent_card().await {
-                    Ok(card) => {
-                        println!("✅ Successfully connected to: {} ({})", card.name, initial_url);
-                        self.log_agent_action("REPL_INIT_CONNECT_SUCCESS", &format!("Initial connection successful to {} ({})", card.name, initial_url)).await;
-                        // Add to known servers if not already present
-                        if !known_servers.iter().any(|(_, server_url)| server_url == &initial_url) {
-                            known_servers.push((card.name.clone(), initial_url.clone()));
-                        }
-                        // Add to agent directory
-                        self.agent_directory.add_or_update_agent(card.name.clone(), card.clone());
-                        connected = true;
-                        break; // Exit retry loop on success
+            tokio::spawn(async move {
+                // Helper closure for logging within the spawned task
+                let log_action = |action_type: &str, details: &str| async {
+                     if let Some(log_path) = &repl_log_file {
+                        let timestamp = Utc::now().to_rfc3339();
+                        let log_entry = format!(
+                            "{} [{}@{}:{}] {}: {}\n",
+                            timestamp, agent_id, bind_address, port, action_type, details.trim()
+                        );
+                        let _ = OpenOptions::new()
+                            .create(true).append(true).open(log_path).await
+                            .map(|mut file| async move { file.write_all(log_entry.as_bytes()).await; file.flush().await }) // Ignore errors for simplicity here
+                            .map(|fut| fut.await);
                     }
-                    Err(e) => {
-                        let error_msg = format!("Initial connection attempt {}/{} failed: {}", attempt, max_retries, e);
-                        println!("⚠️ {}", error_msg);
-                        self.log_agent_action("REPL_INIT_CONNECT_FAIL", &error_msg).await;
-                        if attempt < max_retries {
-                            println!("Retrying in {} seconds...", retry_delay.as_secs());
-                            tokio::time::sleep(retry_delay).await;
+                };
+
+                log_action("BG_INIT_CONNECT", &format!("Starting background connection attempt to {}", initial_url)).await;
+
+                let max_retries = 5;
+                let retry_delay = std::time::Duration::from_secs(2);
+                let mut connected = false;
+
+                // Create a *new* client instance specifically for this background task
+                let mut bg_client = A2aClient::new(&initial_url);
+
+                for attempt in 1..=max_retries {
+                    match bg_client.get_agent_card().await { // Use the new client
+                        Ok(card) => {
+                            let success_msg = format!("Background connection successful to {} ({})", card.name, initial_url);
+                            println!("✅ {}", success_msg); // Print to console as well
+                            log_action("BG_INIT_CONNECT_SUCCESS", &success_msg).await;
+
+                            // Update shared state
+                            known_servers.insert(initial_url.clone(), card.name.clone());
+                            agent_directory.add_or_update_agent(card.name.clone(), card.clone()); // Use name as ID here
+
+                            connected = true;
+                            break; // Exit retry loop on success
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Background connection attempt {}/{} to {} failed: {}", attempt, max_retries, initial_url, e);
+                            // Don't print every failure to console, only log it
+                            log_action("BG_INIT_CONNECT_FAIL", &error_msg).await;
+                            if attempt < max_retries {
+                                log_action("BG_INIT_CONNECT_RETRY", &format!("Retrying in {} seconds...", retry_delay.as_secs())).await;
+                                tokio::time::sleep(retry_delay).await;
+                            }
                         }
                     }
                 }
-            }
 
-            if !connected {
-                let final_error_msg = format!("Failed to connect to {} after {} attempts.", initial_url, max_retries);
-                println!("❌ {}", final_error_msg);
-                 self.log_agent_action("REPL_INIT_CONNECT_FAIL", &final_error_msg).await;
-                // Keep the client configured, but the user will need to manually :connect later if desired.
-            }
-        }
-        // --- End Initial Connection Retry Logic ---
-
-
-        // Display initial client URL if we have one (might have failed initial connection)
-        if let Some(_client) = &self.client { // Check existence, not connection status
-            if let Some(url) = &self.client_url() {
-                // Check if we successfully connected initially by looking in known_servers
-                if let Some((name, _)) = known_servers.iter().find(|(_, server_url)| server_url == url) {
-                     println!("🔗 Initially connected to: {} ({})", name, url);
-                } else {
-                     println!("🔗 Configured target: {} (Connection failed or pending)", url);
+                if !connected {
+                    let final_error_msg = format!("Background connection to {} failed after {} attempts.", initial_url, max_retries);
+                    println!("❌ {}", final_error_msg); // Print final failure to console
+                    log_action("BG_INIT_CONNECT_FAIL", &final_error_msg).await;
                 }
-            }
+            });
         }
+        // --- End Background Task Spawn ---
+
 
         // Flag to track if we have a listening server running
         let mut server_running = false;
@@ -1010,15 +1027,21 @@ impl BidirectionalAgent {
                     println!("  Output Modes: {}", card.default_output_modes.join(", "));
                     println!("");
                 } else if input_trimmed == ":servers" {
-                    // List known servers
-                    if known_servers.is_empty() {
-                        println!("No known servers. Connect to a server first with :connect URL");
+                    // List known servers from the shared map
+                    if self.known_servers.is_empty() {
+                        println!("No known servers. Connect to a server or wait for background connection attempt.");
                     } else {
                         println!("\n📋 Known Servers:");
-                        for (i, (name, url)) in known_servers.iter().enumerate() {
+                        // Collect servers into a Vec and sort for consistent display order
+                        let mut server_list: Vec<(String, String)> = self.known_servers.iter()
+                            .map(|entry| (entry.value().clone(), entry.key().clone())) // (Name, URL)
+                            .collect();
+                        server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name
+
+                        for (i, (name, url)) in server_list.iter().enumerate() {
                             // Mark the currently connected server with an asterisk
                             let marker = if Some(url) == self.client_url().as_ref() { "*" } else { " " };
-                            println!("  {}{}: {} - {}", marker, i+1, name, url);
+                            println!("  {}{}: {} - {}", marker, i + 1, name, url);
                         }
                         println!("\nUse :connect N to connect to a server by number");
                         println!("");
@@ -1039,10 +1062,16 @@ impl BidirectionalAgent {
 
                     // Check if it's a number (referring to a server in the list)
                     if let Ok(server_idx) = target.parse::<usize>() {
-                        if server_idx > 0 && server_idx <= known_servers.len() {
-                            let (name, url) = &known_servers[server_idx - 1];
-                            
-                            // Create a new client with the provided URL
+                        // Read from shared known_servers map
+                        let mut server_list: Vec<(String, String)> = self.known_servers.iter()
+                            .map(|entry| (entry.value().clone(), entry.key().clone())) // (Name, URL)
+                            .collect();
+                        server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name to match display order
+
+                        if server_idx > 0 && server_idx <= server_list.len() {
+                            let (name, url) = &server_list[server_idx - 1];
+
+                            // Create a new client with the selected URL
                             self.client = Some(A2aClient::new(url));
                             self.log_agent_action("REPL_CMD_CONNECT", &format!("Connecting to known server {} ({})", name, url)).await;
                             println!("🔗 Connected to {}: {}", name, url);
@@ -1080,11 +1109,9 @@ impl BidirectionalAgent {
                                 self.log_agent_action("REPL_CMD_CONNECT_SUCCESS", &format!("Successfully connected to agent '{}' at {}", card.name, target)).await;
                                 println!("✅ Successfully connected to agent: {}", card.name);
 
-                                // Add to known servers if not already present
-                                if !known_servers.iter().any(|(_, url)| url == target) {
-                                    known_servers.push((card.name.clone(), target.to_string()));
-                                }
-                                
+                                // Add/Update known servers map
+                                self.known_servers.insert(target.to_string(), card.name.clone());
+
                                 // Store the client since connection was successful
                                 self.client = Some(client);
                                 
@@ -1106,16 +1133,23 @@ impl BidirectionalAgent {
                             }
                         };
                         
-                        // Only add to known servers if we got a connection, and it's not already in the list
-                        if !connect_result && !known_servers.iter().any(|(_, url)| url == target) {
-                            // Ask the user if they want to add the server anyway
-                            println!("Do you want to add this server to the known servers list anyway? (y/n)");
-                            let mut answer = String::new();
-                            io::stdin().read_line(&mut answer).unwrap_or_default();
-                            
-                            if answer.trim().to_lowercase() == "y" {
-                                known_servers.push(("Unknown Agent".to_string(), target.to_string()));
-                                println!("Added server to known servers list.");
+                        // Ask to add to known servers only if connection failed
+                        if !connect_result {
+                            // Check if it's already in the list (maybe added by background task)
+                            if !self.known_servers.contains_key(target) {
+                                println!("Connection failed. Add this URL to the known servers list anyway? (y/n)");
+                                let mut answer = String::new();
+                                // Use a fresh stdin lock for this interaction
+                                let stdin_temp = io::stdin();
+                                let mut reader_temp = stdin_temp.lock();
+                                reader_temp.read_line(&mut answer).unwrap_or_default();
+
+                                if answer.trim().to_lowercase() == "y" {
+                                    self.known_servers.insert(target.to_string(), "Unknown Agent".to_string());
+                                    println!("Added URL to known servers list as 'Unknown Agent'.");
+                                }
+                            } else {
+                                 println!("Connection failed, but URL is already in the known servers list.");
                             }
                         }
                     }
