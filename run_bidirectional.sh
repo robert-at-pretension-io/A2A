@@ -16,10 +16,50 @@ cleanup() {
     if [ -n "$AGENT2_PID" ]; then
         kill $AGENT2_PID 2>/dev/null || true
     fi
-    
+
+    if [ -n "$AGENT2_PID" ]; then
+        echo "Stopping Agent 2 (PID: $AGENT2_PID)..."
+        kill $AGENT2_PID 2>/dev/null || true
+    fi
+
     # Exit
     exit 0
 }
+
+# Function to find PID for a given config file using pgrep
+# Retries for a few seconds to allow the process to start
+find_agent_pid() {
+    local config_file="$1"
+    local pid=""
+    local attempts=0
+    local max_attempts=10 # Try for 5 seconds (10 * 0.5s)
+
+    echo "Searching for PID using config: ${config_file}..." >&2 # Debug output to stderr
+
+    while [ -z "$pid" ] && [ $attempts -lt $max_attempts ]; do
+        # Use pgrep -f to match the full command line
+        # Use absolute path for config file to be more specific if needed, but relative should work here
+        # Use head -n 1 in case multiple matches are found (unlikely here)
+        pid=$(pgrep -f "bidirectional-agent ${config_file}" | head -n 1)
+        if [ -z "$pid" ]; then
+            sleep 0.5
+            attempts=$((attempts + 1))
+        else
+            # Optional: Verify the process command line more strictly if needed
+            # local cmdline=$(ps -p $pid -o cmd=)
+            # echo "Found potential PID $pid with cmdline: $cmdline" >&2 # Debug
+            : # PID found, break loop
+        fi
+    done
+
+    if [ -z "$pid" ]; then
+        echo "Error: Could not find PID for agent with config ${config_file} after ${max_attempts} attempts." >&2
+        echo "" # Return empty string on failure
+    else
+       echo "$pid"
+    fi
+}
+
 
 # Set up trap to catch SIGINT (Ctrl+C) and SIGTERM
 trap cleanup SIGINT SIGTERM
@@ -98,38 +138,50 @@ repl = true
 get_agent_card = false # Explicitly add the field
 EOF
 
-# Start Agent 1 (listens on 4200, connects to 4201)
+# Start Agent 1 (listens on 4200, connects to 4201) - Run agent in foreground of terminal's shell
+AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 1 (PID \$$) listening on port 4200, connecting to 4201...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent1_config.toml --listen"
 if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent 1 (Port 4200)" -- bash -c "cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 1 listening on port 4200 and connecting to port 4201...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent1_config.toml --listen; read -p 'Press Enter to close...'" &
+    gnome-terminal --title="Agent 1 (Port 4200)" -- bash -c "$AGENT1_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent 1 (Port 4200)" -e "cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 1 listening on port 4200 and connecting to port 4201...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent1_config.toml --listen; read -p 'Press Enter to close...'" &
+    xterm -title "Agent 1 (Port 4200)" -e "$AGENT1_CMD" &
 elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent 1 (Port 4200)" -e bash -c "cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 1 listening on port 4200 and connecting to port 4201...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent1_config.toml --listen; read -p 'Press Enter to close...'" &
+    konsole --new-tab -p tabtitle="Agent 1 (Port 4200)" -e bash -c "$AGENT1_CMD" &
 elif [ "$TERMINAL" = "terminal" ]; then
-    # For macOS
-    terminal -e "cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 1 listening on port 4200 and connecting to port 4201...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent1_config.toml --listen; read -p 'Press Enter to close...'" &
+    # For macOS - Adjust if 'terminal -e' doesn't work as expected
+    terminal -e "$AGENT1_CMD" &
 fi
 
-# Save the PID of the first terminal
-AGENT1_PID=$!
-
-# Wait a bit for the first agent to start
-sleep 2
-
-# Start Agent 2 (listens on 4201, connects to 4200)
-if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent 2 (Port 4201)" -- bash -c "cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 2 listening on port 4201 and connecting to port 4200...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent2_config.toml --listen; read -p 'Press Enter to close...'" &
-elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent 2 (Port 4201)" -e "cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 2 listening on port 4201 and connecting to port 4200...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent2_config.toml --listen; read -p 'Press Enter to close...'" &
-elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent 2 (Port 4201)" -e bash -c "cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 2 listening on port 4201 and connecting to port 4200...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent2_config.toml --listen; read -p 'Press Enter to close...'" &
-elif [ "$TERMINAL" = "terminal" ]; then
-    # For macOS
-    terminal -e "cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 2 listening on port 4201 and connecting to port 4200...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent2_config.toml --listen; read -p 'Press Enter to close...'" &
+# Find and save the PID of the actual agent process
+AGENT1_PID=$(find_agent_pid "agent1_config.toml")
+if [ -z "$AGENT1_PID" ]; then
+    echo "Warning: Failed to get PID for Agent 1. Cleanup might be incomplete."
+else
+    echo "Agent 1 PID: $AGENT1_PID"
 fi
 
-# Save the PID of the second terminal
-AGENT2_PID=$!
+# Wait a bit for the first agent's server to potentially bind
+sleep 1
+
+# Start Agent 2 (listens on 4201, connects to 4200) - Run agent in foreground of terminal's shell
+AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 2 (PID \$$) listening on port 4201, connecting to 4200...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent2_config.toml --listen"
+if [ "$TERMINAL" = "gnome-terminal" ]; then
+    gnome-terminal --title="Agent 2 (Port 4201)" -- bash -c "$AGENT2_CMD" &
+elif [ "$TERMINAL" = "xterm" ]; then
+    xterm -title "Agent 2 (Port 4201)" -e "$AGENT2_CMD" &
+elif [ "$TERMINAL" = "konsole" ]; then
+    konsole --new-tab -p tabtitle="Agent 2 (Port 4201)" -e bash -c "$AGENT2_CMD" &
+elif [ "$TERMINAL" = "terminal" ]; then
+    # For macOS - Adjust if 'terminal -e' doesn't work as expected
+    terminal -e "$AGENT2_CMD" &
+fi
+
+# Find and save the PID of the actual agent process
+AGENT2_PID=$(find_agent_pid "agent2_config.toml")
+if [ -z "$AGENT2_PID" ]; then
+    echo "Warning: Failed to get PID for Agent 2. Cleanup might be incomplete."
+else
+    echo "Agent 2 PID: $AGENT2_PID"
+fi
 
 echo "Both agents started and listening on their respective ports:"
 echo "- Agent 1: Port 4200 (and connecting to port 4201)"
