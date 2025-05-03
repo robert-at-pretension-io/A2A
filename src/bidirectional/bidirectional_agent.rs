@@ -2106,7 +2106,8 @@ impl BidirectionalAgent {
                 }
             } else {
                 // Process the message locally using the agent's capabilities
-                match self.process_message_locally(input_trimmed).await { // Renamed function
+                debug!(message = %input_trimmed, "Processing input as local message.");
+                match self.process_message_locally(input_trimmed).await { // Renamed function logs internally
                     Ok(response) => {
                         println!("\n🤖 Agent response:\n{}\n", response);
                         info!(response_length = %response.len(), "Local processing successful, displayed response.");
@@ -2130,6 +2131,7 @@ impl BidirectionalAgent {
         let session_id = format!("session-{}", Uuid::new_v4());
         info!(new_session_id = %session_id, "Creating new session.");
         self.current_session_id = Some(session_id.clone());
+        trace!("Inserting new session ID into session_tasks map.");
         self.session_tasks.insert(session_id.clone(), Vec::new());
         session_id
     }
@@ -2137,10 +2139,13 @@ impl BidirectionalAgent {
     /// Add task ID to the current session's task list.
     #[instrument(skip(self, task), fields(agent_id = %self.agent_id, task_id = %task.id))]
     async fn save_task_to_history(&self, task: Task) -> Result<()> {
+        debug!("Attempting to save task to session history.");
         if let Some(session_id) = &self.current_session_id {
+            trace!(%session_id, "Current session ID found.");
             if let Some(mut tasks) = self.session_tasks.get_mut(session_id) {
                 info!(session_id = %session_id, "Adding task to session history.");
                 tasks.push(task.id.clone());
+                trace!(task_count = tasks.len(), "Task added to session map.");
             } else {
                  // This case should ideally not happen if ensure_session is called correctly
                  warn!(session_id = %session_id, "Session not found in map while trying to save task.");
@@ -2160,6 +2165,7 @@ impl BidirectionalAgent {
             info!(session_id = %session_id, "Fetching full tasks for current session.");
             if let Some(task_ids) = self.session_tasks.get(session_id) {
                  info!(session_id = %session_id, count = %task_ids.len(), "Found task IDs in session map.");
+                 trace!(?task_ids, "Task IDs to fetch.");
                 for task_id in task_ids.iter() {
                     debug!(task_id = %task_id, "Fetching details for task.");
                     // Use TaskQueryParams to get task with history
@@ -2168,15 +2174,20 @@ impl BidirectionalAgent {
                         history_length: None, // Get full history
                         metadata: None,
                     };
+                    trace!(?params, "Params for fetching task details.");
 
                     match self.task_service.get_task(params).await {
-                        Ok(task) => tasks.push(task),
+                        Ok(task) => {
+                            trace!(task_id = %task.id, "Successfully fetched task details.");
+                            tasks.push(task);
+                        },
                         Err(e) => {
                             error!(task_id = %task_id, session_id = %session_id, error = %e, "Failed to get task details for session history.");
                             // Continue trying to get other tasks, but log the error
                         }
                     }
                 }
+                 debug!(fetched_count = tasks.len(), "Finished fetching tasks for session.");
             } else {
                  warn!(session_id = %session_id, "Session ID not found in task map while fetching tasks.");
             }
@@ -2190,18 +2201,25 @@ impl BidirectionalAgent {
     // REMOVED clone_for_logging function
 
     /// Get the URL of the currently configured client from the agent's config
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     fn client_url(&self) -> Option<String> {
         // Use the target_url stored in the agent's own configuration
-        self.client_config.target_url.clone()
+        let url = self.client_config.target_url.clone();
+        trace!(?url, "Retrieved client URL from config.");
+        url
     }
 
     /// Run the agent server
+    #[instrument(skip(self), fields(agent_id = %self.agent_id, port = %self.port, bind_address = %self.bind_address))]
     pub async fn run(&self) -> Result<()> {
+        info!("Starting agent server run sequence.");
         // Create a cancellation token for graceful shutdown
+        debug!("Creating server shutdown token.");
         let shutdown_token = CancellationToken::new();
         let shutdown_token_clone = shutdown_token.clone();
 
         // Set up signal handlers for graceful shutdown
+        debug!("Setting up signal handlers (Ctrl+C).");
         let agent_id_clone = self.agent_id.clone(); // Clone for the signal handler task
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.expect("Failed to install CTRL+C handler");
@@ -2209,24 +2227,30 @@ impl BidirectionalAgent {
             let span = tracing::info_span!("signal_handler", agent_id = %agent_id_clone);
             let _enter = span.enter();
             info!("Received Ctrl+C shutdown signal.");
-            println!("Received shutdown signal, stopping server..."); // Keep console message
+            println!("\nReceived shutdown signal, stopping server..."); // Keep console message, add newline
             shutdown_token_clone.cancel();
+            debug!("Cancellation token cancelled by signal handler.");
         });
 
         // Create the agent card for this server
-        let agent_card = self.create_agent_card();
+        debug!("Creating agent card for server endpoint.");
+        let agent_card = self.create_agent_card(); // Logs internally
         info!(agent_name = %agent_card.name, "Generated agent card for server.");
 
         // Convert to JSON value for the server
+        trace!("Serializing agent card to JSON for server.");
         let agent_card_json = match serde_json::to_value(&agent_card) {
-             Ok(json) => json,
+             Ok(json) => {
+                 trace!(?json, "Agent card serialized successfully.");
+                 json
+             }
              Err(e) => {
                  error!(error = %e, "Failed to serialize agent card to JSON. Using empty object.");
                  serde_json::json!({})
              }
         };
 
-        info!(bind_address = %self.bind_address, port = %self.port, "Attempting to start server.");
+        info!(bind_address = %self.bind_address, port = %self.port, "Attempting to start server via run_server.");
         // Start the server - handle the Box<dyn Error> specially
         let server_handle = match run_server(
             self.port,
@@ -2251,6 +2275,7 @@ impl BidirectionalAgent {
         println!("Server running on http://{}:{}", self.bind_address, self.port); // Keep console message
 
         // Wait for the server to complete or be cancelled
+        info!("Waiting for server task to complete or be cancelled.");
         match server_handle.await {
             Ok(()) => {
                 info!("Server shut down gracefully.");
@@ -2264,16 +2289,21 @@ impl BidirectionalAgent {
     }
 
     /// Send a task to a remote agent using the A2A client, ensuring session consistency.
-    #[instrument(skip(self, message), fields(agent_id = %self.agent_id, message))]
+    #[instrument(skip(self, message), fields(agent_id = %self.agent_id, message_len = message.len()))]
     pub async fn send_task_to_remote(&mut self, message: &str) -> Result<Task> {
+        info!("Attempting to send task to remote agent.");
+        trace!(message = %message, "Message content for remote task.");
         // ① Ensure a session exists locally
-        self.ensure_session(); // Logs internally if new session created
+        debug!("Ensuring local session exists.");
+        self.ensure_session().await; // Logs internally if new session created
         let session_id = self.current_session_id.clone(); // Clone session_id for sending
+        trace!(?session_id, "Using session ID for remote task.");
 
         let remote_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
         info!(remote_url = %remote_url, session_id = ?session_id, "Attempting to send task to remote agent.");
 
         // Get mutable reference to the client
+        debug!("Getting A2A client instance.");
         let client = match self.client.as_mut() {
              Some(c) => c,
              None => {
@@ -2281,13 +2311,17 @@ impl BidirectionalAgent {
                  return Err(anyhow!("No remote client configured. Use :connect first."));
              }
         };
+        trace!("A2A client obtained.");
 
         // ② Send the task with the current session ID
+        debug!("Calling client.send_task.");
         let task_result = client.send_task(message, session_id.clone()).await; // Pass cloned session_id
+        trace!(?task_result, "Result from client.send_task.");
 
         let task = match task_result {
             Ok(t) => {
                 info!(remote_url = %remote_url, task_id = %t.id, status = ?t.status.state, "Successfully sent task and received response.");
+                trace!(?t, "Received task object from remote.");
                 t
             }
             Err(e) => {
@@ -2298,6 +2332,7 @@ impl BidirectionalAgent {
 
         // ③ Mirror the returned task locally (read-only copy)
         let task_id_clone = task.id.clone(); // Clone ID for logging messages
+        debug!(task_id = %task_id_clone, "Importing remote task locally for tracking.");
         match self.task_service.import_task(task.clone()).await {
             Ok(()) => {
                 info!(task_id = %task_id_clone, "Cached remote task locally.");
@@ -2309,6 +2344,7 @@ impl BidirectionalAgent {
         }
 
         // ④ Add the task (local mirror) to the current session history
+        debug!(task_id = %task.id, "Saving imported remote task to session history.");
         self.save_task_to_history(task.clone()).await?; // save_task_to_history logs internally
 
         info!(task_id = %task.id, session_id = ?session_id, "Remote task processing initiated and linked to session.");
@@ -2322,10 +2358,13 @@ impl BidirectionalAgent {
         info!(remote_url = %remote_url, "Attempting to get remote agent card.");
 
         // Check if we have a client configured
+        debug!("Checking for A2A client configuration.");
         if let Some(client) = &mut self.client {
+            trace!("A2A client found, calling get_agent_card.");
             match client.get_agent_card().await {
                  Ok(agent_card) => {
                     info!(remote_agent_name = %agent_card.name, remote_url = %remote_url, "Retrieved remote agent card successfully.");
+                    trace!(?agent_card, "Retrieved agent card details.");
                     Ok(agent_card)
                  }
                  Err(e) => {
@@ -2342,17 +2381,19 @@ impl BidirectionalAgent {
     /// Create an agent card for this agent instance.
     // No instrument macro needed here as it's synchronous and called from instrumented contexts.
     pub fn create_agent_card(&self) -> AgentCard {
-        debug!(agent_id = %self.agent_id, "Creating agent card.");
+        debug!(agent_id = %self.agent_id, "Creating agent card for this instance.");
         // Construct AgentCapabilities based on actual capabilities
         // TODO: Make these capabilities configurable or dynamically determined
+        trace!("Determining agent capabilities.");
         let capabilities = AgentCapabilities {
             push_notifications: true, // Example: Assuming supported
             state_transition_history: true, // Example: Assuming supported
-            streaming: false, // Example: Assuming not supported
+            streaming: false, // Example: Assuming not supported by default bidirectional agent server? Check run_server.
             // Add other fields from AgentCapabilities if they exist
         };
+        trace!(?capabilities, "Agent capabilities determined.");
 
-        AgentCard {
+        let card = AgentCard {
             // id field does not exist on AgentCard in types.rs
             name: self.agent_name.clone(), // Use the configured agent name (falls back to agent_id if None)
             description: Some("A bidirectional A2A agent that can process tasks and delegate to other agents".to_string()),
@@ -2366,12 +2407,9 @@ impl BidirectionalAgent {
             provider: None,
             skills: vec![], // skills is Vec<AgentSkill>, provide empty vec
             // Add other fields from AgentCard if they exist
-        }
-    }
-}
-
-/// Server configuration section
-#[derive(Clone, Debug, Deserialize)]
+        };
+        trace!(?card, "Agent card created.");
+        card
 pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
@@ -2514,18 +2552,32 @@ impl Default for BidirectionalAgentConfig {
 
 impl BidirectionalAgentConfig {
     /// Load configuration from a TOML file
+    #[instrument(skip(path), fields(path = %path.as_ref().display()))]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let config_str = fs::read_to_string(path)
+        debug!("Loading configuration from file.");
+        let config_str = fs::read_to_string(path.as_ref())
             .map_err(|e| anyhow!("Failed to read config file: {}", e))?;
-        
+        trace!(content_len = config_str.len(), "Read config file content.");
+
+        debug!("Parsing TOML configuration.");
         let mut config: BidirectionalAgentConfig = toml::from_str(&config_str)
             .map_err(|e| anyhow!("Failed to parse config file: {}", e))?;
-        
+        trace!("TOML parsing successful.");
+
         // Check for environment variable override for API key
+        debug!("Checking for CLAUDE_API_KEY environment variable override.");
         if config.llm.claude_api_key.is_none() {
-            config.llm.claude_api_key = std::env::var("CLAUDE_API_KEY").ok();
+            if let Ok(env_key) = std::env::var("CLAUDE_API_KEY") {
+                info!("Using Claude API key from environment variable.");
+                config.llm.claude_api_key = Some(env_key);
+            } else {
+                debug!("CLAUDE_API_KEY environment variable not found.");
+            }
+        } else {
+            debug!("Claude API key already set in config file.");
         }
-        
+
+        debug!("Configuration loaded successfully from file.");
         Ok(config)
     }
 }
