@@ -198,12 +198,10 @@ impl AgentDirectory {
         debug!("Adding or updating agent in local directory.");
         let entry = AgentDirectoryEntry {
             card: card.clone(), // Clone card for logging if needed later
-            last_seen: Utc::now(),
-            active: true,
         };
         self.agents.insert(agent_id.clone(), entry);
         trace!(agent_id = %agent_id, ?card, "Agent details added/updated.");
-    }
+    } // Removed extra closing brace here
 
     #[instrument(skip(self))]
     fn get_agent(&self, agent_id: &str) -> Option<AgentDirectoryEntry> {
@@ -302,7 +300,7 @@ impl AgentDirectory {
         debug!("Successfully loaded agent directory.");
         Ok(())
     }
-}
+} // Removed extra closing brace here
             last_seen: Utc::now(),
             active: true,
         };
@@ -2410,6 +2408,8 @@ impl BidirectionalAgent {
         };
         trace!(?card, "Agent card created.");
         card
+    } // Added missing closing brace for impl BidirectionalAgent
+}
 pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
