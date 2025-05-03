@@ -38,8 +38,6 @@ pub enum ToolError {
 
 // Implement conversion from std::io::Error
 impl From<std::io::Error> for ToolError {
-    fn from(e: std::io::Error) -> Self {
-        ToolError::IoError(e.to_string())
     fn from(e: anyhow::Error) -> Self {
         // Capture the context of the anyhow error
         ToolError::ExternalError(format!("{:?}", e))
