@@ -51,6 +51,13 @@ impl From<ServerError> for ToolError {
     }
 }
 
+// Implement conversion from anyhow::Error (for LLM client errors etc.)
+impl From<anyhow::Error> for ToolError {
+    fn from(e: anyhow::Error) -> Self {
+        ToolError::ExternalError(e.to_string())
+    }
+}
+
 
 // Implement conversion to ServerError
 impl From<ToolError> for ServerError {
