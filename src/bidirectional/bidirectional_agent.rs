@@ -703,7 +703,35 @@ impl BidirectionalAgent {
         self.log_agent_action("PROCESS_MSG_END", &format!("Responding for task {}: '{}'", task.id, response)).await;
         Ok(response)
     }
-    
+
+    /// Prints the REPL help message to the console.
+    fn print_repl_help(&self) {
+        println!("\n========================================");
+        println!("⚡ Bidirectional A2A Agent REPL Commands ⚡");
+        println!("========================================");
+        println!("  :help            - Show this help message");
+        println!("  :card            - Show agent card");
+        println!("  :servers         - List known remote servers");
+        println!("  :connect URL     - Connect to a remote agent at URL");
+        println!("  :connect HOST:PORT - Connect to a remote agent by host and port");
+        println!("  :connect N       - Connect to Nth server in the server list");
+        println!("  :disconnect      - Disconnect from current remote agent");
+        println!("  :remote MSG      - Send message as task to connected agent");
+        println!("  :listen PORT     - Start listening server on specified port");
+        println!("  :stop            - Stop the currently running server");
+        println!("  :session new     - Create a new conversation session");
+        println!("  :session show    - Show the current session ID");
+        println!("  :history         - Show message history for current session");
+        println!("  :tasks           - List all tasks in the current session");
+        println!("  :task ID         - Show details for a specific task");
+        println!("  :artifacts ID    - Show artifacts for a specific task");
+        println!("  :cancelTask ID   - Cancel a running task");
+        println!("  :file PATH MSG   - Send message with a file attachment");
+        println!("  :data JSON MSG   - Send message with JSON data");
+        println!("  :quit            - Exit the REPL");
+        println!("========================================\n");
+    }
+
     // Helper to extract text from task
     fn extract_text_from_task(&self, task: &Task) -> String {
         // First check the status message
@@ -745,32 +773,8 @@ impl BidirectionalAgent {
     /// Run an interactive REPL (Read-Eval-Print Loop)
     pub async fn run_repl(&mut self) -> Result<()> {
         self.log_agent_action("REPL_START", "Entering REPL mode.").await;
-        println!("\n========================================");
-        println!("⚡ Bidirectional A2A Agent REPL Mode ⚡");
-        println!("========================================");
-        println!("Type a message to process it directly with the agent.");
-        println!("Special commands:");
-        println!("  :help            - Show this help message");
-        println!("  :card            - Show agent card");
-        println!("  :servers         - List known remote servers");
-        println!("  :connect URL     - Connect to a remote agent at URL");
-        println!("  :connect HOST:PORT - Connect to a remote agent by host and port");
-        println!("  :connect N       - Connect to Nth server in the server list");
-        println!("  :disconnect      - Disconnect from current remote agent");
-        println!("  :remote MSG      - Send message as task to connected agent");
-        println!("  :listen PORT     - Start listening server on specified port");
-        println!("  :stop            - Stop the currently running server");
-        println!("  :session new     - Create a new conversation session");
-        println!("  :session show    - Show the current session ID");
-        println!("  :history         - Show message history for current session");
-        println!("  :tasks           - List all tasks in the current session");
-        println!("  :task ID         - Show details for a specific task");
-        println!("  :artifacts ID    - Show artifacts for a specific task");
-        println!("  :cancelTask ID   - Cancel a running task");
-        println!("  :file PATH MSG   - Send message with a file attachment");
-        println!("  :data JSON MSG   - Send message with JSON data");
-        println!("  :quit            - Exit the REPL");
-        println!("========================================\n");
+        // Print the initial help message
+        self.print_repl_help();
 
         // --- Spawn Background Task for Initial Connection ---
         if let Some(initial_url) = self.client_url() {
@@ -1022,30 +1026,7 @@ impl BidirectionalAgent {
 
                 // Handle special commands using input_trimmed
                 if input_trimmed == ":help" {
-                    println!("\n========================================");
-                    println!("⚡ Bidirectional A2A Agent REPL Commands ⚡");
-                    println!("========================================");
-                    println!("  :help            - Show this help message");
-                    println!("  :card            - Show agent card");
-                    println!("  :servers         - List known remote servers");
-                    println!("  :connect URL     - Connect to a remote agent at URL");
-                    println!("  :connect HOST:PORT - Connect to a remote agent by host and port");
-                    println!("  :connect N       - Connect to Nth server in the server list");
-                    println!("  :disconnect      - Disconnect from current remote agent");
-                    println!("  :remote MSG      - Send message as task to connected agent");
-                    println!("  :listen PORT     - Start listening server on specified port");
-                    println!("  :stop            - Stop the currently running server");
-                    println!("  :session new     - Create a new conversation session");
-                    println!("  :session show    - Show the current session ID");
-                    println!("  :history         - Show message history for current session");
-                    println!("  :tasks           - List all tasks in the current session");
-                    println!("  :task ID         - Show details for a specific task");
-                    println!("  :artifacts ID    - Show artifacts for a specific task");
-                    println!("  :cancelTask ID   - Cancel a running task");
-                    println!("  :file PATH MSG   - Send message with a file attachment");
-                    println!("  :data JSON MSG   - Send message with JSON data");
-                    println!("  :quit            - Exit the REPL");
-                    println!("========================================\n");
+                    self.print_repl_help();
                 } else if input_trimmed == ":quit" {
                     println!("Exiting REPL. Goodbye!");
                     self.log_agent_action("REPL_CMD_QUIT", "User initiated quit.").await;
