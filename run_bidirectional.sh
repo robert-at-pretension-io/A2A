@@ -117,6 +117,7 @@ system_prompt = "You are an AI agent that can communicate with other agents."
 [mode]
 repl = true
 get_agent_card = false # Explicitly add the field
+repl_log_file = "repl_interactions.log" # Log REPL to this file
 EOF
 
 # Create config file for Agent 2 (Port 4201)
@@ -136,6 +137,7 @@ system_prompt = "You are an AI agent that can communicate with other agents."
 [mode]
 repl = true
 get_agent_card = false # Explicitly add the field
+repl_log_file = "repl_interactions.log" # Log REPL to the same file
 EOF
 
 # Start Agent 1 (listens on 4200, connects to 4201) - Run agent in foreground of terminal's shell

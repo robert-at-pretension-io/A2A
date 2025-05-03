@@ -124,9 +124,14 @@ use std::{
     error::Error as StdError, 
     fs, 
     path::Path,
-    io::{self, Write, BufRead}
+    io::{self, Write, BufRead},
+    path::PathBuf, // Import PathBuf
 }; // Import StdError for error mapping and IO
-use tokio::time::sleep;
+use tokio::{
+    fs::OpenOptions, // Import OpenOptions for async file I/O
+    io::AsyncWriteExt, // Import AsyncWriteExt for write_all
+    time::sleep,
+};
 use tokio_util::sync::CancellationToken;
 use toml;
 use tracing::{debug, error, info, warn};
@@ -489,6 +494,9 @@ pub struct BidirectionalAgent {
     // Session management
     current_session_id: Option<String>,
     session_tasks: Arc<DashMap<String, Vec<String>>>, // Map session ID to task IDs
+
+    // REPL logging
+    repl_log_file: Option<std::path::PathBuf>,
 }
 
 impl BidirectionalAgent {
@@ -569,6 +577,9 @@ impl BidirectionalAgent {
             // Initialize session management
             current_session_id: None,
             session_tasks: Arc::new(DashMap::new()),
+
+            // Initialize REPL log file path
+            repl_log_file: config.mode.repl_log_file.map(std::path::PathBuf::from),
         })
     }
 
@@ -840,17 +851,32 @@ impl BidirectionalAgent {
             io::stdout().flush().ok();
             
             input.clear();
-            reader.read_line(&mut input)?;
-            
-            let input = input.trim();
-            
-            if input.is_empty() {
+            if reader.read_line(&mut input)? == 0 {
+                // EOF reached (e.g., Ctrl+D)
+                println!("EOF detected. Exiting REPL.");
+                // Perform cleanup similar to :quit
+                if let Some(token) = server_shutdown_token.take() {
+                    println!("Shutting down server...");
+                    token.cancel();
+                }
+                break;
+            }
+
+            let input_trimmed = input.trim();
+
+            // Log user input before processing
+            self.log_repl_interaction("INPUT", input_trimmed).await;
+
+            if input_trimmed.is_empty() {
                 continue;
             }
-            
-            if input.starts_with(":") {
-                // Handle special commands
-                if input == ":help" {
+
+            if input_trimmed.starts_with(":") {
+                // Log the command itself
+                self.log_repl_interaction("COMMAND", input_trimmed).await;
+
+                // Handle special commands using input_trimmed
+                if input_trimmed == ":help" {
                     println!("\n========================================");
                     println!("⚡ Bidirectional A2A Agent REPL Commands ⚡");
                     println!("========================================");
@@ -875,17 +901,16 @@ impl BidirectionalAgent {
                     println!("  :data JSON MSG   - Send message with JSON data");
                     println!("  :quit            - Exit the REPL");
                     println!("========================================\n");
-                } else if input == ":quit" {
+                } else if input_trimmed == ":quit" {
                     println!("Exiting REPL. Goodbye!");
-                    
+
                     // Shutdown server if running
                     if let Some(token) = server_shutdown_token.take() {
                         println!("Shutting down server...");
                         token.cancel();
                     }
-                    
                     break;
-                } else if input == ":card" {
+                } else if input_trimmed == ":card" {
                     let card = self.create_agent_card();
                     println!("\n📇 Agent Card:");
                     println!("  Name: {}", card.name);
@@ -899,7 +924,7 @@ impl BidirectionalAgent {
                     println!("  Input Modes: {}", card.default_input_modes.join(", "));
                     println!("  Output Modes: {}", card.default_output_modes.join(", "));
                     println!("");
-                } else if input == ":servers" {
+                } else if input_trimmed == ":servers" {
                     // List known servers
                     if known_servers.is_empty() {
                         println!("No known servers. Connect to a server first with :connect URL");
@@ -913,7 +938,7 @@ impl BidirectionalAgent {
                         println!("\nUse :connect N to connect to a server by number");
                         println!("");
                     }
-                } else if input == ":disconnect" {
+                } else if input_trimmed == ":disconnect" {
                     // Disconnect from current server
                     if self.client.is_some() {
                         let url = self.client_url().unwrap_or_else(|| "unknown".to_string());
@@ -922,9 +947,9 @@ impl BidirectionalAgent {
                     } else {
                         println!("Not connected to any server");
                     }
-                } else if input.starts_with(":connect ") {
-                    let target = input.trim_start_matches(":connect ").trim();
-                    
+                } else if input_trimmed.starts_with(":connect ") {
+                    let target = input_trimmed.trim_start_matches(":connect ").trim();
+
                     // Check if it's a number (referring to a server in the list)
                     if let Ok(server_idx) = target.parse::<usize>() {
                         if server_idx > 0 && server_idx <= known_servers.len() {
@@ -988,9 +1013,9 @@ impl BidirectionalAgent {
                             }
                         }
                     }
-                } else if input.starts_with(":listen ") {
-                    let port_str = input.trim_start_matches(":listen ").trim();
-                    
+                } else if input_trimmed.starts_with(":listen ") {
+                    let port_str = input_trimmed.trim_start_matches(":listen ").trim();
+
                     // Check if already running
                     if server_running {
                         println!("⚠️ Server already running. Stop it first with :stop");
@@ -1085,7 +1110,7 @@ impl BidirectionalAgent {
                             println!("❌ Error: Invalid port number. Please provide a valid port.");
                         }
                     }
-                } else if input == ":stop" {
+                } else if input_trimmed == ":stop" {
                     // Stop the server if running
                     if let Some(token) = server_shutdown_token.take() {
                         println!("Shutting down server...");
@@ -1095,8 +1120,8 @@ impl BidirectionalAgent {
                     } else {
                         println!("⚠️ No server currently running");
                     }
-                } else if input.starts_with(":remote ") {
-                    let message = input.trim_start_matches(":remote ").trim();
+                } else if input_trimmed.starts_with(":remote ") {
+                    let message = input_trimmed.trim_start_matches(":remote ").trim();
                     if message.is_empty() {
                         println!("❌ Error: No message provided. Use :remote MESSAGE");
                         continue;
@@ -1140,16 +1165,16 @@ impl BidirectionalAgent {
                             println!("❌ Error sending task: {}", e);
                         }
                     }
-                } else if input == ":session new" {
+                } else if input_trimmed == ":session new" {
                     let session_id = self.create_new_session();
                     println!("✅ Created new session: {}", session_id);
-                } else if input == ":session show" {
+                } else if input_trimmed == ":session show" {
                     if let Some(session_id) = &self.current_session_id {
                         println!("🔍 Current session: {}", session_id);
                     } else {
                         println!("⚠️ No active session. Use :session new to create one.");
                     }
-                } else if input == ":history" {
+                } else if input_trimmed == ":history" {
                     if let Some(session_id) = &self.current_session_id {
                         let tasks = self.get_current_session_tasks().await?;
                         if tasks.is_empty() {
@@ -1189,7 +1214,7 @@ impl BidirectionalAgent {
                     } else {
                         println!("⚠️ No active session. Use :session new to create one.");
                     }
-                } else if input == ":tasks" {
+                } else if input_trimmed == ":tasks" {
                     if let Some(session_id) = &self.current_session_id {
                         let tasks = self.get_current_session_tasks().await?;
                         if tasks.is_empty() {
@@ -1203,8 +1228,8 @@ impl BidirectionalAgent {
                     } else {
                         println!("⚠️ No active session. Use :session new to create one.");
                     }
-                } else if input.starts_with(":task ") {
-                    let task_id = input.trim_start_matches(":task ").trim();
+                } else if input_trimmed.starts_with(":task ") {
+                    let task_id = input_trimmed.trim_start_matches(":task ").trim();
                     if task_id.is_empty() {
                         println!("❌ Error: No task ID provided. Use :task TASK_ID");
                     } else {
@@ -1248,8 +1273,8 @@ impl BidirectionalAgent {
                             }
                         }
                     }
-                } else if input.starts_with(":artifacts ") {
-                    let task_id = input.trim_start_matches(":artifacts ").trim();
+                } else if input_trimmed.starts_with(":artifacts ") {
+                    let task_id = input_trimmed.trim_start_matches(":artifacts ").trim();
                     if task_id.is_empty() {
                         println!("❌ Error: No task ID provided. Use :artifacts TASK_ID");
                     } else {
@@ -1282,8 +1307,8 @@ impl BidirectionalAgent {
                             }
                         }
                     }
-                } else if input.starts_with(":cancelTask ") {
-                    let task_id = input.trim_start_matches(":cancelTask ").trim();
+                } else if input_trimmed.starts_with(":cancelTask ") {
+                    let task_id = input_trimmed.trim_start_matches(":cancelTask ").trim();
                     if task_id.is_empty() {
                         println!("❌ Error: No task ID provided. Use :cancelTask TASK_ID");
                     } else {
@@ -1304,17 +1329,22 @@ impl BidirectionalAgent {
                         }
                     }
                 } else {
-                    println!("❌ Unknown command: {}", input);
+                    println!("❌ Unknown command: {}", input_trimmed);
                     println!("Type :help for a list of commands");
                 }
             } else {
                 // Process the message directly with the agent
-                match self.process_message_directly(input).await {
+                match self.process_message_directly(input_trimmed).await {
                     Ok(response) => {
                         println!("\n🤖 Agent response:\n{}\n", response);
+                        // Log agent response
+                        self.log_repl_interaction("OUTPUT", &response).await;
                     },
                     Err(e) => {
-                        println!("❌ Error processing message: {}", e);
+                        let error_msg = format!("Error processing message: {}", e);
+                        println!("❌ {}", error_msg);
+                        // Log the error
+                        self.log_repl_interaction("ERROR", &error_msg).await;
                     }
                 }
             }
@@ -1362,7 +1392,51 @@ impl BidirectionalAgent {
         }
         Ok(tasks)
     }
-    
+
+    /// Logs REPL interaction to the configured file
+    async fn log_repl_interaction(&self, interaction_type: &str, content: &str) {
+        if let Some(log_path) = &self.repl_log_file {
+            let timestamp = Utc::now().to_rfc3339();
+            // Format: Timestamp [AgentID] TYPE: Content
+            let log_entry = format!(
+                "{} [{}] {}: {}\n",
+                timestamp, self.agent_id, interaction_type, content.trim() // Trim content for logging
+            );
+
+            // Use tokio::fs for async file operations
+            match OpenOptions::new()
+                .create(true) // Create the file if it doesn't exist
+                .append(true) // Append to the file
+                .open(log_path)
+                .await
+            {
+                Ok(mut file) => {
+                    // Use async write_all
+                    if let Err(e) = file.write_all(log_entry.as_bytes()).await {
+                        // Log error to stderr, don't crash the agent
+                        eprintln!(
+                            "⚠️ [Agent {}] Error writing to REPL log file '{}': {}",
+                            self.agent_id, log_path.display(), e
+                        );
+                    }
+                    // Ensure buffer is flushed (though write_all usually handles this)
+                    if let Err(e) = file.flush().await {
+                         eprintln!(
+                            "⚠️ [Agent {}] Error flushing REPL log file '{}': {}",
+                            self.agent_id, log_path.display(), e
+                        );
+                    }
+                }
+                Err(e) => {
+                     eprintln!(
+                        "⚠️ [Agent {}] Error opening REPL log file '{}': {}",
+                        self.agent_id, log_path.display(), e
+                    );
+                }
+            }
+        }
+    }
+
     /// Get the URL of the currently connected client
     fn client_url(&self) -> Option<String> {
         // Since we don't have a getter for the URL in the client,
@@ -1548,6 +1622,10 @@ pub struct ModeConfig {
     // Auto-listen on server port at startup
     #[serde(default)]
     pub auto_listen: bool,
+
+    // Optional file to append REPL interactions (input/output)
+    #[serde(default)]
+    pub repl_log_file: Option<String>,
 }
 
 // Default functions
