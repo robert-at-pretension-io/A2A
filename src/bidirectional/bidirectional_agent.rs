@@ -788,12 +788,15 @@ impl BidirectionalAgent {
                 let log_closure_bind_address = bind_address.clone();
                 // port is Copy, no need to clone explicitly
 
-                // Define the helper closure. It captures the clones from the outer scope.
-                let log_action = move |action_type: String, details: String| async move {
-                     // Use the cloned variables inside the closure
+                // Define the helper closure. Capture clones by reference.
+                // The closure itself doesn't need `move` because the references it captures
+                // live for the duration of the `tokio::spawn` block.
+                // The inner `async` block needs `move` to capture the String args.
+                let log_action = |action_type: String, details: String| async move {
+                     // Use the cloned variables captured by reference
                      if let Some(log_path) = &log_closure_repl_log_file {
                         let timestamp = Utc::now().to_rfc3339();
-                        // Use cloned Strings/values in format!
+                        // Use captured clones and moved String args in format!
                         let log_entry = format!(
                             "{} [{}@{}:{}] {}: {}\n",
                             timestamp, log_closure_agent_id, log_closure_bind_address, port, action_type, details.trim()
