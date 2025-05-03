@@ -3,10 +3,9 @@
 /// This module defines the interfaces and base implementations for routing tasks
 /// to the appropriate execution methods (local tools, remote agents, etc.)
 
-use async_trait::async_trait;
-use async_trait::async_trait;
+use async_trait::async_trait; // Keep only one
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json}; // <-- Import json macro
+use serde_json::{Value, json}; // Keep json macro import
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -66,9 +65,9 @@ pub enum RoutingDecision {
         reason: String,
     },
 }
-
+ 
 /// Trait for task routers that use LLM capabilities
-#[async_trait]
+#[async_trait] // <-- Add this attribute here
 pub trait LlmTaskRouterTrait: Send + Sync {
     /// Determines the routing strategy for a task
     async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError>;

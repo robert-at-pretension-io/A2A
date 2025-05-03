@@ -674,8 +674,8 @@ If no specific parameters are needed or mentioned in the task, respond with an e
         }
     }
 }
-
-#[async_trait]
+ 
+// REMOVE #[async_trait] from the impl block
 impl LlmTaskRouterTrait for BidirectionalTaskRouter {
     // Match the trait signature: takes TaskSendParams, returns Result<RoutingDecision, ServerError>
     #[instrument(skip(self, params), fields(task_id = %params.id))]
