@@ -782,15 +782,21 @@ impl BidirectionalAgent {
             let known_servers = self.known_servers.clone(); // Clone Arc<DashMap>
 
             tokio::spawn(async move {
-                // Helper closure for logging within the spawned task
-                // Takes owned Strings to satisfy 'static lifetime requirement of tokio::spawn
-                let log_action = |action_type: String, details: String| async move { // Add move here
-                     if let Some(log_path) = &repl_log_file { // repl_log_file is already owned (cloned Option<PathBuf>)
+                // Clone data needed by the closure *once* before defining it.
+                let log_closure_repl_log_file = repl_log_file.clone();
+                let log_closure_agent_id = agent_id.clone();
+                let log_closure_bind_address = bind_address.clone();
+                // port is Copy, no need to clone explicitly
+
+                // Define the helper closure. It captures the clones from the outer scope.
+                let log_action = move |action_type: String, details: String| async move {
+                     // Use the cloned variables inside the closure
+                     if let Some(log_path) = &log_closure_repl_log_file {
                         let timestamp = Utc::now().to_rfc3339();
-                        // Use owned Strings in format!
+                        // Use cloned Strings/values in format!
                         let log_entry = format!(
                             "{} [{}@{}:{}] {}: {}\n",
-                            timestamp, agent_id, bind_address, port, action_type, details.trim() // agent_id, bind_address, port are owned copies
+                            timestamp, log_closure_agent_id, log_closure_bind_address, port, action_type, details.trim()
                         );
                         // Open the file asynchronously
                         match OpenOptions::new()
