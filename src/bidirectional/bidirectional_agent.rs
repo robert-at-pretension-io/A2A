@@ -791,8 +791,9 @@ impl BidirectionalAgent {
         debug!("Initializing ToolExecutor.");
         let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
             &config.tools.enabled,            // Pass slice of enabled tool names
-            llm.clone(),                      // Pass LLM client for tools that need it
-            Some(agent_directory.clone()),    // Pass agent directory
+            Some(llm.clone()),                // Pass LLM client (as Option)
+            Some(agent_directory.clone()),    // Pass agent directory (as Option)
+            Some(agent_registry.clone()),     // <-- Pass canonical AgentRegistry (as Option)
         ));
         trace!("ToolExecutor created.");
 

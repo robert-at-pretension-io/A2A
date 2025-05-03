@@ -40,14 +40,17 @@ pub enum ToolError {
 impl From<std::io::Error> for ToolError {
     fn from(e: std::io::Error) -> Self {
         ToolError::IoError(e.to_string())
-    }
-}
-
-// Implement conversion from anyhow::Error
-impl From<anyhow::Error> for ToolError {
     fn from(e: anyhow::Error) -> Self {
         // Capture the context of the anyhow error
         ToolError::ExternalError(format!("{:?}", e))
+    }
+}
+
+// Implement conversion from ServerError (for registry errors etc.)
+impl From<ServerError> for ToolError {
+    fn from(e: ServerError) -> Self {
+        // Convert ServerError (like registry discovery errors) into a ToolError
+        ToolError::ExternalError(format!("Server error during tool execution: {}", e))
     }
 }
 
@@ -343,14 +346,24 @@ impl ToolExecutor {
             match name.as_str() {
                 "llm" => {
                     if !map.contains_key("llm") {
-                        map.insert("llm".into(), Box::new(LlmTool::new(llm.unwrap().clone())));
-                        tracing::debug!("Tool 'llm' registered.");
+                        // Check if llm Option is Some before unwrapping
+                        if let Some(llm_client) = llm.clone() { // Clone the Option<Arc<...>>
+                            map.insert("llm".into(), Box::new(LlmTool::new(llm_client))); // Pass the Arc directly
+                            tracing::debug!("Tool 'llm' registered.");
+                        } else {
+                            tracing::warn!("Cannot register 'llm' tool: LLM client not provided.");
+                        }
                     }
                 }
                 "summarize" => {
                      if !map.contains_key("summarize") {
-                        map.insert("summarize".into(), Box::new(SummarizeTool::new(llm.unwrap().clone())));
-                        tracing::debug!("Tool 'summarize' registered.");
+                        // Check if llm Option is Some before unwrapping
+                        if let Some(llm_client) = llm.clone() { // Clone the Option<Arc<...>>
+                            map.insert("summarize".into(), Box::new(SummarizeTool::new(llm_client))); // Pass the Arc directly
+                            tracing::debug!("Tool 'summarize' registered.");
+                        } else {
+                            tracing::warn!("Cannot register 'summarize' tool: LLM client not provided.");
+                        }
                     }
                 }
                 "list_agents" => {
