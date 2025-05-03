@@ -229,6 +229,69 @@ impl Tool for SummarizeTool {
     fn capabilities(&self) -> &[&'static str] { &["summarize", "text_manipulation"] }
 }
 
+/// Tool to remember another agent by storing its card in the canonical AgentRegistry
+pub struct RememberAgentTool {
+    // This tool needs access to the canonical registry
+    agent_registry: Arc<crate::server::agent_registry::AgentRegistry>, // Use canonical registry type
+}
+
+impl RememberAgentTool {
+    // Constructor requires the AgentRegistry
+    pub fn new(agent_registry: Arc<crate::server::agent_registry::AgentRegistry>) -> Self {
+        Self { agent_registry }
+    }
+}
+
+#[async_trait]
+impl Tool for RememberAgentTool {
+    fn name(&self) -> &str { "remember_agent" }
+
+    fn description(&self) -> &str { "Discovers and stores/updates another agent's information in the registry using its base URL." }
+
+    #[instrument(skip(self, params), name="tool_remember_agent")]
+    async fn execute(&self, params: Value) -> Result<Value, ToolError> {
+        tracing::info!("Executing 'remember_agent' tool."); // Use tracing consistently
+        tracing::trace!(?params, "Tool parameters received.");
+
+        // Extract the agent_base_url parameter
+        tracing::debug!("Extracting 'agent_base_url' parameter.");
+        let agent_url = params.get("agent_base_url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                tracing::warn!("Missing or invalid 'agent_base_url' parameter.");
+                ToolError::InvalidParams(self.name().to_string(), "Missing or invalid string parameter: 'agent_base_url'".to_string())
+            })?
+            .trim(); // Trim whitespace
+
+        if agent_url.is_empty() {
+             tracing::warn!("'agent_base_url' parameter is empty.");
+             return Err(ToolError::InvalidParams(self.name().to_string(), "'agent_base_url' cannot be empty".to_string()));
+        }
+        // Basic URL validation (can be enhanced)
+        if !agent_url.starts_with("http://") && !agent_url.starts_with("https://") {
+            tracing::warn!(%agent_url, "Invalid URL format for 'agent_base_url'.");
+            return Err(ToolError::InvalidParams(self.name().to_string(), "'agent_base_url' must start with http:// or https://".to_string()));
+        }
+        tracing::debug!(%agent_url, "Agent base URL extracted and validated.");
+
+        // Use the registry's discover method. This verifies the agent is reachable
+        // and fetches the latest card from the source URL before storing/updating.
+        tracing::info!(%agent_url, "Attempting to discover and register/update agent via AgentRegistry.");
+        // Use ? to propagate ServerError, which will be converted to ToolError::ExternalError
+        self.agent_registry.discover(agent_url).await?;
+
+        // If discover succeeds, the agent is now in the registry.
+        // We don't easily get the name back here without changing AgentRegistry::discover.
+        // Return a success message using the URL.
+        let response_text = format!("Successfully discovered and remembered agent from URL '{}'.", agent_url);
+        tracing::info!(%response_text);
+        Ok(json!(response_text)) // Return simple text confirmation
+    }
+
+    fn capabilities(&self) -> &[&'static str] { &["agent_registry", "agent_discovery", "agent_management"] }
+}
+
+
 // --- End New Tools ---
 
 
@@ -237,6 +300,12 @@ impl Tool for SummarizeTool {
 pub struct ToolExecutor {
     /// Registered tools that can be executed
     pub tools: Arc<HashMap<String, Box<dyn Tool>>>,
+    // Add registry for tools that need it
+    agent_registry: Option<Arc<crate::server::agent_registry::AgentRegistry>>, // Use canonical type
+    // Keep local directory for tools that might still use it (like list_agents)
+    agent_directory: Option<Arc<AgentDirectory>>,
+    // Keep LLM client for tools that need it
+    llm: Option<Arc<dyn LlmClient>>,
 }
 
 impl ToolExecutor {
@@ -250,14 +319,18 @@ impl ToolExecutor {
         
         Self {
             tools: Arc::new(tools),
+            agent_registry: None, // Initialize new fields
+            agent_directory: None,
+            llm: None,
         }
     }
 
     /// Creates a new ToolExecutor with tools enabled via configuration.
     pub fn with_enabled_tools(
         enabled: &[String],
-        llm: Arc<dyn LlmClient>, // LLM client needed for some tools
+        llm: Option<Arc<dyn LlmClient>>, // Make LLM optional
         agent_directory: Option<Arc<AgentDirectory>>, // Optional agent directory for agent-related tools
+        agent_registry: Option<Arc<crate::server::agent_registry::AgentRegistry>>, // Add registry parameter
     ) -> Self {
         let mut map: HashMap<String, Box<dyn Tool>> = HashMap::new();
 
@@ -289,6 +362,16 @@ impl ToolExecutor {
                         }
                     }
                 }
+                "remember_agent" => { // <-- Register the new tool
+                    if !map.contains_key("remember_agent") {
+                        if let Some(reg) = agent_registry.clone() {
+                            map.insert("remember_agent".into(), Box::new(RememberAgentTool::new(reg)));
+                            tracing::debug!("Tool 'remember_agent' registered.");
+                        } else {
+                            tracing::warn!("Cannot register 'remember_agent' tool: agent_registry not provided.");
+                        }
+                    }
+                }
                 "echo" => { /* already registered */ }
                 unknown => {
                     tracing::warn!("Unknown tool '{}' in config [tools].enabled, ignoring.", unknown);
@@ -297,53 +380,101 @@ impl ToolExecutor {
         }
         
         tracing::info!("ToolExecutor initialized with tools: {:?}", map.keys());
-        Self { tools: Arc::new(map) }
+        Self {
+            tools: Arc::new(map),
+            agent_registry, // Store the registry
+            agent_directory, // Store the directory
+            llm, // Store the LLM client
+        }
     }
 
 
     /// Executes a specific tool by name with the given JSON parameters.
+    #[instrument(skip(self, params), fields(tool_name))] // Add tracing span
     pub async fn execute_tool(&self, tool_name: &str, params: Value) -> Result<Value, ToolError> {
+        tracing::debug!("Attempting to execute tool."); // Add tracing
+        tracing::trace!(?params, "Parameters for tool execution."); // Add tracing
         match self.tools.get(tool_name) {
-            Some(tool) => tool.execute(params).await,
-            None => Err(ToolError::NotFound(tool_name.to_string())),
+            Some(tool) => {
+                tracing::info!("Executing tool."); // Add tracing
+                let result = tool.execute(params).await;
+                match &result {
+                    Ok(v) => {
+                        tracing::info!("Tool execution successful."); // Add tracing
+                        tracing::trace!(output = %v, "Tool output value."); // Add tracing
+                    },
+                    Err(e) => {
+                        tracing::error!(error = %e, "Tool execution failed."); // Add tracing
+                    }
+                }
+                result
+            },
+            None => {
+                tracing::warn!("Tool not found in registered tools."); // Add tracing
+                Err(ToolError::NotFound(tool_name.to_string()))
+            },
         }
     }
 
     /// Helper function to extract parameters from a message for a specific tool
+    #[instrument(skip(self, message), name="extract_params")] // Add tracing span
     fn extract_params_from_message(&self, message: &Message) -> Value {
+        tracing::trace!("Extracting parameters from message parts."); // Add tracing
         // Try to extract parameters from text parts
         for part in &message.parts {
+            tracing::trace!(part_type = ?part, "Checking part for parameters."); // Add tracing
             if let Part::TextPart(tp) = part {
+                tracing::trace!(text = %tp.text, "Checking TextPart for parameters."); // Add tracing
                 // Check if the text could be JSON
-                if tp.text.trim().starts_with('{') && tp.text.trim().ends_with('}') {
+                let trimmed_text = tp.text.trim(); // Use trimmed text
+                if trimmed_text.starts_with('{') && trimmed_text.ends_with('}') {
                     // Try to parse as JSON
-                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&tp.text) {
+                    tracing::trace!("TextPart looks like JSON, attempting parse."); // Add tracing
+                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed_text) { // Use trimmed text
+                        tracing::info!("Successfully parsed JSON parameters from TextPart."); // Add tracing
+                        tracing::trace!(?json_val, "Parsed JSON parameters."); // Add tracing
                         return json_val;
+                    } else {
+                        tracing::trace!("Failed to parse TextPart as JSON, treating as simple text."); // Add tracing
                     }
                 }
                 
-                // Default to simple text param
+                // Default to simple text param if not valid JSON
+                tracing::info!("Using TextPart content as simple 'text' parameter."); // Add tracing
                 return json!({"text": tp.text});
+            } else {
+                tracing::trace!(part_type = ?part, "Skipping non-TextPart for parameter extraction."); // Add tracing
             }
         }
         
         // Default to empty params if no suitable text part is found
+        tracing::warn!("No suitable TextPart found in message for parameter extraction. Returning empty params."); // Add tracing
         json!({})
     }
 
     /// Executes a task locally using the specified tool(s).
+    /// Updates the task state and artifacts based on the tool execution result.
+    #[instrument(skip(self, task, tool_names), fields(task_id = %task.id, ?tool_names))] // Add tracing span
     pub async fn execute_task_locally(&self, task: &mut Task, tool_names: &[String]) -> Result<(), ServerError> {
-        // Use the echo tool as a default fallback if no tool is specified
+        tracing::info!("Executing task locally."); // Add tracing
+        // Use the echo tool as a default fallback if no tool is specified or found
         let default_tool_name = "echo";
-        
-        // For now, assume only one tool is specified or use the first one.
-        let requested_tool_name = match tool_names.first() {
-            Some(name) => name.as_str(),
-            None => {
-                // Update task with warning about no tool specified
-                let warning_msg = format!("No tool specified - using default '{}' tool instead.", default_tool_name);
-                
-                // Add this warning to task history for debugging
+
+        // Determine the primary tool to use
+        let requested_tool_name = tool_names.first().map(|s| s.as_str()).unwrap_or(default_tool_name);
+        tracing::debug!(%requested_tool_name, "Requested tool name."); // Add tracing
+
+        // Check if the requested tool exists and is registered
+        let tool_name = if self.tools.contains_key(requested_tool_name) {
+            tracing::info!("Requested tool '{}' found and registered.", requested_tool_name); // Add tracing
+            requested_tool_name
+        } else {
+            tracing::warn!(%requested_tool_name, %default_tool_name, "Requested tool not found or registered. Falling back to default tool."); // Add tracing
+            // Add a warning message to the task history
+            let warning_msg = format!("Tool '{}' not found - using default '{}' tool instead.",
+                                     requested_tool_name, default_tool_name);
+            let warning_message = Message {
+                role: Role::Agent, // System/Agent message indicating fallback
                 let mut history = task.history.clone().unwrap_or_default();
                 history.push(Message {
                     role: Role::Agent, // Using Agent role as system role isn't available
@@ -353,63 +484,222 @@ impl ToolExecutor {
                         metadata: None,
                     })],
                     metadata: None,
-                });
-                task.history = Some(history);
-                
-                // Use the default tool
+                };
+                task.history.get_or_insert_with(Vec::new).push(warning_message);
                 default_tool_name
             }
         };
-        
-        // Keep track of the tool name for specialized handling
-        let using_llm_tool = requested_tool_name == "llm" || requested_tool_name == "summarize" || (
-            !self.tools.contains_key(requested_tool_name) && 
-            (default_tool_name == "llm" || default_tool_name == "summarize")
-        );
-        
-        // Check if the requested tool exists
-        let tool_name = if self.tools.contains_key(requested_tool_name) {
-            requested_tool_name
-        } else {
-            // Tool doesn't exist, use the default tool with a warning
-            let warning_msg = format!("Tool '{}' not found - using default '{}' tool instead.", 
-                                     requested_tool_name, default_tool_name);
-            
-            // Add this warning to task history for debugging
-            let mut history = task.history.clone().unwrap_or_default();
-            history.push(Message {
-                role: Role::Agent, // Using Agent role as system role isn't available
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: warning_msg.clone(),
-                    metadata: None,
-                })],
-                metadata: None,
-            });
-            task.history = Some(history);
-            
-            // Use the default tool
-            default_tool_name
-        };
+        tracing::info!(%tool_name, "Final tool name selected for execution."); // Add tracing
 
-        // Extract parameters from the task message
-        let params = if let Some(message) = &task.status.message {
-            self.extract_params_from_message(message)
-        } else {
-            json!({})
-        };
+        // Extract parameters from the task's *initial* message (assuming it contains the input)
+        // If history exists, use the first message; otherwise, use the status message if available.
+        tracing::debug!("Extracting parameters from task message/history."); // Add tracing
+        let params = task.history.as_ref()
+            .and_then(|h| h.first()) // Get the first message from history
+            .map(|first_msg| self.extract_params_from_message(first_msg))
+            .or_else(|| task.status.message.as_ref().map(|status_msg| self.extract_params_from_message(status_msg)))
+            .unwrap_or_else(|| {
+                tracing::warn!("Could not find suitable message in history or status to extract parameters. Using empty params."); // Add tracing
+                json!({}) // Fallback to empty params
+            });
+        tracing::trace!(?params, "Parameters extracted for tool execution."); // Add tracing
 
         // Execute the tool
+        tracing::info!("Executing tool '{}'.", tool_name); // Add tracing
         match self.execute_tool(tool_name, params).await {
             Ok(result_value) => {
-                // Create a text part for the result
-                let text_part = TextPart {
+                tracing::info!("Tool execution successful."); // Add tracing
+                tracing::trace!(result = %result_value, "Tool result value."); // Add tracing
+
+                // Create result parts (Text and potentially Data)
+                let mut result_parts: Vec<Part> = Vec::new();
+
+                // Always add a text part with the string representation
+                let result_text = result_value.to_string();
+                result_parts.push(Part::TextPart(TextPart {
                     type_: "text".to_string(),
-                    text: result_value.to_string(),
+                    text: result_text.clone(), // Clone for potential use in status message
+                    metadata: None,
+                }));
+                tracing::debug!("Created TextPart for tool result."); // Add tracing
+
+                // If the result is a JSON object or array, add a DataPart
+                if result_value.is_object() || result_value.is_array() {
+                     // Attempt to convert the Value directly into a Map<String, Value>
+                     // This might fail if it's not an object, handle gracefully
+                     let data_map = match result_value.as_object() {
+                         Some(obj) => obj.clone(),
+                         None => {
+                             // If it's not an object (e.g., array or primitive), wrap it
+                             let mut map = serde_json::Map::new();
+                             map.insert("result".to_string(), result_value.clone());
+                             map
+                         }
+                     };
+
+                     result_parts.push(Part::DataPart(DataPart {
+                         type_: "json".to_string(), // Assuming JSON data
+                         data: data_map,
+                         metadata: None,
+                     }));
+                     tracing::debug!("Created DataPart for tool result."); // Add tracing
+                } else {
+                    tracing::trace!("Tool result is not JSON object/array, skipping DataPart creation."); // Add tracing
+                }
+
+
+                // Create an artifact from the result parts
+                let artifact_index = task.artifacts.as_ref().map_or(0, |a| a.len()) as i64;
+                let artifact = Artifact {
+                    parts: result_parts,
+                    index: artifact_index,
+                    name: Some(format!("{}_result", tool_name)),
+                    description: Some(format!("Result from tool '{}'", tool_name)),
+                    append: None,
+                    last_chunk: Some(true), // Mark as last chunk for this artifact
                     metadata: None,
                 };
-                
-                // Create a data part for the result
+                tracing::debug!(artifact_name = ?artifact.name, artifact_index, "Created result artifact."); // Add tracing
+
+                // Add artifact to the task
+                task.artifacts.get_or_insert_with(Vec::new).push(artifact);
+                tracing::trace!("Added result artifact to task."); // Add tracing
+
+                // Update Task Status to Completed
+                task.status = TaskStatus {
+                    state: TaskState::Completed,
+                    timestamp: Some(Utc::now()),
+                    // Provide a response message summarizing the result
+                    message: Some(Message {
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            // Use the string representation of the result, cleaned up
+                            text: result_text.trim_matches('"').to_string(),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    }),
+                };
+                tracing::info!("Updated task status to Completed."); // Add tracing
+                tracing::trace!(?task.status, "Final task status."); // Add tracing
+                Ok(())
+            }
+            Err(tool_error) => {
+                tracing::error!(error = %tool_error, "Tool execution failed."); // Add tracing
+                // Update Task Status to Failed
+                task.status = TaskStatus {
+                    state: TaskState::Failed,
+                    timestamp: Some(Utc::now()),
+                    // Provide an error message from the agent
+                    message: Some(Message {
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            text: format!("Tool execution failed: {}", tool_error),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    }),
+                };
+                tracing::info!("Updated task status to Failed due to tool error."); // Add tracing
+                tracing::trace!(?task.status, "Final task status."); // Add tracing
+                // Convert ToolError to ServerError before returning
+                Err(tool_error.into())
+            }
+        }
+    }
+    
+    /// Process a follow-up message using a default tool (e.g., echo).
+    /// This is a simplified approach; real follow-up might involve more complex logic or routing.
+    #[instrument(skip(self, task, message), fields(task_id = %task.id))] // Add tracing span
+    pub async fn process_follow_up(&self, task: &mut Task, message: Message) -> Result<(), ServerError> {
+        tracing::info!("Processing follow-up message for task."); // Add tracing
+        // Default to echo tool for simple follow-up processing
+        let tool_name = "echo";
+        tracing::debug!(%tool_name, "Using default tool for follow-up."); // Add tracing
+
+        // Extract parameters from the follow-up message
+        tracing::debug!("Extracting parameters from follow-up message."); // Add tracing
+        let params = self.extract_params_from_message(&message); // Logs internally
+        tracing::trace!(?params, "Parameters extracted for follow-up tool execution."); // Add tracing
+
+        // Execute the tool
+        tracing::info!("Executing follow-up tool '{}'.", tool_name); // Add tracing
+        match self.execute_tool(tool_name, params).await {
+            Ok(result_value) => {
+                tracing::info!("Follow-up tool execution successful."); // Add tracing
+                tracing::trace!(result = %result_value, "Follow-up tool result value."); // Add tracing
+
+                // Create a text part for the result
+                let result_text = result_value.to_string();
+                let text_part = TextPart {
+                    type_: "text".to_string(),
+                    text: result_text.clone(), // Clone for status message
+                    metadata: None,
+                };
+                tracing::debug!("Created TextPart for follow-up result."); // Add tracing
+
+                // Create an artifact with the result
+                let artifact_index = task.artifacts.as_ref().map_or(0, |a| a.len()) as i64;
+                let artifact = Artifact {
+                    parts: vec![Part::TextPart(text_part)],
+                    index: artifact_index,
+                    name: Some("follow_up_result".to_string()),
+                    description: Some("Result from follow-up message processing".to_string()),
+                    append: None,
+                    last_chunk: Some(true),
+                    metadata: None,
+                };
+                tracing::debug!(artifact_name = ?artifact.name, artifact_index, "Created follow-up result artifact."); // Add tracing
+
+                // Add artifact to the task
+                task.artifacts.get_or_insert_with(Vec::new).push(artifact);
+                tracing::trace!("Added follow-up result artifact to task."); // Add tracing
+
+                // Update task status - typically Completed after follow-up, but could be InputRequired again
+                // For this simple echo example, we'll mark it Completed.
+                task.status = TaskStatus {
+                    state: TaskState::Completed, // Assume completed after echo
+                    timestamp: Some(Utc::now()),
+                    message: Some(Message {
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            // Include the tool result in the response message
+                            text: result_text.trim_matches('"').to_string(),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    }),
+                };
+                tracing::info!("Updated task status to Completed after follow-up."); // Add tracing
+                tracing::trace!(?task.status, "Final task status after follow-up."); // Add tracing
+                Ok(())
+            }
+            Err(tool_error) => {
+                tracing::error!(error = %tool_error, "Follow-up tool execution failed."); // Add tracing
+                // Update Task Status to Failed
+                task.status = TaskStatus {
+                    state: TaskState::Failed,
+                    timestamp: Some(Utc::now()),
+                    message: Some(Message {
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            text: format!("Follow-up processing failed: {}", tool_error),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    }),
+                };
+                tracing::info!("Updated task status to Failed due to follow-up tool error."); // Add tracing
+                tracing::trace!(?task.status, "Final task status after follow-up."); // Add tracing
+                Err(tool_error.into())
+            }
+        }
+    }
+}
                 let data_part = DataPart {
                     type_: "json".to_string(),
                     data: {
