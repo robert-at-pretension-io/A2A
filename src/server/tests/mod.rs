@@ -6,3 +6,5 @@ mod services;
 mod handlers;
 #[cfg(test)]
 mod integration;
+#[cfg(test)]
+mod tool_executor_tests;

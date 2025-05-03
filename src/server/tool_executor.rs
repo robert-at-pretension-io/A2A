@@ -1,9 +1,9 @@
 //! Executes local tools with standard A2A protocol-compliant types and artifacts.
 
 use crate::server::error::ServerError;
-use crate::bidirectional::bidirectional_agent::LlmClient; // Import LlmClient
+use crate::bidirectional::bidirectional_agent::{LlmClient, AgentDirectory}; // Import LlmClient and AgentDirectory
 use crate::types::{
-    Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact
+    Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact, AgentCard
 };
 use anyhow; // Import anyhow for error handling in new tools
 
@@ -110,6 +110,84 @@ impl Tool for EchoTool {
 
 // --- New Tools ---
 
+/// Tool that provides information about all known agents
+pub struct ListAgentsTool {
+    agent_directory: Arc<AgentDirectory>,
+}
+
+impl ListAgentsTool {
+    pub fn new(agent_directory: Arc<AgentDirectory>) -> Self {
+        Self { agent_directory }
+    }
+}
+
+#[async_trait]
+impl Tool for ListAgentsTool {
+    fn name(&self) -> &str { "list_agents" }
+    
+    fn description(&self) -> &str { "Lists all known agents and their capabilities" }
+    
+    async fn execute(&self, params: Value) -> Result<Value, ToolError> {
+        // Get format parameter if provided (default to "detailed")
+        let format = params.get("format")
+            .and_then(|v| v.as_str())
+            .unwrap_or("detailed");
+        
+        // Get all agents
+        let all_agents = self.agent_directory.list_all_agents();
+        
+        if all_agents.is_empty() {
+            return Ok(json!({
+                "count": 0,
+                "message": "No agents found in the directory"
+            }));
+        }
+        
+        match format {
+            "simple" => {
+                // Just return agent IDs and names
+                let simple_list: Vec<HashMap<String, String>> = all_agents
+                    .iter()
+                    .map(|(id, card)| {
+                        let mut map = HashMap::new();
+                        map.insert("id".to_string(), id.clone());
+                        map.insert("name".to_string(), card.name.clone());
+                        map
+                    })
+                    .collect();
+                
+                Ok(json!({
+                    "count": simple_list.len(),
+                    "agents": simple_list
+                }))
+            },
+            "detailed" | _ => {
+                // Return full agent details
+                let detailed_list: Vec<serde_json::Value> = all_agents
+                    .iter()
+                    .map(|(id, card)| {
+                        let mut agent_obj = serde_json::to_value(card).unwrap_or(json!({}));
+                        
+                        // Add the ID since it's not part of the card
+                        if let Some(obj) = agent_obj.as_object_mut() {
+                            obj.insert("id".to_string(), json!(id));
+                        }
+                        
+                        agent_obj
+                    })
+                    .collect();
+                
+                Ok(json!({
+                    "count": detailed_list.len(),
+                    "agents": detailed_list
+                }))
+            }
+        }
+    }
+    
+    fn capabilities(&self) -> &[&'static str] { &["agent_directory", "agent_discovery"] }
+}
+
 /// Tool that directly uses the LLM based on input text
 pub struct LlmTool { llm: Arc<dyn LlmClient> }
 impl LlmTool { pub fn new(llm: Arc<dyn LlmClient>) -> Self { Self { llm } } }
@@ -179,6 +257,7 @@ impl ToolExecutor {
     pub fn with_enabled_tools(
         enabled: &[String],
         llm: Arc<dyn LlmClient>, // LLM client needed for some tools
+        agent_directory: Option<Arc<AgentDirectory>>, // Optional agent directory for agent-related tools
     ) -> Self {
         let mut map: HashMap<String, Box<dyn Tool>> = HashMap::new();
 
@@ -198,6 +277,16 @@ impl ToolExecutor {
                      if !map.contains_key("summarize") {
                         map.insert("summarize".into(), Box::new(SummarizeTool::new(llm.clone())));
                         tracing::debug!("Tool 'summarize' registered.");
+                    }
+                }
+                "list_agents" => {
+                    if !map.contains_key("list_agents") {
+                        if let Some(dir) = agent_directory.clone() {
+                            map.insert("list_agents".into(), Box::new(ListAgentsTool::new(dir)));
+                            tracing::debug!("Tool 'list_agents' registered.");
+                        } else {
+                            tracing::warn!("Cannot register 'list_agents' tool: agent_directory not provided.");
+                        }
                     }
                 }
                 "echo" => { /* already registered */ }
@@ -271,6 +360,12 @@ impl ToolExecutor {
                 default_tool_name
             }
         };
+        
+        // Keep track of the tool name for specialized handling
+        let using_llm_tool = requested_tool_name == "llm" || requested_tool_name == "summarize" || (
+            !self.tools.contains_key(requested_tool_name) && 
+            (default_tool_name == "llm" || default_tool_name == "summarize")
+        );
         
         // Check if the requested tool exists
         let tool_name = if self.tools.contains_key(requested_tool_name) {
@@ -347,12 +442,57 @@ impl ToolExecutor {
                 task.status = TaskStatus {
                     state: TaskState::Completed,
                     timestamp: Some(Utc::now()),
-                    // Provide a confirmation message from the agent
+                    // Provide a response message that includes the actual tool result
                     message: Some(Message {
                         role: Role::Agent,
                         parts: vec![Part::TextPart(TextPart {
                             type_: "text".to_string(),
-                            text: format!("Task completed successfully using tool '{}'.", tool_name),
+                            // Format the response based on the tool and result
+                            text: if tool_name == "list_agents" {
+                                // Special handling for list_agents tool
+                                let mut response = String::new();
+                                
+                                // Try to parse as JSON and create a formatted list
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result_value.to_string()) {
+                                    // Check if it contains agent count and list
+                                    if let (Some(count), Some(agents)) = (json.get("count"), json.get("agents")) {
+                                        response.push_str(&format!("Found {} agents:\n\n", count));
+                                        
+                                        if let Some(agents_array) = agents.as_array() {
+                                            for (i, agent) in agents_array.iter().enumerate() {
+                                                // Get agent details
+                                                let id = agent.get("id").and_then(|v| v.as_str()).unwrap_or("Unknown ID");
+                                                let name = agent.get("name").and_then(|v| v.as_str()).unwrap_or("Unnamed Agent");
+                                                let desc = agent.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                                                
+                                                response.push_str(&format!("{}. Agent: {} ({})\n", i+1, name, id));
+                                                if !desc.is_empty() {
+                                                    response.push_str(&format!("   Description: {}\n", desc));
+                                                }
+                                                response.push_str("\n");
+                                            }
+                                        }
+                                    } else {
+                                        // Fallback if JSON structure is unexpected
+                                        response = format!("Agent Directory: {}", result_value);
+                                    }
+                                } else {
+                                    // Fallback if not valid JSON
+                                    response = result_value.to_string();
+                                }
+                                response
+                            } else if using_llm_tool {
+                                // For LLM, the response is already formatted text
+                                result_value.to_string().trim_matches('"').to_string()
+                            } else {
+                                // Default formatting for other tools
+                                match result_value.to_string().trim_matches('"') {
+                                    // If it's just a JSON string with quotes, unwrap it
+                                    s if s.starts_with("{") && s.ends_with("}") => s.to_string(),
+                                    // Otherwise, use the result directly
+                                    s => s.to_string(),
+                                }
+                            },
                             metadata: None,
                         })],
                         metadata: None,
@@ -422,7 +562,13 @@ impl ToolExecutor {
                         role: Role::Agent,
                         parts: vec![Part::TextPart(TextPart {
                             type_: "text".to_string(),
-                            text: format!("Follow-up processed successfully: {}", result_value),
+                            // Include the tool result in the response message, not just a confirmation
+                            text: match result_value.to_string().trim_matches('"') {
+                                // If it's just a JSON string with quotes, unwrap it
+                                s if s.starts_with("{") && s.ends_with("}") => s.to_string(),
+                                // Otherwise, use the result directly
+                                s => s.to_string(),
+                            },
                             metadata: None,
                         })],
                         metadata: None,

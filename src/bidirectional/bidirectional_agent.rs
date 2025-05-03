@@ -126,6 +126,7 @@ use std::{
     path::Path,
     io::{self, Write, BufRead},
     path::PathBuf, // Import PathBuf
+    collections::HashMap, // Import HashMap
 }; // Import StdError for error mapping and IO
 use tokio::{
     fs::OpenOptions, // Import OpenOptions for async file I/O
@@ -135,7 +136,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use toml;
 use tracing::{debug, error, info, warn, instrument, Level, Instrument}; // Import Instrument trait
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer}; // For subscriber setup
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, filter}; // For subscriber setup
 use uuid::Uuid;
 
 // REMOVED AgentLogContext struct and impl block
@@ -166,11 +167,12 @@ pub enum ExecutionMode {
 }
 
 /// Entry in the agent directory (Used locally for routing decisions)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AgentDirectoryEntry {
     /// Agent card with capabilities
     card: AgentCard,
     /// Last time this agent was seen
+    #[serde(with = "chrono::serde::ts_seconds")]
     last_seen: DateTime<Utc>,
     /// Whether the agent is currently active
     active: bool,
@@ -207,9 +209,66 @@ impl AgentDirectory {
     fn list_active_agents(&self) -> Vec<AgentDirectoryEntry> {
         self.agents
             .iter()
-            .filter(|e| e.active)
+            .filter(|e| e.value().active)
             .map(|e| e.value().clone())
             .collect()
+    }
+    
+    /// Get a list of all agents with their cards, including inactive ones
+    pub fn list_all_agents(&self) -> Vec<(String, AgentCard)> {
+        self.agents
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().card.clone()))
+            .collect()
+    }
+    
+    /// Save the current agent directory to a JSON file
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        // Convert DashMap to a regular HashMap for serialization
+        let agents_map: HashMap<String, AgentDirectoryEntry> = self.agents.iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        
+        // Serialize to JSON
+        let json = serde_json::to_string_pretty(&agents_map)
+            .map_err(|e| anyhow!("Failed to serialize agent directory: {}", e))?;
+        
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.as_ref().parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| anyhow!("Failed to create directory for agent directory file: {}", e))?;
+            }
+        }
+        
+        // Write to file
+        fs::write(path, json)
+            .map_err(|e| anyhow!("Failed to write agent directory file: {}", e))?;
+        
+        Ok(())
+    }
+    
+    /// Load agent directory from a JSON file
+    pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        // Skip if file doesn't exist (start with empty directory)
+        if !path.as_ref().exists() {
+            return Ok(());
+        }
+        
+        // Read file content
+        let file_content = fs::read_to_string(path)
+            .map_err(|e| anyhow!("Failed to read agent directory file: {}", e))?;
+        
+        // Deserialize from JSON
+        let loaded_agents: HashMap<String, AgentDirectoryEntry> = serde_json::from_str(&file_content)
+            .map_err(|e| anyhow!("Failed to deserialize agent directory: {}", e))?;
+        
+        // Update the directory
+        for (id, entry) in loaded_agents {
+            self.agents.insert(id, entry);
+        }
+        
+        Ok(())
     }
 }
 
@@ -379,7 +438,7 @@ impl BidirectionalTaskRouter {
 
         // Build a prompt for the LLM to decide routing
         let routing_prompt = format!(r#"
-You need to decide whether to handle a task locally or delegate it to another agent.
+You need to decide whether to handle a task locally, delegate it to another agent, or reject it entirely.
 
 AVAILABLE AGENTS:
 {}
@@ -390,6 +449,9 @@ TASK:
 Please analyze the task and decide whether to:
 1. Handle it locally (respond with "LOCAL")
 2. Delegate to a specific agent (respond with "REMOTE: [agent-id]")
+3. Reject the task (respond with "REJECT: [reason]")
+   - Reject tasks that are inappropriate, harmful, impossible, or outside your capabilities
+   - Provide a brief explanation for why you're rejecting the task
 
 Your response should be exactly one of those formats, with no additional text.
 "#, agent_descriptions, task_text);
@@ -464,6 +526,10 @@ Your response should be exactly one of those formats, with no additional text.
                  info!(task_id = %task.id, remote_agent_id = %agent_id, "Routing decision: Remote delegation.");
                  Ok(RoutingDecision::Remote { agent_id })
             }
+        } else if decision.starts_with("REJECT: ") {
+            let reason = decision.strip_prefix("REJECT: ").unwrap().trim().to_string();
+            info!(task_id = %task.id, reason = %reason, "LLM decided to REJECT the task.");
+            Ok(RoutingDecision::Reject { reason })
         } else {
             warn!(task_id = %task.id, llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'echo' tool.");
             // Default to local echo if the decision isn't clear
@@ -545,6 +611,7 @@ pub struct BidirectionalAgent {
 
     // Local components for specific logic
     agent_directory: Arc<AgentDirectory>, // Local directory for routing decisions
+    agent_directory_path: Option<PathBuf>, // Path to persist agent directory
     llm: Arc<dyn LlmClient>, // Local LLM client
 
     // Server configuration
@@ -573,6 +640,15 @@ impl BidirectionalAgent {
     pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
         // Create the agent directory (local helper)
         let agent_directory = Arc::new(AgentDirectory::new());
+        
+        // Load agent directory from file if configured
+        if let Some(dir_path) = &config.tools.agent_directory_path {
+            if let Err(e) = agent_directory.load_from_file(dir_path) {
+                warn!(error = %e, path = %dir_path, "Failed to load agent directory from file.");
+            } else {
+                info!(path = %dir_path, "Successfully loaded agent directory from file.");
+            }
+        }
 
         // Create the LLM client (local helper)
         let llm: Arc<dyn LlmClient> = if let Some(api_key) = &config.llm.claude_api_key {
@@ -603,8 +679,9 @@ impl BidirectionalAgent {
 
         // Create a tool executor using the new constructor with enabled tools
         let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
-            &config.tools.enabled, // Pass slice of enabled tool names
-            llm.clone(),           // Pass LLM client for tools that need it
+            &config.tools.enabled,            // Pass slice of enabled tool names
+            llm.clone(),                      // Pass LLM client for tools that need it
+            Some(agent_directory.clone()),    // Pass agent directory
         ));
 
         // Create the task router, passing the enabled tools list
@@ -643,6 +720,9 @@ impl BidirectionalAgent {
             None
         };
 
+        // Store agent directory path if provided
+        let agent_directory_path = config.tools.agent_directory_path.as_ref().map(PathBuf::from);
+
         let agent = Self {
             task_service,
             streaming_service,
@@ -653,7 +733,8 @@ impl BidirectionalAgent {
             client_manager,
 
             // Store local helper components
-            agent_directory, // Keep local directory for routing logic
+            agent_directory: agent_directory.clone(), // Keep local directory for routing logic
+            agent_directory_path: agent_directory_path.clone(), // Store path for saving
             llm,
 
             port: config.server.port,
@@ -676,6 +757,26 @@ impl BidirectionalAgent {
             // Initialize known servers map
             known_servers: Arc::new(DashMap::new()),
         };
+        
+        // Set up periodic saving of agent directory if path is configured
+        if let Some(dir_path) = agent_directory_path {
+            let dir_clone = agent_directory.clone();
+            let path = dir_path.clone();
+            
+            // Spawn a background task for saving
+            tokio::spawn(async move {
+                loop {
+                    // Save every 5 minutes
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                    
+                    if let Err(e) = dir_clone.save_to_file(&path) {
+                        warn!(error = %e, "Failed to save agent directory to file.");
+                    } else {
+                        debug!("Successfully saved agent directory to file.");
+                    }
+                }
+            });
+        }
 
         // Logging initialization happens in main() now.
         // We can log that the agent struct itself is constructed.
@@ -685,14 +786,9 @@ impl BidirectionalAgent {
     }
 
     /// Create a session on demand so remote tasks can be grouped
-    fn ensure_session(&mut self) {
+    async fn ensure_session(&mut self) {
         if self.current_session_id.is_none() {
             let session_id = self.create_new_session(); // existing helper
-            // Log session creation (moved from create_new_session due to async context)
-            // Use tokio::spawn for fire-and-forget logging if needed, or make ensure_session async
-            // For simplicity, we'll log synchronously here, assuming it's called from an async context
-            // where blocking briefly is acceptable (like the REPL loop).
-            // Logging is handled by the calling function or tracing infrastructure
             info!(session_id = %session_id, "Created new session on demand.");
         }
     }
@@ -700,8 +796,11 @@ impl BidirectionalAgent {
 
     /// Process a message locally (e.g., from REPL input that isn't a command)
     #[instrument(skip(self), fields(agent_id = %self.agent_id, message_text))]
-    pub async fn process_message_locally(&self, message_text: &str) -> Result<String> {
+    pub async fn process_message_locally(&mut self, message_text: &str) -> Result<String> {
         info!("Processing message locally.");
+
+        // Ensure we have an active session before processing
+        self.ensure_session().await;
 
         // Check if we're continuing an existing task that is in InputRequired state
         let mut continue_task_id: Option<String> = None;
@@ -823,7 +922,35 @@ impl BidirectionalAgent {
 
     // Helper to extract text from task
     fn extract_text_from_task(&self, task: &Task) -> String {
-        // First check the status message
+        // First check if we have artifacts that contain results
+        if let Some(ref artifacts) = task.artifacts {
+            // Get the latest artifact
+            if let Some(latest_artifact) = artifacts.iter().last() {
+                // Extract text from the artifact
+                let text = latest_artifact.parts.iter()
+                    .filter_map(|p| match p {
+                        Part::TextPart(tp) => Some(tp.text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                
+                if !text.is_empty() {
+                    // Extract proper content from the text
+                    // If it's in quotes or just a JSON string, clean it up
+                    let cleaned_text = text.trim_matches('"');
+                    if cleaned_text.starts_with('{') && cleaned_text.ends_with('}') {
+                        // Try to parse and pretty-format the JSON
+                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(cleaned_text) {
+                            return serde_json::to_string_pretty(&json_value).unwrap_or(cleaned_text.to_string());
+                        }
+                    }
+                    return cleaned_text.to_string();
+                }
+            }
+        }
+        
+        // If no artifacts, check the status message
         if let Some(ref message) = task.status.message {
             let text = message.parts.iter()
                 .filter_map(|p| match p {
@@ -1041,6 +1168,15 @@ impl BidirectionalAgent {
                 info!("EOF detected. Exiting REPL.");
                 println!("EOF detected. Exiting REPL.");
                 // Perform cleanup similar to :quit
+                // Save agent directory before exiting
+                if let Some(dir_path) = &self.agent_directory_path {
+                    if let Err(e) = self.agent_directory.save_to_file(dir_path) {
+                        warn!(error = %e, "Failed to save agent directory on EOF shutdown.");
+                    } else {
+                        info!("Successfully saved agent directory on EOF shutdown.");
+                    }
+                }
+                
                 if let Some(token) = server_shutdown_token.take() {
                     info!("Shutting down server due to EOF.");
                     println!("Shutting down server...");
@@ -1064,6 +1200,15 @@ impl BidirectionalAgent {
                 } else if input_trimmed == ":quit" {
                     info!("User initiated quit.");
                     println!("Exiting REPL. Goodbye!");
+                    
+                    // Save agent directory before exiting if path is configured
+                    if let Some(dir_path) = &self.agent_directory_path {
+                        if let Err(e) = self.agent_directory.save_to_file(dir_path) {
+                            warn!(error = %e, "Failed to save agent directory on shutdown.");
+                        } else {
+                            info!("Successfully saved agent directory on shutdown.");
+                        }
+                    }
 
                     // Shutdown server if running
                     if let Some(token) = server_shutdown_token.take() {
@@ -1905,6 +2050,10 @@ pub struct LlmConfig {
 pub struct ToolsConfig {
     #[serde(default)]
     pub enabled: Vec<String>,
+    
+    /// Path to store/load the agent directory as JSON
+    #[serde(default)]
+    pub agent_directory_path: Option<String>,
 }
 
 /// Configuration for the bidirectional agent
@@ -2129,22 +2278,48 @@ pub async fn main() -> Result<()> {
 
         // 2. If path is valid, attempt to create the file appender layer
         if let Some(path) = maybe_valid_path {
-            match tracing_appender::rolling::daily(
-                path.parent().unwrap_or_else(|| Path::new(".")), // Use validated path's parent
-                path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("agent.log")) // Use validated path's filename
-            ) {
-                file_appender => {
+            // Use a non-rolling file appender that opens the file in append mode
+            let file = match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path) {
+                Ok(file) => {
                     eprintln!("[PRE-LOG] File appender created successfully for {}", path.display());
+                    // Create a more straightforward approach using tracing fields
+                    let agent_id = config.server.agent_id.clone();
+                    
+                    // Setup a simpler format for the file
+                    let format = fmt::format()
+                        .with_level(true)
+                        .with_target(true)
+                        .with_thread_ids(false)
+                        .with_file(false)
+                        .with_line_number(false)
+                        .with_ansi(false)
+                        .compact();
+                    
+                    // Add agent ID as a field to all log messages using a closure
                     Some(
                         fmt::layer()
-                            .with_writer(file_appender)
+                            .with_writer(file) // Use file directly
                             .with_ansi(false)
-                            .with_target(true)
-                            .with_level(true)
+                            .event_format(format)
+                            .with_filter(
+                                filter::filter_fn(move |metadata| {
+                                    // Add agent ID to every event
+                                    tracing::debug_span!("bidirectional_agent", agent_id = %agent_id).in_scope(|| true)
+                                })
+                            )
                             .boxed()
                     )
+                },
+                Err(e) => {
+                    eprintln!("[PRE-LOG] ERROR: Failed to open log file '{}': {}", path.display(), e);
+                    None
                 }
-            }
+            };
+            
+            file
         } else {
             None // Path was invalid (directory creation failed)
         }
@@ -2169,6 +2344,12 @@ pub async fn main() -> Result<()> {
     // --- Logging is now fully initialized ---
     info!("Logging initialized.");
     info!("Starting Bidirectional Agent main function.");
+    
+    // Log a prominent line with agent info for better separation in shared logs
+    let agent_id = config.server.agent_id.clone();
+    let agent_name = config.server.agent_name.clone().unwrap_or_else(|| "Unnamed Agent".to_string());
+    info!("AGENT STARTED: ID: {}, Name: {}, Port: {}", 
+          agent_id, agent_name, config.server.port);
 
     // Log the final effective configuration *after* logging is initialized
     info!(?config, "Effective configuration loaded."); // Use debug formatting for the whole struct
@@ -2201,7 +2382,7 @@ pub async fn main() -> Result<()> {
     // Process a single message
     else if let Some(message) = &config.mode.message {
         info!(message = %message, "Starting agent to process single message.");
-        let agent = BidirectionalAgent::new(config.clone())?;
+        let mut agent = BidirectionalAgent::new(config.clone())?;
         println!("Processing message: '{}'", message); // Keep console output
         let response = agent.process_message_locally(message).await?; // Use renamed function
         println!("Response:\n{}", response); // Keep console output

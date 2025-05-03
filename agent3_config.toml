@@ -1,0 +1,21 @@
+[server]
+port = 4202
+bind_address = "0.0.0.0"
+agent_id = "bidirectional-agent-3"
+agent_name = "Agent Three"
+
+[client]
+target_url = "http://localhost:4201"
+
+[llm]
+# API key set via environment variable
+system_prompt = "You are an AI agent specialized in data analysis that can communicate with other agents."
+
+[mode]
+repl = true
+get_agent_card = false
+repl_log_file = "shared_agent_interactions.log"
+
+[tools]
+enabled = ["echo", "summarize", "list_agents"]
+agent_directory_path = "./data/agent3_directory.json"
