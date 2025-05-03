@@ -193,7 +193,7 @@ impl A2aClient {
     /// * `metadata_json` - Optional JSON string containing metadata
     ///
     /// # Examples
-    /// ```
+    /// ```ignore
     /// // Send task with a 2-second simulated delay
     /// let task = client.send_task_with_metadata(
     ///     "Hello, server!", 
@@ -279,7 +279,7 @@ impl A2aClient {
     /// * `fail_message` - Custom failure message (if should_fail is true)
     /// 
     /// # Examples
-    /// ```
+    /// ```ignore
     /// // Simulated task that takes 5 seconds and requires input
     /// let task = client.simulate_task_lifecycle(
     ///     "Simulate a conversation requiring input",

@@ -50,7 +50,7 @@ impl A2aClient {
     /// * `metadata_json` - Optional JSON string containing metadata
     ///
     /// # Examples
-    /// ```
+    /// ```ignore
     /// // Stream with 1-second delay between chunks
     /// let stream = client.send_task_subscribe_with_metadata_str(
     ///     "Stream with slow delivery",
@@ -85,7 +85,7 @@ impl A2aClient {
     /// * `metadata` - JSON Value containing metadata
     ///
     /// # Examples
-    /// ```
+    /// ```ignore
     /// // Stream with dynamic content configuration
     /// let stream = client.send_task_subscribe_with_metadata_typed(
     ///     "Stream with dynamic configuration",

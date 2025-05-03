@@ -170,35 +170,6 @@ impl TaskService {
                             }
                         }
 
-                        // Fallback to Slice 2 logic if delegation is not enabled
-                        
-                        {
-                            match decision_result.clone() {
-                                RoutingDecision::Local { tool_names } => { // Capture tool_names
-                                    if let Err(e) = executor.execute_task_locally(&mut task, &tool_names).await { // Pass tool_names
-                                        println!("Local execution failed for task {}: {}", task.id, e);
-                                    } else {
-                                        println!("Local execution successful for task {} using tools: {:?}", task.id, tool_names);
-                                    }
-                                }
-                                RoutingDecision::Remote { agent_id } => {
-                                    println!("Task {} marked for delegation to agent '{}' (Feature 'bidir-delegate' not enabled)", task.id, agent_id);
-                                    task.status.state = TaskState::Failed;
-                                    task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Delegation required but feature not enabled.".to_string(), metadata: None })], metadata: None });
-                                }
-                                RoutingDecision::Reject { reason } => {
-                                    println!("Task {} rejected: {}", task.id, reason);
-                                    task.status.state = TaskState::Failed;
-                                    task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task rejected: {}", reason), metadata: None })], metadata: None });
-                                },
-                                RoutingDecision::Decompose { subtasks } => {
-                                    println!("Task {} requires decomposition (Feature 'bidir-delegate' not enabled)", task.id);
-                                    println!("Would decompose into {} subtasks", subtasks.len());
-                                    task.status.state = TaskState::Failed;
-                                    task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Task requires decomposition but feature not enabled.".to_string(), metadata: None })], metadata: None });
-                                }
-                            }
-                        }
                     }
                     Err(e) => {
                         // Handle routing error
