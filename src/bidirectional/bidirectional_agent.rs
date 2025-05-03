@@ -1988,39 +1988,8 @@ impl BidirectionalAgentConfig {
 }
 
 // REMOVED unused TaskSendParamsInput struct
-
-/// Helper function to extract the base URL from an A2aClient
-fn extract_base_url_from_client(client: &A2aClient) -> String {
-    // In a real implementation, you'd add a getter to the A2aClient
-    // For now, we'll use this workaround to access private fields
-    
-    // If we have a client config with target_url, use that
-    if let Some(url) = client_url_hack(client) {
-        return url;
-    }
-    
-    // Fallback
-    format!("remote-agent")
-}
-
-// Temporary hack to get the URL from a client until we can add a getter
-fn client_url_hack(client: &A2aClient) -> Option<String> {
-    // Try to get the internal object as a debug string and extract the URL
-    let debug_str = format!("{:?}", client);
-    
-    // Extract URL from debug output - likely to contain "base_url: ..."
-    if let Some(start_idx) = debug_str.find("base_url: ") {
-        let start_idx = start_idx + "base_url: ".len();
-        if let Some(end_idx) = debug_str[start_idx..].find('\"') {
-            let end_idx = start_idx + end_idx;
-            if let Some(url_str) = debug_str.get(start_idx..end_idx) {
-                return Some(url_str.to_string());
-            }
-        }
-    }
-    
-    None
-}
+// REMOVED unused extract_base_url_from_client function
+// REMOVED unused client_url_hack function
 
 /// Main entry point
 #[tokio::main]
