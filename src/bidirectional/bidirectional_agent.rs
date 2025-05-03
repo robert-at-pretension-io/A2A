@@ -554,7 +554,7 @@ impl BidirectionalAgent {
             None
         };
 
-        Ok(Self {
+        let agent = Self {
             task_service,
             streaming_service,
             notification_service,
