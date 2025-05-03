@@ -763,15 +763,71 @@ impl BidirectionalAgent {
         println!("  :data JSON MSG   - Send message with JSON data");
         println!("  :quit            - Exit the REPL");
         println!("========================================\n");
-        
+
         // Keep track of known servers
         let mut known_servers: Vec<(String, String)> = Vec::new(); // (name, url)
-        
-        // Display initial client URL if we have one
-        if let Some(client) = &self.client {
+
+        // --- Add Initial Connection Retry Logic ---
+        if self.client.is_some() {
+            let initial_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
+            println!("Attempting initial connection to configured target: {}", initial_url);
+            self.log_agent_action("REPL_INIT_CONNECT", &format!("Attempting initial connection to {}", initial_url)).await;
+
+            let max_retries = 5;
+            let retry_delay = std::time::Duration::from_secs(2);
+            let mut connected = false;
+
+            for attempt in 1..=max_retries {
+                match self.get_remote_agent_card().await {
+                    Ok(card) => {
+                        println!("✅ Successfully connected to: {} ({})", card.name, initial_url);
+                        self.log_agent_action("REPL_INIT_CONNECT_SUCCESS", &format!("Initial connection successful to {} ({})", card.name, initial_url)).await;
+                        // Add to known servers if not already present
+                        if !known_servers.iter().any(|(_, server_url)| server_url == &initial_url) {
+                            known_servers.push((card.name.clone(), initial_url.clone()));
+                        }
+                        // Add to agent directory
+                        self.agent_directory.add_or_update_agent(card.name.clone(), card.clone());
+                        connected = true;
+                        break; // Exit retry loop on success
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Initial connection attempt {}/{} failed: {}", attempt, max_retries, e);
+                        println!("⚠️ {}", error_msg);
+                        self.log_agent_action("REPL_INIT_CONNECT_FAIL", &error_msg).await;
+                        if attempt < max_retries {
+                            println!("Retrying in {} seconds...", retry_delay.as_secs());
+                            tokio::time::sleep(retry_delay).await;
+                        }
+                    }
+                }
+            }
+
+            if !connected {
+                let final_error_msg = format!("Failed to connect to {} after {} attempts.", initial_url, max_retries);
+                println!("❌ {}", final_error_msg);
+                 self.log_agent_action("REPL_INIT_CONNECT_FAIL", &final_error_msg).await;
+                // Keep the client configured, but the user will need to manually :connect later if desired.
+            }
+        }
+        // --- End Initial Connection Retry Logic ---
+
+
+        // Display initial client URL if we have one (might have failed initial connection)
+        if let Some(_client) = &self.client { // Check existence, not connection status
             if let Some(url) = &self.client_url() {
-                println!("🔗 Connected to remote agent: {}", url);
-                // Try to get agent name
+                // Check if we successfully connected initially by looking in known_servers
+                if let Some((name, _)) = known_servers.iter().find(|(_, server_url)| server_url == url) {
+                     println!("🔗 Initially connected to: {} ({})", name, url);
+                } else {
+                     println!("🔗 Configured target: {} (Connection failed or pending)", url);
+                }
+            }
+        }
+
+        // Flag to track if we have a listening server running
+        let mut server_running = false;
+        let mut server_shutdown_token: Option<CancellationToken> = None;
                 match self.get_remote_agent_card().await {
                     Ok(card) => {
                         println!("📇 Connected to: {} ({})", card.name, url);
