@@ -2057,6 +2057,46 @@ impl BidirectionalAgent {
                     println!("❌ Unknown command: {}", input_trimmed);
                     println!("Type :help for a list of commands");
                 }
+            } else if input_trimmed.starts_with(":tool ") { // <-- Add specific handling for :tool
+                let parts: Vec<&str> = input_trimmed.splitn(3, ' ').collect();
+                if parts.len() >= 2 {
+                    let tool_name = parts[1];
+                    let params_str = if parts.len() == 3 { parts[2] } else { "{}" }; // Default to empty JSON object if no params
+                    info!(tool_name = %tool_name, params_str = %params_str, "Processing :tool command.");
+
+                    // Parse parameters as JSON
+                    let params_json: Value = match serde_json::from_str(params_str) {
+                        Ok(json) => json,
+                        Err(e) => {
+                            error!(error = %e, input_params = %params_str, "Failed to parse JSON parameters for :tool command.");
+                            println!("❌ Error: Invalid JSON parameters: {}", e);
+                            continue; // Skip processing this command
+                        }
+                    };
+
+                    // Get the ToolExecutor instance
+                    if let Some(executor) = &self.task_service.tool_executor { // Access executor via task_service
+                        // Execute the tool
+                        match executor.execute_tool(tool_name, params_json).await {
+                            Ok(result) => {
+                                info!(tool_name = %tool_name, "Tool executed successfully via REPL.");
+                                // Pretty print the JSON result
+                                let result_pretty = serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
+                                println!("\n🛠️ Tool Result ({}):\n{}\n", tool_name, result_pretty);
+                            }
+                            Err(e) => {
+                                error!(tool_name = %tool_name, error = %e, "Error executing tool via REPL.");
+                                println!("❌ Error executing tool '{}': {}", tool_name, e);
+                            }
+                        }
+                    } else {
+                        error!("ToolExecutor not available in TaskService for :tool command.");
+                        println!("❌ Error: Tool execution is not configured for this agent.");
+                    }
+                } else {
+                    error!("Invalid format for :tool command.");
+                    println!("❌ Error: Invalid format. Use :tool <tool_name> [json_params]");
+                }
             } else {
                 // Process the message locally using the agent's capabilities
                 debug!(message = %input_trimmed, "Processing input as local message.");
