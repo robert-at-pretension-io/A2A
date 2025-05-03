@@ -101,6 +101,7 @@ cargo test client::streaming::tests
 ## Documentation
 
 - [Client Documentation](src/client/README.md)
+- [Bidirectional Agent Documentation](src/bidirectional/README.md)
 - [Schema Overview](docs/schema_overview.md)
 
 ## Project Status

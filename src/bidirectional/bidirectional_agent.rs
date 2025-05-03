@@ -2133,7 +2133,7 @@ pub async fn main() -> Result<()> {
                 path.parent().unwrap_or_else(|| Path::new(".")), // Use validated path's parent
                 path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("agent.log")) // Use validated path's filename
             ) {
-                Ok(file_appender) => {
+                file_appender => {
                     eprintln!("[PRE-LOG] File appender created successfully for {}", path.display());
                     Some(
                         fmt::layer()
@@ -2143,10 +2143,6 @@ pub async fn main() -> Result<()> {
                             .with_level(true)
                             .boxed()
                     )
-                },
-                Err(e) => {
-                    eprintln!("[PRE-LOG] ERROR: Failed to create file appender for '{}': {}", path.display(), e);
-                    None // Appender creation failed
                 }
             }
         } else {
@@ -2163,7 +2159,6 @@ pub async fn main() -> Result<()> {
         .with(env_filter)
         .with(console_layer);
 
-    if let Some(file_layer) = file_layer {
     // Initialize differently based on whether file_layer is Some or None
     if let Some(file_layer) = file_layer {
          subscriber_builder.with(file_layer).init(); // Pass the unwrapped Box<dyn Layer...>
