@@ -580,9 +580,9 @@ impl BidirectionalAgent {
 
             // Initialize REPL log file path
             repl_log_file: config.mode.repl_log_file.map(std::path::PathBuf::from),
-        }); // <-- Add missing closing brace and parenthesis
+        }; // <-- Construct the agent instance here
 
-        // Log agent initialization attempt *before* returning Ok()
+        // Log agent initialization attempt *after* construction, *before* returning Ok()
         if let Some(log_path) = &agent.repl_log_file {
              let timestamp = Utc::now().to_rfc3339();
              let log_entry = format!(
@@ -1466,8 +1466,8 @@ impl BidirectionalAgent {
         let session_id = format!("session-{}", Uuid::new_v4());
         self.current_session_id = Some(session_id.clone());
         self.session_tasks.insert(session_id.clone(), Vec::new());
-        // Log session creation (sync within this method)
-        tokio::spawn(self.log_agent_action("SESSION_NEW", &format!("Created new session: {}", session_id)));
+        // Logging removed from here due to lifetime issues with tokio::spawn in sync fn.
+        // Logging can be added in the calling async code (e.g., REPL loop) after the call returns.
         session_id
     }
 
@@ -1696,8 +1696,8 @@ impl BidirectionalAgent {
 
     /// Create an agent card (matching types.rs structure)
     pub fn create_agent_card(&self) -> AgentCard {
-        // Log card creation attempt (sync within this method)
-        tokio::spawn(self.log_agent_action("AGENT_CARD_CREATE", "Creating agent card."));
+        // Logging removed from here due to lifetime issues with tokio::spawn in sync fn.
+        // Logging can be added in the calling async code (e.g., REPL loop) after the call returns.
 
         // Construct AgentCapabilities based on actual capabilities
         let capabilities = AgentCapabilities {
