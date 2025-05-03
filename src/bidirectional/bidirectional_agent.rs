@@ -580,7 +580,7 @@ impl BidirectionalAgent {
 
             // Initialize REPL log file path
             repl_log_file: config.mode.repl_log_file.map(std::path::PathBuf::from),
-        };
+        }); // <-- Add missing closing brace and parenthesis
 
         // Log agent initialization attempt *before* returning Ok()
         if let Some(log_path) = &agent.repl_log_file {
@@ -2122,8 +2122,8 @@ fn load_config_from_path(config: &mut BidirectionalAgentConfig, config_path: &st
     }
     Ok(()) // Return Ok if loading succeeded or no error occurred
 }
-    }
-    
+// Removed extra closing brace here
+
     if args.len() <= 1 {
         info!("No arguments provided. Using default configuration.");
     }
