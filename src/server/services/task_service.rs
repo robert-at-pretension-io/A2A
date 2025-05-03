@@ -51,8 +51,9 @@ impl TaskService {
             client_manager: None,
             
             agent_registry: None,
-            
+                
             agent_id: None,
+            llm_client: None, // Initialize the new field to None for standalone mode
         }
     }
 
@@ -60,7 +61,8 @@ impl TaskService {
 
     /// Creates a new TaskService configured for bidirectional operation.
     /// Requires the corresponding features to be enabled.
-    #[instrument(skip(task_repository, task_router, tool_executor, client_manager, agent_registry), fields(agent_id))]
+    // Skip llm_client as it doesn't implement Debug
+    #[instrument(skip(task_repository, task_router, tool_executor, client_manager, agent_registry, llm_client), fields(agent_id))]
     pub fn bidirectional(
         task_repository: Arc<dyn TaskRepository>,
         // Accept the trait object for router
