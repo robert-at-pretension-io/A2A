@@ -331,8 +331,9 @@ impl BidirectionalTaskRouter {
 
         if task_text.is_empty() {
             // Maybe check task.message if history is empty? Assuming Task might have a top-level message.
-            // For now, default to Local if history is empty/None.
-            return Ok(ExecutionMode::Local);
+            // For now, default to Local execution with the 'echo' tool if history is empty/None.
+            warn!("Task history is empty, defaulting to local execution with 'echo' tool.");
+            return Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
         }
 
         // Get the list of available agents from the local directory
