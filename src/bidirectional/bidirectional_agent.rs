@@ -529,10 +529,10 @@ Your response should be exactly one of those formats, with no additional text.
                 return Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
             }
         };
-        trace!(decision = %decision, "Parsed LLM decision.");
+        trace!(decision = %decision, "Raw LLM decision text.");
 
-        // Parse the decision
-        if decision == "LOCAL" {
+        // Parse the decision more robustly - check prefixes
+        if decision.starts_with("LOCAL") { // Check prefix
             info!("LLM decided LOCAL execution. Proceeding to tool selection.");
             // --- LLM Tool Selection Logic ---
             let tool_list_str = self.enabled_tools.join(", ");
@@ -579,9 +579,9 @@ Your response should be exactly one of those formats, with no additional text.
             // Verify the agent exists in the local directory
             trace!(remote_agent_id = %agent_id, "Verifying remote agent existence in directory.");
             if self.directory.get_agent(&agent_id).is_none() {
-                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'echo' tool.");
-                 // Fall back to local if agent not found, using echo tool
-                 Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
+                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'llm' tool.");
+                 // Fall back to local if agent not found, using llm tool
+                 Ok(RoutingDecision::Local { tool_names: vec!["llm".to_string()] })
             } else {
                  info!(remote_agent_id = %agent_id, "Routing decision: Remote delegation confirmed.");
                  Ok(RoutingDecision::Remote { agent_id })
@@ -591,9 +591,9 @@ Your response should be exactly one of those formats, with no additional text.
             info!(reason = %reason, "LLM decided to REJECT the task.");
             Ok(RoutingDecision::Reject { reason })
         } else {
-            warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'echo' tool.");
-            // Default to local echo if the decision isn't clear
-            Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
+            warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'llm' tool.");
+            // Default to local llm tool if the decision isn't clear
+            Ok(RoutingDecision::Local { tool_names: vec!["llm".to_string()] })
         }
     }
 }
