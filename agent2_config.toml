@@ -2,6 +2,7 @@
 port = 4201
 bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-2"
+agent_name = "Agent Two" # Set the desired name
 
 [client]
 target_url = "http://localhost:4200"
@@ -12,3 +13,5 @@ system_prompt = "You are an AI agent that can communicate with other agents."
 
 [mode]
 repl = true
+get_agent_card = false # Explicitly add the field
+repl_log_file = "repl_interactions.log" # Log REPL to the same file

@@ -1,0 +1,34 @@
+2025-05-03T12:30:53.760414214+00:00 [bidirectional-agent-1@0.0.0.0:4200] INIT: Agent initialized.
+2025-05-03T12:30:53.760559220+00:00 [bidirectional-agent-1@0.0.0.0:4200] REPL_START: Entering REPL mode.
+2025-05-03T12:30:53.760977314+00:00 [bidirectional-agent-1@0.0.0.0:4200] BG_INIT_CONNECT: Starting background connection attempt to http://localhost:4201
+2025-05-03T12:30:53.762180160+00:00 [bidirectional-agent-1@0.0.0.0:4200] BG_INIT_CONNECT_FAIL: Background connection attempt 1/5 to http://localhost:4201 failed: HTTP error: error sending request for url (http://localhost:4201/.well-known/agent.json): error trying to connect: tcp connect error: Connection refused (os error 111)
+2025-05-03T12:30:53.762352628+00:00 [bidirectional-agent-1@0.0.0.0:4200] BG_INIT_CONNECT_RETRY: Retrying in 2 seconds...
+2025-05-03T12:30:54.656956881+00:00 [bidirectional-agent-2@0.0.0.0:4201] INIT: Agent initialized.
+2025-05-03T12:30:54.657047543+00:00 [bidirectional-agent-2@0.0.0.0:4201] REPL_START: Entering REPL mode.
+2025-05-03T12:30:54.657432485+00:00 [bidirectional-agent-2@0.0.0.0:4201] BG_INIT_CONNECT: Starting background connection attempt to http://localhost:4200
+2025-05-03T12:30:54.659090516+00:00 [bidirectional-agent-2@0.0.0.0:4201] BG_INIT_CONNECT_SUCCESS: Background connection successful to Agent One (http://localhost:4200)
+2025-05-03T12:30:55.765523651+00:00 [bidirectional-agent-1@0.0.0.0:4200] BG_INIT_CONNECT_SUCCESS: Background connection successful to Agent Two (http://localhost:4201)
+2025-05-03T12:31:10.591500646+00:00 [bidirectional-agent-1@0.0.0.0:4200] REPL_INPUT: :remote hello
+2025-05-03T12:31:10.591921917+00:00 [bidirectional-agent-1@0.0.0.0:4200] REPL_COMMAND: :remote hello
+2025-05-03T12:31:10.592069617+00:00 [bidirectional-agent-1@0.0.0.0:4200] REPL_CMD_REMOTE: Sending task to remote: 'hello'
+2025-05-03T12:31:10.592202840+00:00 [bidirectional-agent-1@0.0.0.0:4200] REMOTE_SEND_START: Attempting to send task to http://localhost:4201: 'hello'
+2025-05-03T12:31:11.917212152+00:00 [bidirectional-agent-1@0.0.0.0:4200] REMOTE_SEND_SUCCESS: Task 7b9c2077-6bfb-4381-b8db-6a758a920669 sent successfully to http://localhost:4201. State: Completed
+2025-05-03T12:31:11.917466455+00:00 [bidirectional-agent-1@0.0.0.0:4200] REPL_CMD_REMOTE_SUCCESS: Task 7b9c2077-6bfb-4381-b8db-6a758a920669 sent successfully. State: Completed
+2025-05-03T12:45:26.296122148+00:00 [bidirectional-agent-1@0.0.0.0:4200] INIT: Agent initialized.
+2025-05-03T12:45:26.296253998+00:00 [bidirectional-agent-1@0.0.0.0:4200] REPL_START: Entering REPL mode.
+2025-05-03T12:45:26.296681109+00:00 [bidirectional-agent-1@0.0.0.0:4200] BG_INIT_CONNECT: Starting background connection attempt to http://localhost:4201
+2025-05-03T12:45:26.297967842+00:00 [bidirectional-agent-1@0.0.0.0:4200] BG_INIT_CONNECT_FAIL: Background connection attempt 1/5 to http://localhost:4201 failed: HTTP error: error sending request for url (http://localhost:4201/.well-known/agent.json): error trying to connect: tcp connect error: Connection refused (os error 111)
+2025-05-03T12:45:26.298157432+00:00 [bidirectional-agent-1@0.0.0.0:4200] BG_INIT_CONNECT_RETRY: Retrying in 2 seconds...
+2025-05-03T12:45:27.190447373+00:00 [bidirectional-agent-2@0.0.0.0:4201] INIT: Agent initialized.
+2025-05-03T12:45:27.190525962+00:00 [bidirectional-agent-2@0.0.0.0:4201] REPL_START: Entering REPL mode.
+2025-05-03T12:45:27.190898740+00:00 [bidirectional-agent-2@0.0.0.0:4201] BG_INIT_CONNECT: Starting background connection attempt to http://localhost:4200
+2025-05-03T12:45:27.192749633+00:00 [bidirectional-agent-2@0.0.0.0:4201] BG_INIT_CONNECT_SUCCESS: Background connection successful to Agent One (http://localhost:4200)
+2025-05-03T12:45:28.300859240+00:00 [bidirectional-agent-1@0.0.0.0:4200] BG_INIT_CONNECT_SUCCESS: Background connection successful to Agent Two (http://localhost:4201)
+2025-05-03T12:45:38.587927883+00:00 [bidirectional-agent-1@0.0.0.0:4200] REPL_INPUT: Tell the other agent hello
+2025-05-03T12:45:38.588384340+00:00 [bidirectional-agent-1@0.0.0.0:4200] PROCESS_MSG_START: Received message: 'Tell the other agent hello'
+2025-05-03T12:45:38.588550475+00:00 [bidirectional-agent-1@0.0.0.0:4200] PROCESS_MSG_INFO: Creating new task with ID: 1987fa8d-8bfa-4b69-b2a3-47282605b48d
+2025-05-03T12:45:38.588745996+00:00 [bidirectional-agent-1@0.0.0.0:4200] PROCESS_MSG_INFO: Calling task_service.process_task for task ID: 1987fa8d-8bfa-4b69-b2a3-47282605b48d
+2025-05-03T12:45:40.077292934+00:00 [bidirectional-agent-1@0.0.0.0:4200] PROCESS_MSG_SUCCESS: Task 1987fa8d-8bfa-4b69-b2a3-47282605b48d processed. State: Completed
+2025-05-03T12:45:40.077454240+00:00 [bidirectional-agent-1@0.0.0.0:4200] SESSION_SAVE_TASK_WARN: No active session while trying to save task 1987fa8d-8bfa-4b69-b2a3-47282605b48d
+2025-05-03T12:45:40.077508684+00:00 [bidirectional-agent-1@0.0.0.0:4200] PROCESS_MSG_END: Responding for task 1987fa8d-8bfa-4b69-b2a3-47282605b48d: 'Task completed successfully.'
+2025-05-03T12:45:40.077555002+00:00 [bidirectional-agent-1@0.0.0.0:4200] REPL_OUTPUT: Task completed successfully.

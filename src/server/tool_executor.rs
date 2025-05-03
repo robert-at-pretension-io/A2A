@@ -172,8 +172,6 @@ impl ToolExecutor {
         
         Self {
             tools: Arc::new(tools),
-        Self {
-            tools: Arc::new(tools),
         }
     }
 
