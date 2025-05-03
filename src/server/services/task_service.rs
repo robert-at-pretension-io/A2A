@@ -673,4 +673,21 @@ impl TaskService {
         info!("Task imported successfully.");
         Ok(())
     }
+    
+    /// Set a custom router implementation (for testing)
+    pub fn set_router(&self, router: Arc<dyn LlmTaskRouterTrait>) {
+        info!("Setting custom router implementation");
+        if let Some(ref current_router) = self.task_router {
+            // Replace the router with the new implementation
+            // This is unsafe but necessary for testing - we're replacing the Arc content
+            // We need this for testing purposes only
+            unsafe {
+                let router_ptr = Arc::as_ptr(current_router) as *mut Arc<dyn LlmTaskRouterTrait>;
+                std::ptr::write(router_ptr, router);
+            }
+            debug!("Router implementation successfully replaced");
+        } else {
+            warn!("Cannot set router: No router currently configured");
+        }
+    }
 }
