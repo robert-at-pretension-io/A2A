@@ -9,12 +9,13 @@ use uuid::Uuid;
 
 // Import from local server components instead of bidirectional_agent
 use crate::server::{
-    task_router::{TaskRouter, RoutingDecision, LlmTaskRouterTrait},
+    task_router::{RoutingDecision, LlmTaskRouterTrait}, // Removed unused TaskRouter import
     tool_executor::ToolExecutor,
-    task_flow::TaskFlow,
-    client_manager::ClientManager, 
+    // task_flow::TaskFlow, // TaskFlow logic will be integrated here
+    client_manager::ClientManager,
     agent_registry::AgentRegistry,
 };
+use tokio::time::{sleep, Duration}; // Added for polling delay
 
 
 pub struct TaskService {
@@ -51,22 +52,8 @@ impl TaskService {
             agent_id: None,
         }
     }
-    
-    /// Creates a new TaskService that delegates to an external task flow manager
-    #[instrument(skip(task_flow))]
-    pub fn with_task_flow(task_flow: Arc<dyn Send + Sync>) -> Self {
-        info!("Creating TaskService with external task flow (simplified).");
-        // This is a simplified version for integration
-        // We'll just use the standalone variant and let the task_flow handle the actual work
-        Self {
-            task_repository: Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new()), // Use default repo for this mode
-            task_router: None,
-            tool_executor: None,
-            client_manager: None,
-            agent_registry: None,
-            agent_id: None,
-        }
-    }
+
+    // Removed with_task_flow constructor as TaskFlow is being removed
 
     /// Creates a new TaskService configured for bidirectional operation.
     /// Requires the corresponding features to be enabled.
@@ -125,14 +112,17 @@ impl TaskService {
 
         // Create new task
         debug!("Creating new task structure.");
+        // Use provided session_id if available, otherwise generate a new one
         let session_id = session_id_clone.unwrap_or_else(|| {
             let new_id = format!("session-{}", Uuid::new_v4());
             debug!(new_session_id = %new_id, "No session ID provided, generating new one.");
             new_id
         });
+        debug!(%session_id, "Using session ID for task."); // Log the session ID being used
+
         let mut task = Task {
             id: task_id.clone(),
-            session_id: Some(session_id),
+            session_id: Some(session_id.clone()), // Use the determined session_id
             status: TaskStatus {
                 state: TaskState::Submitted, // Start as Submitted
                 timestamp: Some(Utc::now()),
@@ -159,88 +149,192 @@ impl TaskService {
         trace!(?task, "Task state updated to Working.");
 
 
-        // --- Routing and Execution Logic (Slice 2 & 3) ---
-        debug!("Entering routing and execution logic.");
-        // Check if bidirectional components are configured
-        if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
-            info!("Bidirectional components found (router, executor). Proceeding with routing.");
-            // Make routing decision based on incoming params
+        // --- Routing and Execution Logic (Integrated from TaskFlow) ---
+        debug!("Entering integrated routing and execution logic.");
+        if let (Some(router), Some(executor), Some(cm), Some(_reg), Some(_agent_id)) =
+            (&self.task_router, &self.tool_executor, &self.client_manager, &self.agent_registry, &self.agent_id)
+        {
+            info!("Bidirectional components found. Proceeding with routing and execution.");
+            // Make routing decision
             debug!("Calling task router decide method.");
-            match router.decide(&params).await { // Use the original params for decision
-                Ok(decision_result) => {
-                    info!(?decision_result, "Routing decision received.");
-                    // Use TaskFlow to handle the decision if delegation is enabled
-                    debug!("Checking if delegation components are available for TaskFlow.");
-                    if let (Some(cm), Some(reg), Some(agent_id)) =
-                        (&self.client_manager, &self.agent_registry, &self.agent_id)
-                    {
-                        info!("Delegation components found. Initializing TaskFlow.");
-                        let flow = TaskFlow::new(
-                            task.id.clone(),
-                            agent_id.clone(),
-                            self.task_repository.clone(),
-                            cm.clone(),
-                            executor.clone(),
-                            reg.clone(),
-                        );
-                        trace!("TaskFlow initialized.");
-                        info!("Processing routing decision with TaskFlow.");
-                        if let Err(e) = flow.process_decision(decision_result.clone()).await {
-                            error!(error = %e, "Task flow processing failed.");
-                            // Update task status to Failed if flow fails
-                            // Refetch task first to avoid overwriting intermediate states
-                            let mut current_task = self.task_repository.get_task(&task.id).await?.unwrap_or(task); // Use fetched or original task
-                            warn!("Updating task status to Failed due to TaskFlow error.");
-                            current_task.status.state = TaskState::Failed;
-                            current_task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task processing failed: {}", e), metadata: None })], metadata: None });
-                            current_task.status.timestamp = Some(Utc::now());
-                            task = current_task; // Update the task variable
-                            // Save the failed state
-                            self.task_repository.save_task(&task).await?;
-                            self.task_repository.save_state_history(&task.id, &task).await?;
-                        } else {
-                            info!("TaskFlow processing completed successfully.");
-                            // Flow succeeded, refetch the task to get the final state
-                            debug!("Refetching task from repository to get final state after TaskFlow.");
-                            task = self.task_repository.get_task(&task.id).await?.unwrap_or(task); // Update task with final state
-                            trace!(?task, "Final task state after TaskFlow.");
-                        }
-                    } else {
-                        // Handle missing components needed for delegation
-                        error!("Configuration Error: Missing components required for delegation (ClientManager, AgentRegistry, or AgentID). Task cannot be delegated.");
-                        task.status.state = TaskState::Failed;
-                        task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Agent configuration error: Missing delegation components.".to_string(), metadata: None })], metadata: None });
-                        task.status.timestamp = Some(Utc::now());
-                        // Save the failed state
-                        self.task_repository.save_task(&task).await?;
-                        self.task_repository.save_state_history(&task.id, &task).await?;
-                    }
-                }
+            let decision_result = match router.decide(&params).await {
+                Ok(decision) => decision,
                 Err(e) => {
-                    // Handle routing error
                     error!(error = %e, "Task routing decision failed.");
                     task.status.state = TaskState::Failed;
                     task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task routing failed: {}", e), metadata: None })], metadata: None });
                     task.status.timestamp = Some(Utc::now());
-                    // Save the failed state
+                    self.task_repository.save_task(&task).await?;
+                    self.task_repository.save_state_history(&task.id, &task).await?;
+                    return Ok(task); // Return the failed task
+                }
+            };
+            info!(?decision_result, "Routing decision received.");
+
+            // Process the decision
+            match decision_result {
+                RoutingDecision::Local { tool_names } => {
+                    info!(?tool_names, "Executing task locally using tools.");
+                    // Execute locally and wait for completion
+                    match executor.execute_task_locally(&mut task, &tool_names).await {
+                        Ok(_) => {
+                            debug!("Local execution finished by tool executor.");
+                            // Task state should be updated by the executor
+                        }
+                        Err(e) => {
+                            error!(error = %e, "Local tool execution failed.");
+                            task.status.state = TaskState::Failed;
+                            task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Local execution failed: {}", e), metadata: None })], metadata: None });
+                            task.status.timestamp = Some(Utc::now());
+                        }
+                    }
+                    // Save the final state after local execution
+                    self.task_repository.save_task(&task).await?;
+                    self.task_repository.save_state_history(&task.id, &task).await?;
+                }
+                RoutingDecision::Remote { agent_id: remote_agent_id } => {
+                    info!(%remote_agent_id, "Delegating task to remote agent.");
+                    // Prepare TaskSendParams for delegation
+                    let delegation_params = TaskSendParams {
+                        id: Uuid::new_v4().to_string(), // Generate a new ID for the remote task
+                        message: initial_message.clone(),
+                        session_id: Some(session_id.clone()), // Pass session ID
+                        metadata: task.metadata.clone(),
+                        history_length: None,
+                        push_notification: None,
+                    };
+                    let remote_task_id = delegation_params.id.clone(); // Store remote task ID
+
+                    // Initiate delegation
+                    match cm.send_task(&remote_agent_id, delegation_params).await {
+                        Ok(initial_remote_task) => {
+                            info!(%remote_agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Delegation initiated successfully.");
+                            // Update local task to indicate delegation
+                            task.status.state = TaskState::Working; // Keep local task Working
+                            task.status.timestamp = Some(Utc::now());
+                            task.status.message = Some(Message {
+                                role: Role::Agent,
+                                parts: vec![Part::TextPart(TextPart {
+                                    type_: "text".to_string(),
+                                    text: format!("Task delegated to agent '{}'. Remote Task ID: {}. Monitoring...", remote_agent_id, remote_task_id),
+                                    metadata: None,
+                                })],
+                                metadata: None,
+                            });
+                            task.metadata.get_or_insert_with(Default::default).insert("remote_task_id".to_string(), remote_task_id.clone().into());
+                            task.metadata.get_or_insert_with(Default::default).insert("delegated_to_agent_id".to_string(), remote_agent_id.clone().into());
+
+                            self.task_repository.save_task(&task).await?;
+                            self.task_repository.save_state_history(&task.id, &task).await?;
+
+                            // --- Start Polling Remote Task ---
+                            info!(%remote_agent_id, %remote_task_id, "Starting to poll remote task status.");
+                            let max_polling_attempts = 30; // e.g., 30 attempts * 2 seconds = 1 minute timeout
+                            let polling_interval = Duration::from_secs(2);
+                            let mut final_remote_task: Option<Task> = None;
+
+                            for attempt in 1..=max_polling_attempts {
+                                debug!(attempt, max_polling_attempts, "Polling remote task status.");
+                                match cm.get_task_status(&remote_agent_id, &remote_task_id).await {
+                                    Ok(remote_task_update) => {
+                                        trace!(remote_state = ?remote_task_update.status.state, "Received remote task status update.");
+                                        // Check if remote task reached a final state
+                                        if matches!(remote_task_update.status.state, TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::InputRequired) {
+                                            info!(final_state = ?remote_task_update.status.state, "Remote task reached final state.");
+                                            final_remote_task = Some(remote_task_update);
+                                            break; // Exit polling loop
+                                        }
+                                        // Continue polling if still working
+                                    }
+                                    Err(e) => {
+                                        error!(error = %e, "Polling remote task failed. Aborting monitoring.");
+                                        // Update local task to Failed due to monitoring error
+                                        task.status.state = TaskState::Failed;
+                                        task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Failed to monitor delegated task: {}", e), metadata: None })], metadata: None });
+                                        task.status.timestamp = Some(Utc::now());
+                                        self.task_repository.save_task(&task).await?;
+                                        self.task_repository.save_state_history(&task.id, &task).await?;
+                                        return Ok(task); // Return the failed local task
+                                    }
+                                }
+                                // Wait before next poll
+                                sleep(polling_interval).await;
+                            }
+
+                            // --- Update Local Task with Final Remote State ---
+                            if let Some(final_task) = final_remote_task {
+                                info!(final_state = ?final_task.status.state, "Updating local task with final remote state.");
+                                // Mirror the final state, message, and artifacts
+                                task.status = final_task.status;
+                                task.artifacts = final_task.artifacts;
+                                // Ensure timestamp is updated
+                                task.status.timestamp = Some(Utc::now());
+                            } else {
+                                warn!(polling_attempts = max_polling_attempts, "Remote task did not reach final state after polling. Marking local task as Failed.");
+                                task.status.state = TaskState::Failed;
+                                task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Delegated task timed out.".to_string(), metadata: None })], metadata: None });
+                                task.status.timestamp = Some(Utc::now());
+                            }
+                            // Save the final mirrored state
+                            self.task_repository.save_task(&task).await?;
+                            self.task_repository.save_state_history(&task.id, &task).await?;
+
+                        }
+                        Err(e) => {
+                            error!(%remote_agent_id, error = %e, "Failed to initiate task delegation.");
+                            task.status.state = TaskState::Failed;
+                            task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Failed to delegate task: {}", e), metadata: None })], metadata: None });
+                            task.status.timestamp = Some(Utc::now());
+                            self.task_repository.save_task(&task).await?;
+                            self.task_repository.save_state_history(&task.id, &task).await?;
+                        }
+                    }
+                }
+                RoutingDecision::Reject { reason } => {
+                    info!(%reason, "Task rejected based on routing decision.");
+                    task.status.state = TaskState::Failed;
+                    task.status.timestamp = Some(Utc::now());
+                    task.status.message = Some(Message {
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            text: format!("Task rejected: {}", reason),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    });
+                    self.task_repository.save_task(&task).await?;
+                    self.task_repository.save_state_history(&task.id, &task).await?;
+                }
+                RoutingDecision::Decompose { subtasks: _ } => {
+                    warn!("Task decomposition requested but not implemented.");
+                    task.status.state = TaskState::Failed;
+                    task.status.timestamp = Some(Utc::now());
+                    task.status.message = Some(Message {
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            text: "Task decomposition is not implemented.".to_string(),
+                            metadata: None,
+                        })],
+                        metadata: None,
+                    });
                     self.task_repository.save_task(&task).await?;
                     self.task_repository.save_state_history(&task.id, &task).await?;
                 }
             }
         } else {
-            // Fallback to default processing if router/executor not available (standalone mode)
-            info!("Router/Executor not available (standalone mode?). Using default task content processing.");
-            // Pass the initial message for content processing
+            // Fallback to default processing (standalone mode)
+            info!("Router/Executor/ClientManager not available (standalone mode?). Using default task content processing.");
             self.process_task_content(&mut task, Some(initial_message)).await?;
             // Save the final state after default processing
-            debug!("Saving final task state after default processing.");
             self.task_repository.save_task(&task).await?;
             self.task_repository.save_state_history(&task.id, &task).await?;
         }
-        // --- End Routing and Execution Logic ---
+        // --- End Integrated Routing and Execution Logic ---
 
-        info!(final_state = ?task.status.state, "Finished processing task request.");
-        Ok(task)
+        info!(final_state = ?task.status.state, "Finished processing task request. Returning final task state.");
+        Ok(task) // Return the final state of the task
     }
 
     /// Process follow-up message for an existing task
