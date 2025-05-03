@@ -456,7 +456,6 @@ impl ToolExecutor {
         }
     }
 
-    // REMOVED extract_params_from_message function
 
     /// Executes a task locally using the specified tool and pre-extracted parameters.
     /// Updates the task state and artifacts based on the tool execution result.
@@ -466,16 +465,11 @@ impl ToolExecutor {
         tracing::trace!(?params, "Parameters received for tool execution."); // Add tracing
 
         // Check if the requested tool exists and is registered
-        // If not, fall back to echo tool (but log a warning)
-        let final_tool_name = if self.tools.contains_key(tool_name) {
-            tracing::info!("Requested tool '{}' found and registered.", tool_name); // Add tracing
-            tool_name
-        } else {
-            let default_tool_name = "echo";
-            tracing::warn!(requested_tool = %tool_name, %default_tool_name, "Requested tool not found or registered. Falling back to default tool."); // Add tracing
+        // If not, return a ToolError::NotFound which will be converted to ServerError
+        if !self.tools.contains_key(tool_name) {
+            tracing::warn!(requested_tool = %tool_name, "Requested tool not found or not registered in ToolExecutor.");
             // Add a warning message to the task history
-            let warning_msg = format!("Tool '{}' not found - using default '{}' tool instead.",
-                                     tool_name, default_tool_name);
+            let warning_msg = format!("Tool '{}' not found or not enabled for this agent.", tool_name);
             task.history.get_or_insert_with(Vec::new).push(Message {
                 role: Role::Agent,
                 parts: vec![Part::TextPart(TextPart {
@@ -485,13 +479,13 @@ impl ToolExecutor {
                 })],
                 metadata: None,
             });
-            default_tool_name
-        };
-        tracing::info!(%final_tool_name, "Final tool name selected for execution."); // Add tracing
-
+            // Return an error instead of falling back to echo
+            return Err(ToolError::NotFound(tool_name.to_string()).into());
+        }
+        
         // Execute the tool using the provided parameters
-        tracing::info!("Executing tool '{}'.", final_tool_name); // Add tracing
-        match self.execute_tool(final_tool_name, params).await {
+        tracing::info!("Executing tool '{}'.", tool_name); // Use the validated tool_name
+        match self.execute_tool(tool_name, params).await {
             Ok(result_value) => {
                 tracing::info!("Tool execution successful."); // Add tracing
                 tracing::trace!(result = %result_value, "Tool result value."); // Add tracing

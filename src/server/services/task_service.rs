@@ -180,13 +180,13 @@ impl TaskService {
 
             // Process the decision
             match decision_result {
-                RoutingDecision::Local { tool_name, params } => { // Use updated variant
+                RoutingDecision::Local { tool_name, params } => {
                     info!(%tool_name, ?params, "Executing task locally using tool and extracted parameters.");
                     // Execute locally and wait for completion, passing the extracted params
-                    match executor.execute_task_locally(&mut task, &tool_name, params).await { // Pass tool_name and params
+                    match executor.execute_task_locally(&mut task, &tool_name, params).await {
                         Ok(_) => {
                             debug!("Local execution finished by tool executor.");
-                            // Task state should be updated by the executor
+                            // Task state should be updated by the executor (Completed or Failed)
                         }
                         Err(e) => {
                             error!(error = %e, "Local tool execution failed.");

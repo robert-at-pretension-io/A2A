@@ -423,7 +423,8 @@ impl BidirectionalTaskRouter {
     pub async fn decide_execution_mode(&self, task: &Task) -> Result<RoutingDecision, ServerError> {
         debug!("Deciding execution mode for task.");
         trace!(?task, "Task details for routing decision.");
-         // Extract the task content for analysis
+        
+        // Extract the task content for analysis
         // Use history if available, otherwise maybe the top-level message if applicable
         trace!("Extracting task text from history/message.");
         let task_text = task.history.as_ref().map(|history| {
@@ -534,118 +535,95 @@ Your response should be exactly one of those formats, with no additional text.
         trace!(decision = %decision, "Raw LLM decision text.");
 
         // Parse the decision more robustly - check prefixes
-        if decision.starts_with("LOCAL") { // Check prefix
-            info!("LLM decided LOCAL execution. Proceeding to tool selection.");
-            // --- LLM Tool Selection & Parameter Extraction Logic ---
-            // Get descriptions of locally enabled tools again for the choice prompt
-            debug!("Fetching descriptions of locally enabled tools for tool choice prompt.");
-            let local_tool_descriptions_for_choice = self.enabled_tools.iter()
-                .filter_map(|tool_name| {
-                    // TODO: Refactor to pass ToolExecutor or tool descriptions (same as above)
+        if decision.starts_with("LOCAL") {
+            info!("LLM decided LOCAL execution. Proceeding to tool selection and parameter extraction.");
+            
+            // --- Combined LLM Tool Selection & Parameter Extraction ---
+            debug!("Fetching descriptions of locally enabled tools for combined prompt.");
+            let local_tool_descriptions = self.enabled_tools.iter()
+                .map(|tool_name| {
+                    // Provide descriptions and expected parameters for better LLM guidance
                     let description = match tool_name.as_str() {
-                        "llm" => "General purpose LLM request. Good for questions, generation, analysis if no specific tool fits.",
-                        "summarize" => "Summarizes the input text.",
-                        "list_agents" => "Lists known agents. Use only if the task is explicitly about listing agents.",
-                        "remember_agent" => "Stores information about another agent given its URL. Expects JSON parameter: {\"agent_base_url\": \"http://...\"}", // Add param info
-                        "echo" => "Simple echo tool for testing. Use only if the task is explicitly to echo. Expects JSON parameter: {\"text\": \"...\"}", // Add param info
-                        _ => "A custom tool.",
+                        "llm" => "General purpose LLM request. Good for questions, generation, analysis if no specific tool fits. Expects {\"text\": \"...\"}",
+                        "summarize" => "Summarizes the input text. Expects {\"text\": \"...\"}",
+                        "list_agents" => "Lists known agents. Use only if the task is explicitly about listing agents. Expects {} or {\"format\": \"simple\" | \"detailed\"}",
+                        "remember_agent" => "Stores information about another agent given its URL. Expects {\"agent_base_url\": \"http://...\"}",
+                        "echo" => "Simple echo tool for testing. Use only if the task is explicitly to echo. Expects {\"text\": \"...\"}",
+                        _ => "A custom tool with potentially unknown parameters.",
                     };
-                    Some(format!("- {}: {}", tool_name, description))
+                    format!("- {}: {}", tool_name, description)
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            trace!(local_tool_descriptions = %local_tool_descriptions_for_choice, "Formatted local tool descriptions for choice.");
+            trace!(local_tool_descriptions = %local_tool_descriptions, "Formatted local tool descriptions for combined prompt.");
 
-            let tool_choice_prompt = format!(
+            let tool_param_prompt = format!(
 r#"You have decided to handle the following TASK locally:
 {}
 
-Choose the SINGLE most appropriate tool from the list below to execute this task. Consider the tool descriptions carefully.
+Based on the TASK and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
 
 AVAILABLE LOCAL TOOLS:
 {}
 
-Respond ONLY with the exact name of the chosen tool (e.g., 'llm', 'summarize', 'echo')."#,
-                task_text, // Include the task text again for context
-                local_tool_descriptions_for_choice
-            );
-            trace!(tool_choice_prompt = %tool_choice_prompt, "Constructed tool choice prompt.");
+Respond ONLY with a valid JSON object containing the chosen tool's name and its parameters. The JSON object MUST have the following structure:
+{{
+  "tool_name": "<chosen_tool_name>",
+  "params": {{ <parameters_object> }}
+}}
 
-            info!("Asking LLM to choose the specific local tool.");
-            let tool_choice_result = self.llm.complete(&tool_choice_prompt).await;
+Examples:
+- For a task like "remember agent at http://foo.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://foo.com"}}}}
+- For a task like "list known agents simply": {{"tool_name": "list_agents", "params": {{"format": "simple"}}}}
+- For a task like "echo hello": {{"tool_name": "echo", "params": {{"text": "hello"}}}}
+- For a general question: {{"tool_name": "llm", "params": {{"text": "original question text..."}}}}
+- If no specific parameters are needed for the chosen tool (like list_agents with default format): {{"tool_name": "list_agents", "params": {{}}}}
 
-            let chosen_tool_name = match tool_choice_result {
-                 Ok(tool_name_raw) => {
-                    let tool_name = tool_name_raw.trim().to_string();
-                    trace!(raw_tool_choice = %tool_name_raw, trimmed_tool_choice = %tool_name, "Received tool choice from LLM.");
-                    // Validate the LLM's choice against the enabled tools
-                    if self.enabled_tools.contains(&tool_name) {
-                         info!(tool_name = %tool_name, "LLM chose valid tool.");
-                         tool_name // Use the valid tool chosen by LLM
-                    } else {
-                         warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool. Falling back to 'llm' tool.");
-                         "llm".to_string() // Fallback to llm tool if choice is invalid
-                    }
-                 },
-                 Err(e) => {
-                     warn!(error = %e, "LLM failed to choose a tool. Falling back to 'llm' tool.");
-                     "llm".to_string() // Fallback to llm tool on error
-                 }
-            };
-            trace!(chosen_tool_name = %chosen_tool_name, "Final tool name selected.");
-
-            // --- Parameter Extraction ---
-            info!(tool_name = %chosen_tool_name, "Asking LLM to extract parameters for the chosen tool.");
-            let param_extraction_prompt = format!(
-r#"Based on the original TASK and the chosen TOOL, extract the necessary parameters as a valid JSON object.
-
-ORIGINAL TASK:
-{}
-
-CHOSEN TOOL: {}
-(Refer to tool descriptions provided previously if needed, especially for expected parameter names like 'agent_base_url' or 'text')
-
-Respond ONLY with the JSON object containing the parameters. For example:
-- For 'remember_agent': {{"agent_base_url": "http://..."}}
-- For 'echo' or 'llm': {{"text": "..."}}
-- For 'list_agents': {{}} (or {{"format": "detailed"}} if specified in task)
-
-If no specific parameters are needed or mentioned in the task, respond with an empty JSON object: {{}}."#,
+Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
                 task_text,
-                chosen_tool_name
+                local_tool_descriptions
             );
-            trace!(param_extraction_prompt = %param_extraction_prompt, "Constructed parameter extraction prompt.");
+            trace!(tool_param_prompt = %tool_param_prompt, "Constructed combined tool/param extraction prompt.");
 
-            let params_result = self.llm.complete(&param_extraction_prompt).await;
-            let extracted_params: Value = match params_result {
-                Ok(params_str_raw) => {
-                    let params_str = params_str_raw.trim();
-                    trace!(raw_params_str = %params_str_raw, trimmed_params_str = %params_str, "Received raw parameters string from LLM.");
-                    match serde_json::from_str(params_str) {
+            info!("Asking LLM to choose tool and extract parameters.");
+            let tool_param_result = self.llm.complete(&tool_param_prompt).await;
+
+            match tool_param_result {
+                Ok(json_str_raw) => {
+                    let json_str = json_str_raw.trim();
+                    trace!(raw_json = %json_str_raw, trimmed_json = %json_str, "Received tool/param JSON string from LLM.");
+                    // Attempt to parse the JSON response
+                    match serde_json::from_str::<Value>(json_str) {
                         Ok(json_value) => {
-                            info!(?json_value, "Successfully parsed JSON parameters extracted by LLM.");
-                            json_value
+                            if let (Some(tool_name), Some(params)) = (
+                                json_value.get("tool_name").and_then(Value::as_str),
+                                json_value.get("params").cloned() // Clone the params Value
+                            ) {
+                                // Validate the chosen tool name
+                                if self.enabled_tools.contains(&tool_name.to_string()) {
+                                    info!(tool_name = %tool_name, ?params, "Successfully parsed tool and params from LLM response.");
+                                    Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params })
+                                } else {
+                                    warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool in JSON response. Falling back to 'llm' tool.");
+                                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
+                                }
+                            } else {
+                                warn!(json_response = %json_str, "LLM returned valid JSON but missing 'tool_name' or 'params'. Falling back to 'llm' tool.");
+                                Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
+                            }
                         },
                         Err(e) => {
-                            // Escape the braces in the format string
-                            warn!(error = %e, params_str = %params_str, "LLM returned invalid JSON for parameters. Falling back to {{\"text\": \"original_task_text\"}}.");
-                            // Fallback: Use original text if JSON parsing fails
-                            json!({"text": task_text})
+                            warn!(error = %e, json_response = %json_str, "LLM returned invalid JSON for tool/params. Falling back to 'llm' tool.");
+                            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
                         }
                     }
                 },
                 Err(e) => {
-                    // Escape the braces in the format string
-                    warn!(error = %e, "LLM failed to extract parameters. Falling back to {{\"text\": \"original_task_text\"}}.");
-                    // Fallback: Use original text if LLM fails
-                    json!({"text": task_text})
+                    warn!(error = %e, "LLM failed to choose tool/extract params. Falling back to 'llm' tool.");
+                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
                 }
-            };
-            trace!(?extracted_params, "Final parameters for tool execution.");
-
-            info!(tool_name = %chosen_tool_name, "Final routing decision: Local execution.");
-            Ok(RoutingDecision::Local { tool_name: chosen_tool_name, params: extracted_params })
-            // --- End LLM Tool Selection & Parameter Extraction Logic ---
+            }
+            // --- End Combined LLM Tool Selection & Parameter Extraction ---
 
         } else if decision.starts_with("REMOTE: ") {
             let agent_id = decision.strip_prefix("REMOTE: ").unwrap().trim().to_string();
@@ -654,10 +632,9 @@ If no specific parameters are needed or mentioned in the task, respond with an e
             // Verify the agent exists in the local directory
             trace!(remote_agent_id = %agent_id, "Verifying remote agent existence in directory.");
             if self.directory.get_agent(&agent_id).is_none() {
-                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'llm' tool.");
-                 // Fall back to local if agent not found, using llm tool
-                 // Use tool_name and add default params
-                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({}) })
+                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'llm' tool and original task text.");
+                 // Fall back to local if agent not found, using llm tool with original text
+                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
             } else {
                  info!(remote_agent_id = %agent_id, "Routing decision: Remote delegation confirmed.");
                  Ok(RoutingDecision::Remote { agent_id })
@@ -667,10 +644,9 @@ If no specific parameters are needed or mentioned in the task, respond with an e
             info!(reason = %reason, "LLM decided to REJECT the task.");
             Ok(RoutingDecision::Reject { reason })
         } else {
-            warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'llm' tool.");
-            // Default to local llm tool if the decision isn't clear
-            // Use tool_name and add default params
-            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({}) })
+            warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'llm' tool and original task text.");
+            // Default to local llm tool if the decision isn't clear, using original text
+            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
         }
     }
 }
@@ -712,15 +688,27 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
     async fn process_follow_up(&self, task_id: &str, message: &Message) -> Result<RoutingDecision, ServerError> {
         debug!("Processing follow-up message for task.");
         trace!(?message, "Follow-up message details.");
-        // For now, always route follow-ups locally as a simple default.
-        // A real implementation would likely involve the LLM again.
-        info!("Defaulting follow-up routing to LOCAL execution.");
-        // Use tool_name and provide default empty params for follow-up
-        // Use "echo" as the default tool for follow-ups for now
-        Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) })
+        // For now, always route follow-ups locally using the 'llm' tool as a simple default.
+        // A real implementation might involve the LLM again to choose a tool based on history.
+        info!("Defaulting follow-up routing to LOCAL execution using 'llm' tool.");
+        
+        // Extract text from the follow-up message for the 'llm' tool's 'text' parameter
+        let follow_up_text = message.parts.iter()
+            .filter_map(|p| match p {
+                Part::TextPart(tp) => Some(tp.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+            
+        Ok(RoutingDecision::Local { 
+            tool_name: "llm".to_string(), 
+            params: json!({"text": follow_up_text}) 
+        })
     }
- 
+
     // Implement the decide method required by LlmTaskRouterTrait
+    // This method is now effectively the same as route_task, as the full decision happens there.
     #[instrument(skip(self, params), fields(task_id = %params.id))]
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
         debug!("Decide method called, delegating to route_task.");
@@ -2150,17 +2138,21 @@ impl BidirectionalAgent {
                         continue;
                     }
                     
-                    let tool_args = parts[1]; // Get everything after ":tool "
-                    let tool_parts: Vec<&str> = tool_args.splitn(2, ' ').collect();
+                    // Get everything after ":tool "
+                    let tool_args = parts.get(1).map(|s| s.trim()).unwrap_or(""); 
                     
-                    if tool_parts.is_empty() {
+                    // Split the arguments into tool name and parameters string
+                    let (tool_name, params_str) = match tool_args.split_once(' ') {
+                        Some((name, params)) => (name, params), // Found space, split name and params
+                        None => (tool_args, "{}"), // No space, assume only tool name, default params to {}
+                    };
+
+                    if tool_name.is_empty() {
                         error!("No tool name provided for :tool command.");
                         println!("❌ Error: No tool name provided. Use :tool TOOL_NAME [JSON_PARAMS]");
                         continue;
                     }
-                    
-                    let tool_name = tool_parts[0];
-                    let params_str = if tool_parts.len() > 1 { tool_parts[1] } else { "{}" }; // Default to empty JSON object if no params
+
                     info!(tool_name = %tool_name, params_str = %params_str, "Processing :tool command.");
 
                     // Parse parameters as JSON
@@ -2192,11 +2184,32 @@ impl BidirectionalAgent {
                         error!("ToolExecutor not available in TaskService for :tool command.");
                         println!("❌ Error: Tool execution is not configured for this agent.");
                     }
-                } else {
-                    error!("Invalid format for :tool command.");
-                    println!("❌ Error: Invalid format. Use :tool <tool_name> [json_params]");
-                }
-                } else {
+                } else { // Handle other commands or fall through to local processing
+                    // Check for other specific commands here if needed...
+                    
+                    // If it wasn't any known command starting with ':', treat as local message
+                    // OR if it was an unknown command like ':foo'
+                    if !input_trimmed.starts_with(":") {
+                         // Process the message locally using the agent's capabilities
+                         debug!(message = %input_trimmed, "Processing input as local message.");
+                         match self.process_message_locally(input_trimmed).await { // Renamed function logs internally
+                             Ok(response) => {
+                                 println!("\n🤖 Agent response:\n{}\n", response);
+                                 info!(response_length = %response.len(), "Local processing successful, displayed response.");
+                             },
+                             Err(e) => {
+                                 let error_msg = format!("Error processing message locally: {}", e);
+                                 error!(error = %e, "Error processing message locally.");
+                                 println!("❌ {}", error_msg);
+                             }
+                         }
+                    } else {
+                        // It started with ':' but wasn't a known command
+                        warn!("Unknown REPL command entered.");
+                        println!("❌ Unknown command: '{}'. Type :help for available commands.", input_trimmed);
+                    }
+                } // End of the main 'if input_trimmed.starts_with(":")' block's else branch
+            } else { // Input does not start with ':'
                 // Process the message locally using the agent's capabilities
                 debug!(message = %input_trimmed, "Processing input as local message.");
                 match self.process_message_locally(input_trimmed).await { // Renamed function logs internally
