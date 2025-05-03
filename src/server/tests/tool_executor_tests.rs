@@ -1,5 +1,6 @@
 use crate::server::tool_executor::{ToolExecutor, ListAgentsTool, Tool, ToolError};
-use crate::bidirectional::bidirectional_agent::AgentDirectory;
+// Import the canonical AgentRegistry instead of the local AgentDirectory
+use crate::server::agent_registry::AgentRegistry; 
 use crate::types::AgentCard;
 use std::sync::Arc;
 use serde_json::{json, Value};
@@ -17,13 +18,13 @@ impl crate::bidirectional::bidirectional_agent::LlmClient for MockLlmClient {
 
 #[tokio::test]
 async fn test_list_agents_tool_empty() {
-    // Create empty agent directory
-    let directory = Arc::new(AgentDirectory::new());
+    // Create empty agent registry
+    let registry = Arc::new(AgentRegistry::new());
     
-    // Create tool
-    let tool = ListAgentsTool::new(directory);
+    // Create tool, passing the registry
+    let tool = ListAgentsTool::new(registry);
     
-    // Execute with empty directory
+    // Execute with empty registry
     let result = tool.execute(json!({})).await.expect("Tool execution failed");
     
     // Verify result structure
@@ -35,8 +36,8 @@ async fn test_list_agents_tool_empty() {
 
 #[tokio::test]
 async fn test_list_agents_tool_with_agents() {
-    // Create agent directory with entries
-    let directory = Arc::new(AgentDirectory::new());
+    // Create agent registry with entries
+    let registry = Arc::new(AgentRegistry::new());
     
     // Create sample agent cards
     let card1 = AgentCard {
@@ -67,12 +68,25 @@ async fn test_list_agents_tool_with_agents() {
         version: "1.0.0".to_string(),
     };
     
-    // Add agents to directory
-    directory.add_or_update_agent("agent-1".to_string(), card1);
-    directory.add_or_update_agent("agent-2".to_string(), card2);
-    
-    // Create tool
-    let tool = ListAgentsTool::new(directory);
+    // Add agents to registry (using discover, which requires a running server or mock)
+    // For simplicity in this unit test, we'll assume discover works and adds them.
+    // A more complex test might involve mocking the A2aClient used by discover.
+    // We'll manually insert into the registry's internal map for this test.
+    registry.agents.insert("agent-1".to_string(), crate::server::agent_registry::CachedAgentInfo {
+        card: card1.clone(),
+        last_seen: Utc::now(),
+        active: true,
+        base_url: card1.url.clone(),
+    });
+     registry.agents.insert("agent-2".to_string(), crate::server::agent_registry::CachedAgentInfo {
+        card: card2.clone(),
+        last_seen: Utc::now(),
+        active: true,
+        base_url: card2.url.clone(),
+    });
+
+    // Create tool, passing the registry
+    let tool = ListAgentsTool::new(registry);
     
     // Test detailed format (default)
     let detailed_result = tool.execute(json!({})).await.expect("Tool execution failed");
@@ -106,10 +120,10 @@ async fn test_list_agents_tool_with_agents() {
 #[tokio::test]
 async fn test_tool_executor_with_list_agents() {
     // Create test components
-    let directory = Arc::new(AgentDirectory::new());
+    let registry = Arc::new(AgentRegistry::new()); // Use registry
     let llm = Arc::new(MockLlmClient);
     
-    // Add a test agent
+    // Add a test agent to the registry
     let card = AgentCard {
         name: "Test Agent".to_string(),
         url: "http://localhost:3333".to_string(),
@@ -124,15 +138,21 @@ async fn test_tool_executor_with_list_agents() {
         version: "1.0.0".to_string(),
     };
     
-    directory.add_or_update_agent("test-agent".to_string(), card);
-    
-    // Create tool executor with list_agents enabled
+    // Add agent to registry's internal map for the test
+    registry.agents.insert("test-agent".to_string(), crate::server::agent_registry::CachedAgentInfo {
+        card: card.clone(),
+        last_seen: Utc::now(),
+        active: true,
+        base_url: card.url.clone(),
+    });
+
+    // Create tool executor with list_agents enabled, passing the registry
     let executor = ToolExecutor::with_enabled_tools(
         &["echo".to_string(), "list_agents".to_string()],
-        Some(llm), // Wrap LLM client in Some()
-        Some(directory),
-        None, // Add None for the missing agent_registry argument
-        None, // Add None for the missing known_servers argument
+        Some(llm),
+        None, // Pass None for agent_directory
+        Some(registry), // Pass the registry
+        None,
     );
     
     // Check that list_agents tool is registered

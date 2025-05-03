@@ -119,14 +119,15 @@ impl Tool for EchoTool {
 
 // --- New Tools ---
 
-/// Tool that provides information about all known agents
+/// Tool that provides information about all known agents from the canonical registry
 pub struct ListAgentsTool {
-    agent_directory: Arc<AgentDirectory>,
+    agent_registry: Arc<crate::server::agent_registry::AgentRegistry>, // Use canonical registry
 }
 
 impl ListAgentsTool {
-    pub fn new(agent_directory: Arc<AgentDirectory>) -> Self {
-        Self { agent_directory }
+    // Constructor now takes the canonical registry
+    pub fn new(agent_registry: Arc<crate::server::agent_registry::AgentRegistry>) -> Self {
+        Self { agent_registry }
     }
 }
 
@@ -142,8 +143,8 @@ impl Tool for ListAgentsTool {
             .and_then(|v| v.as_str())
             .unwrap_or("detailed");
         
-        // Get all agents
-        let all_agents = self.agent_directory.list_all_agents();
+        // Get all agents from the canonical registry
+        let all_agents = self.agent_registry.list_all_agents(); // Use registry method
         
         if all_agents.is_empty() {
             return Ok(json!({
@@ -392,11 +393,12 @@ impl ToolExecutor {
                 }
                 "list_agents" => {
                     if !map.contains_key("list_agents") {
-                        if let Some(dir) = agent_directory.clone() {
-                            map.insert("list_agents".into(), Box::new(ListAgentsTool::new(dir)));
+                        // Use agent_registry instead of agent_directory
+                        if let Some(reg) = agent_registry.clone() {
+                            map.insert("list_agents".into(), Box::new(ListAgentsTool::new(reg))); // Pass registry
                             tracing::debug!("Tool 'list_agents' registered.");
                         } else {
-                            tracing::warn!("Cannot register 'list_agents' tool: agent_directory not provided.");
+                            tracing::warn!("Cannot register 'list_agents' tool: agent_registry not provided.");
                         }
                     }
                 }
