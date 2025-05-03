@@ -26,7 +26,7 @@ pub struct TaskService {
     
     task_router: Option<Arc<dyn LlmTaskRouterTrait>>,
     
-    tool_executor: Option<Arc<ToolExecutor>>,
+    pub tool_executor: Option<Arc<ToolExecutor>>, // <-- Make this field public
     // Add components needed by TaskFlow if TaskService orchestrates it
     
     client_manager: Option<Arc<ClientManager>>,
