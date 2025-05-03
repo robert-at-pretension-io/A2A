@@ -485,7 +485,8 @@ pub struct BidirectionalAgent {
     // Server configuration
     port: u16,
     bind_address: String,
-    agent_id: String, // Keep agent_id for identification
+    agent_id: String, // Keep agent_id for internal identification
+    agent_name: String, // Name used for the agent card
     
     // A2A client for making outbound requests to other agents
     // This is a simple client that can be expanded later
@@ -568,9 +569,11 @@ impl BidirectionalAgent {
             llm,
 
             port: config.server.port,
-            bind_address: config.server.bind_address,
-            agent_id: config.server.agent_id,
-            
+            bind_address: config.server.bind_address.clone(),
+            agent_id: config.server.agent_id.clone(),
+            // Use configured agent_name, or fall back to agent_id
+            agent_name: config.server.agent_name.unwrap_or_else(|| config.server.agent_id.clone()),
+
             // Store the A2A client (if configured)
             client,
             
@@ -1709,7 +1712,7 @@ impl BidirectionalAgent {
 
         AgentCard {
             // id field does not exist on AgentCard in types.rs
-            name: AGENT_NAME.to_string(), // name is String
+            name: self.agent_name.clone(), // Use the configured agent name
             description: Some("A bidirectional A2A agent that can process tasks and delegate to other agents".to_string()),
             version: AGENT_VERSION.to_string(), // version is String
             url: format!("http://{}:{}", self.bind_address, self.port), // url is String
@@ -1734,6 +1737,8 @@ pub struct ServerConfig {
     pub bind_address: String,
     #[serde(default = "default_agent_id")]
     pub agent_id: String,
+    // Optional name for the agent card, defaults to agent_id if not set
+    pub agent_name: Option<String>,
 }
 
 /// Client configuration section

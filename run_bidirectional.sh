@@ -106,6 +106,7 @@ cat > "${PROJECT_DIR}/agent1_config.toml" << EOF
 port = 4200
 bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-1"
+agent_name = "Agent One" # Set the desired name
 
 [client]
 target_url = "http://localhost:4201"
@@ -126,6 +127,7 @@ cat > "${PROJECT_DIR}/agent2_config.toml" << EOF
 port = 4201
 bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-2"
+agent_name = "Agent Two" # Set the desired name
 
 [client]
 target_url = "http://localhost:4200"
