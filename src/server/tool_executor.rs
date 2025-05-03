@@ -43,11 +43,6 @@ impl From<std::io::Error> for ToolError {
     }
 }
 
-// Implement conversion from anyhow::Error (Moved here)
-impl From<anyhow::Error> for ToolError {
-    fn from(e: anyhow::Error) -> Self {
-        // Capture the context of the anyhow error
-        ToolError::ExternalError(format!("{:?}", e))
 // Implement conversion from ServerError (for registry errors etc.)
 impl From<ServerError> for ToolError {
     fn from(e: ServerError) -> Self {
