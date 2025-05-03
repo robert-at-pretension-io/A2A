@@ -783,12 +783,14 @@ impl BidirectionalAgent {
 
             tokio::spawn(async move {
                 // Helper closure for logging within the spawned task
-                let log_action = |action_type: &str, details: &str| async {
-                     if let Some(log_path) = &repl_log_file {
+                // Takes owned Strings to satisfy 'static lifetime requirement of tokio::spawn
+                let log_action = |action_type: String, details: String| async move { // Add move here
+                     if let Some(log_path) = &repl_log_file { // repl_log_file is already owned (cloned Option<PathBuf>)
                         let timestamp = Utc::now().to_rfc3339();
+                        // Use owned Strings in format!
                         let log_entry = format!(
                             "{} [{}@{}:{}] {}: {}\n",
-                            timestamp, agent_id, bind_address, port, action_type, details.trim()
+                            timestamp, agent_id, bind_address, port, action_type, details.trim() // agent_id, bind_address, port are owned copies
                         );
                         // Open the file asynchronously
                         match OpenOptions::new()
@@ -812,7 +814,8 @@ impl BidirectionalAgent {
                     }
                 };
 
-                log_action("BG_INIT_CONNECT", &format!("Starting background connection attempt to {}", initial_url)).await;
+                // Pass owned Strings to log_action
+                log_action("BG_INIT_CONNECT".to_string(), format!("Starting background connection attempt to {}", initial_url)).await;
 
                 let max_retries = 5;
                 let retry_delay = std::time::Duration::from_secs(2);
@@ -826,7 +829,8 @@ impl BidirectionalAgent {
                         Ok(card) => {
                             let success_msg = format!("Background connection successful to {} ({})", card.name, initial_url);
                             println!("✅ {}", success_msg); // Print to console as well
-                            log_action("BG_INIT_CONNECT_SUCCESS", &success_msg).await;
+                            // Pass owned Strings
+                            log_action("BG_INIT_CONNECT_SUCCESS".to_string(), success_msg).await;
 
                             // Update shared state
                             known_servers.insert(initial_url.clone(), card.name.clone());
@@ -838,9 +842,11 @@ impl BidirectionalAgent {
                         Err(e) => {
                             let error_msg = format!("Background connection attempt {}/{} to {} failed: {}", attempt, max_retries, initial_url, e);
                             // Don't print every failure to console, only log it
-                            log_action("BG_INIT_CONNECT_FAIL", &error_msg).await;
+                            // Pass owned Strings
+                            log_action("BG_INIT_CONNECT_FAIL".to_string(), error_msg).await;
                             if attempt < max_retries {
-                                log_action("BG_INIT_CONNECT_RETRY", &format!("Retrying in {} seconds...", retry_delay.as_secs())).await;
+                                // Pass owned Strings
+                                log_action("BG_INIT_CONNECT_RETRY".to_string(), format!("Retrying in {} seconds...", retry_delay.as_secs())).await;
                                 tokio::time::sleep(retry_delay).await;
                             }
                         }
@@ -850,7 +856,8 @@ impl BidirectionalAgent {
                 if !connected {
                     let final_error_msg = format!("Background connection to {} failed after {} attempts.", initial_url, max_retries);
                     println!("❌ {}", final_error_msg); // Print final failure to console
-                    log_action("BG_INIT_CONNECT_FAIL", &final_error_msg).await;
+                    // Pass owned Strings
+                    log_action("BG_INIT_CONNECT_FAIL".to_string(), final_error_msg).await;
                 }
             });
         }
