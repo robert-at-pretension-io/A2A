@@ -4,8 +4,9 @@
 /// to the appropriate execution methods (local tools, remote agents, etc.)
 
 use async_trait::async_trait;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json}; // <-- Import json macro
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -118,10 +119,12 @@ impl LlmTaskRouterTrait for TaskRouter {
     async fn process_follow_up(&self, _task_id: &str, _message: &Message) -> Result<RoutingDecision, ServerError> {
         // Simple implementation that always routes to local tools
         Ok(RoutingDecision::Local {
-            tool_names: self.tools.clone(),
+            // Use the first tool as the tool_name, provide empty params
+            tool_name: self.tools.first().cloned().unwrap_or_else(|| "echo".to_string()),
+            params: json!({}),
         })
     }
-    
+ 
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
         // Simple implementation that always routes to local tools
         Ok(self.route(params))

@@ -527,7 +527,8 @@ Your response should be exactly one of those formats, with no additional text.
             Err(e) => {
                 error!(error = %e, "LLM routing decision failed. Falling back to local 'echo'.");
                 // Fallback to local echo on LLM error
-                return Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
+                // Use tool_name and add default params
+                return Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) });
             }
         };
         trace!(decision = %decision, "Raw LLM decision text.");
@@ -634,7 +635,8 @@ If no specific parameters are needed or mentioned in the task, respond with an e
                     }
                 },
                 Err(e) => {
-                    warn!(error = %e, "LLM failed to extract parameters. Falling back to {\"text\": \"original_task_text\"}.");
+                    // Escape the braces in the format string
+                    warn!(error = %e, "LLM failed to extract parameters. Falling back to {{\"text\": \"original_task_text\"}}.");
                     // Fallback: Use original text if LLM fails
                     json!({"text": task_text})
                 }
@@ -654,7 +656,8 @@ If no specific parameters are needed or mentioned in the task, respond with an e
             if self.directory.get_agent(&agent_id).is_none() {
                  warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'llm' tool.");
                  // Fall back to local if agent not found, using llm tool
-                 Ok(RoutingDecision::Local { tool_names: vec!["llm".to_string()] })
+                 // Use tool_name and add default params
+                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({}) })
             } else {
                  info!(remote_agent_id = %agent_id, "Routing decision: Remote delegation confirmed.");
                  Ok(RoutingDecision::Remote { agent_id })
@@ -666,7 +669,8 @@ If no specific parameters are needed or mentioned in the task, respond with an e
         } else {
             warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'llm' tool.");
             // Default to local llm tool if the decision isn't clear
-            Ok(RoutingDecision::Local { tool_names: vec!["llm".to_string()] })
+            // Use tool_name and add default params
+            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({}) })
         }
     }
 }
@@ -711,11 +715,11 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
         // For now, always route follow-ups locally as a simple default.
         // A real implementation would likely involve the LLM again.
         info!("Defaulting follow-up routing to LOCAL execution.");
-        Ok(RoutingDecision::Local {
-            tool_names: vec!["default_local_tool".to_string()]
-        })
+        // Use tool_name and provide default empty params for follow-up
+        // Use "echo" as the default tool for follow-ups for now
+        Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) })
     }
-
+ 
     // Implement the decide method required by LlmTaskRouterTrait
     #[instrument(skip(self, params), fields(task_id = %params.id))]
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
