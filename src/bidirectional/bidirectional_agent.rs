@@ -721,6 +721,18 @@ pub struct BidirectionalAgent {
 }
 
 impl BidirectionalAgent {
+    /// Replace the task router with a custom implementation (for testing)
+    pub fn with_router(&self, router: Arc<dyn LlmTaskRouterTrait>) {
+        info!("Replacing task router with custom implementation");
+        // The task_service is not an Option, so we can use it directly
+        self.task_service.set_router(router);
+    }
+    
+    /// Access the task service for testing purposes
+    pub fn get_task_service(&self) -> Option<Arc<crate::server::services::task_service::TaskService>> {
+        // Wrap in Some since we're returning an Option but task_service is not optional
+        Some(self.task_service.clone())
+    }
     #[instrument(skip(config), fields(config_path = config.config_file_path))]
     pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
         info!("Creating new BidirectionalAgent instance.");
