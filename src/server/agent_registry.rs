@@ -31,7 +31,8 @@ impl AgentRegistry {
     }
 
     /// Discovers an agent by its base URL and adds/updates it in the registry.
-    pub async fn discover(&self, url: &str) -> Result<(), ServerError> {
+    /// Returns the agent's name/ID on success for tools to use.
+    pub async fn discover(&self, url: &str) -> Result<String, ServerError> {
         // Use a temporary A2aClient just for fetching the card
         let temp_client = A2aClient::new(url);
 
@@ -46,7 +47,7 @@ impl AgentRegistry {
                 };
 
                 self.agents.insert(agent_id.clone(), cache_info);
-                Ok(())
+                Ok(agent_id) // Return the agent's name/ID
             },
             Err(e) => {
                 Err(ServerError::A2aClientError(format!("Failed to get agent card from {}: {}", url, e)))
