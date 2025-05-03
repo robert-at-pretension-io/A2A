@@ -346,7 +346,7 @@ impl ToolExecutor {
         Self {
             tools: Arc::new(tools),
             agent_registry: None, // Initialize new fields
-            agent_directory: None,
+            // REMOVED agent_directory initialization
             known_servers: None,
             llm: None,
         }

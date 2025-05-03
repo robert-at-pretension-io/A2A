@@ -166,144 +166,8 @@ pub enum ExecutionMode {
     Remote { agent_id: String },
 }
 
-/// Entry in the agent directory (Used locally for routing decisions)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AgentDirectoryEntry {
-    /// Agent card with capabilities
-    card: AgentCard,
-    /// Last time this agent was seen
-    #[serde(with = "chrono::serde::ts_seconds")]
-    last_seen: DateTime<Utc>,
-    /// Whether the agent is currently active
-    active: bool,
-}
-
-/// Simplified Agent Directory (Used locally for routing decisions)
-#[derive(Debug, Clone)]
-pub struct AgentDirectory {
-    agents: Arc<DashMap<String, AgentDirectoryEntry>>,
-}
-
-impl AgentDirectory {
-    pub fn new() -> Self {
-        Self {
-            agents: Arc::new(DashMap::new()),
-        }
-    }
-
-    // Note: This uses the AgentCard from crate::types
-    // We need the agent_id separately as AgentCard doesn't have it
-    #[instrument(skip(self, card), fields(agent_id = %agent_id, card_name = %card.name))]
-    pub fn add_or_update_agent(&self, agent_id: String, card: AgentCard) {
-        debug!("Adding or updating agent in local directory.");
-        let entry = AgentDirectoryEntry {
-            card: card.clone(), // Clone card for logging if needed later
-            last_seen: Utc::now(),
-            active: true,
-        };
-        self.agents.insert(agent_id.clone(), entry);
-        trace!(agent_id = %agent_id, ?card, "Agent details added/updated.");
-    } // Removed extra closing brace here
-
-    #[instrument(skip(self))]
-    fn get_agent(&self, agent_id: &str) -> Option<AgentDirectoryEntry> {
-        debug!(%agent_id, "Getting agent from local directory.");
-        let result = self.agents.get(agent_id).map(|e| e.value().clone());
-        trace!(%agent_id, found = result.is_some(), "Agent lookup result.");
-        result
-    }
-
-    #[instrument(skip(self))]
-    fn list_active_agents(&self) -> Vec<AgentDirectoryEntry> {
-        debug!("Listing active agents from local directory.");
-        let agents: Vec<_> = self.agents
-            .iter()
-            .filter(|e| e.value().active)
-            .map(|e| e.value().clone())
-            .collect();
-        trace!(count = agents.len(), "Found active agents.");
-        agents
-    }
-    
-    /// Get a list of all agents with their cards, including inactive ones
-    #[instrument(skip(self))]
-    pub fn list_all_agents(&self) -> Vec<(String, AgentCard)> {
-        debug!("Listing all agents from local directory.");
-        let agents: Vec<_> = self.agents
-            .iter()
-            .map(|entry| (entry.key().clone(), entry.value().card.clone()))
-            .collect();
-        trace!(count = agents.len(), "Found total agents.");
-        agents
-    }
-    
-    /// Save the current agent directory to a JSON file
-    #[instrument(skip(self, path), fields(path = %path.as_ref().display()))]
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        debug!("Saving agent directory to file.");
-        // Convert DashMap to a regular HashMap for serialization
-        let agents_map: HashMap<String, AgentDirectoryEntry> = self.agents.iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
-            .collect();
-        trace!(count = agents_map.len(), "Collected agents for serialization.");
-        
-        // Serialize to JSON
-        let json = serde_json::to_string_pretty(&agents_map)
-            .map_err(|e| anyhow!("Failed to serialize agent directory: {}", e))?;
-        trace!(json_len = json.len(), "Serialized agent directory to JSON.");
-        
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = path.as_ref().parent() {
-            if !parent.exists() {
-                trace!("Creating parent directory for agent directory file.");
-                fs::create_dir_all(parent)
-                    .map_err(|e| anyhow!("Failed to create directory for agent directory file: {}", e))?;
-            }
-        }
-        
-        // Write to file
-        trace!("Writing agent directory to file.");
-        fs::write(path.as_ref(), json)
-            .map_err(|e| anyhow!("Failed to write agent directory file: {}", e))?;
-        
-        debug!("Successfully saved agent directory.");
-        Ok(())
-    }
-    
-    /// Load agent directory from a JSON file
-    #[instrument(skip(self, path), fields(path = %path.as_ref().display()))]
-    pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        debug!("Attempting to load agent directory from file.");
-        // Skip if file doesn't exist (start with empty directory)
-        if !path.as_ref().exists() {
-            info!("Agent directory file not found, starting with empty directory.");
-            return Ok(());
-        }
-        
-        // Read file content
-        trace!("Reading agent directory file content.");
-        let file_content = fs::read_to_string(path.as_ref())
-            .map_err(|e| anyhow!("Failed to read agent directory file: {}", e))?;
-        trace!(content_len = file_content.len(), "Read agent directory file content.");
-        
-        // Deserialize from JSON
-        trace!("Deserializing agent directory from JSON.");
-        let loaded_agents: HashMap<String, AgentDirectoryEntry> = serde_json::from_str(&file_content)
-            .map_err(|e| anyhow!("Failed to deserialize agent directory: {}", e))?;
-        trace!(count = loaded_agents.len(), "Deserialized agents.");
-        
-        // Update the directory
-        debug!("Updating agent directory with loaded data.");
-        for (id, entry) in loaded_agents {
-            trace!(agent_id = %id, "Loading agent into directory.");
-            self.agents.insert(id, entry);
-        }
-        
-        debug!("Successfully loaded agent directory.");
-        Ok(())
-    }
-    
-}
+// REMOVED AgentDirectoryEntry struct definition
+// REMOVED AgentDirectory struct definition and impl block
 
 
 // REMOVED Local AgentRegistry definition
@@ -1601,7 +1465,8 @@ impl BidirectionalAgent {
 
                             // Attempt to get card after connecting (spawn to avoid blocking REPL)
                             let mut agent_client = self.client.as_mut().unwrap().clone(); // Clone client for task
-                            let agent_directory_clone = self.agent_directory.clone();
+                            let agent_registry_clone = self.agent_registry.clone(); // Clone registry for update
+                            let known_servers_clone = self.known_servers.clone(); // Clone known_servers
                             let agent_id_clone = self.agent_id.clone(); // For tracing span
 
                             tokio::spawn(async move {
@@ -1609,10 +1474,24 @@ impl BidirectionalAgent {
                                 let _enter = span.enter();
                                 match agent_client.get_agent_card().await {
                                     Ok(card) => {
-                                        info!(remote_agent_name = %card.name, "Successfully got card after connecting.");
-                                        agent_directory_clone.add_or_update_agent(card.name.clone(), card.clone());
-                                        info!(remote_agent_name = %card.name, "Added/updated agent in directory.");
-                                        println!("📇 Remote agent verified: {}", card.name);
+                                        let remote_agent_name = card.name.clone();
+                                        info!(%remote_agent_name, "Successfully got card after connecting.");
+                                        // Update known servers
+                                        known_servers_clone.insert(url_clone.clone(), remote_agent_name.clone());
+                                        // Update canonical registry using discover
+                                        match agent_registry_clone.discover(&url_clone).await {
+                                            Ok(discovered_agent_id) => {
+                                                info!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by number.");
+                                                // Ensure known_servers uses the ID from discover if different from card name
+                                                if discovered_agent_id != remote_agent_name {
+                                                    known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by number.");
+                                            }
+                                        }
+                                        println!("📇 Remote agent verified: {}", remote_agent_name);
                                     }
                                     Err(e) => {
                                         warn!(error = %e, "Connected, but failed to get card.");
@@ -1650,10 +1529,30 @@ impl BidirectionalAgent {
                                 // Store the client since connection was successful
                                 self.client = Some(client);
 
-                                // IMPORTANT: Add the agent to the agent directory for routing
-                                self.agent_directory.add_or_update_agent(remote_agent_name.clone(), card.clone());
-                                info!(remote_agent_name = %remote_agent_name, "Added agent to local directory for routing.");
-                                println!("🔄 Added agent to directory for task routing");
+                                // Update known servers map
+                                self.known_servers.insert(target_url.clone(), remote_agent_name.clone());
+
+                                // Update the canonical registry using discover (spawn to avoid blocking)
+                                let registry_clone = self.agent_registry.clone();
+                                let url_clone = target_url.clone();
+                                let known_servers_clone = self.known_servers.clone(); // Clone for task
+                                let remote_agent_name_clone = remote_agent_name.clone(); // Clone for task
+
+                                tokio::spawn(async move {
+                                    match registry_clone.discover(&url_clone).await {
+                                        Ok(discovered_agent_id) => {
+                                            info!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by URL.");
+                                            // Ensure known_servers uses the ID from discover if different from card name
+                                            if discovered_agent_id != remote_agent_name_clone {
+                                                known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by URL.");
+                                        }
+                                    }
+                                });
+                                println!("🔄 Agent added/updated in registry.");
 
                             },
                             Err(e) => {
