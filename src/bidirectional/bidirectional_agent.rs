@@ -840,8 +840,6 @@ impl BidirectionalAgent {
                         println!("🔗 Connected to: {}", url);
                     }
                 }
-            }
-        }
         
         // Flag to track if we have a listening server running
         let mut server_running = false;
