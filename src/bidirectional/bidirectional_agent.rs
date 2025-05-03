@@ -487,7 +487,8 @@ pub struct BidirectionalAgent {
     bind_address: String,
     agent_id: String, // Keep agent_id for internal identification
     agent_name: String, // Name used for the agent card
-    
+    client_config: ClientConfig, // Store client config for URL access
+
     // A2A client for making outbound requests to other agents
     // This is a simple client that can be expanded later
     pub client: Option<A2aClient>,
@@ -576,6 +577,7 @@ impl BidirectionalAgent {
             agent_id: config.server.agent_id.clone(),
             // Use configured agent_name, or fall back to agent_id
             agent_name: config.server.agent_name.unwrap_or_else(|| config.server.agent_id.clone()),
+            client_config: config.client.clone(), // Store the client config
 
             // Store the A2A client (if configured)
             client,
@@ -1678,10 +1680,10 @@ impl BidirectionalAgent {
         }
     }
 
-    /// Get the URL of the currently configured client
+    /// Get the URL of the currently configured client from the agent's config
     fn client_url(&self) -> Option<String> {
-        // Access the public base_url field directly from the A2aClient
-        self.client.as_ref().map(|c| c.base_url.clone())
+        // Use the target_url stored in the agent's own configuration
+        self.client_config.target_url.clone()
     }
 
     /// Run the agent server
