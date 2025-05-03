@@ -136,7 +136,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use toml;
 use tracing::{debug, error, info, trace, warn, instrument, Level, Instrument}; // Import trace, Instrument trait
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, filter}; // For subscriber setup
+use tracing_subscriber::{fmt::{self, format::FmtSpan}, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, filter}; // Import FmtSpan
 use uuid::Uuid;
 
 // REMOVED AgentLogContext struct and impl block
@@ -1295,13 +1295,16 @@ impl BidirectionalAgent {
         let mut server_shutdown_token: Option<CancellationToken> = None;
         // Removed misplaced match block and duplicate variable declarations here
 
-        // Check if auto-listen flag is set in environment variable or config
-        let auto_listen = self.client_config.target_url.is_none() || // Auto-listen if no target URL
-                          std::env::var("AUTO_LISTEN").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false) ||
-                          self.mode.auto_listen; // Check config flag too
-        debug!(%auto_listen, "Determined auto-listen status.");
+        // Check if auto-listen should happen (based on config/env var checked during init)
+        // We need to re-evaluate here as config isn't stored directly on self
+        let should_auto_listen = self.client_config.target_url.is_none() || // Auto-listen if no target URL
+                                 std::env::var("AUTO_LISTEN").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false);
+        // Note: We cannot check config.mode.auto_listen here easily as config is not stored.
+        // Relying on env var set during init or absence of target_url.
+        debug!(%should_auto_listen, "Determined auto-listen status for REPL.");
 
         // Start server automatically if auto-listen is enabled
+        // Use the calculated should_auto_listen variable
         if auto_listen {
             info!(port = %self.port, bind_address = %self.bind_address, "Auto-starting server.");
             println!("🚀 Auto-starting server on port {}...", self.port);
@@ -2663,20 +2666,16 @@ pub async fn main() -> Result<()> {
                         .with_ansi(false) // No colors in file
                         .compact(); // Use compact format
 
-                    // Add agent ID as a field to all log messages using a layer
-                    // This approach is generally cleaner than filter_fn for adding fields
-                    use tracing_subscriber::Layer;
-                    let agent_id_layer = tracing_subscriber::fmt::layer()
-                         .with_writer(move || file.try_clone().expect("Failed to clone log file handle")) // Clone handle per event
-                         .with_ansi(false)
-                         .event_format(format)
-                         .with_span_events(false) // Don't repeat span info in file logs
-                         .map_fmt_fields(move |fields| { // Add agent_id field
-                             fields.extend(tracing::field::FieldSet::new(&["agent_id"], tracing_core::identify_callsite!()));
-                             fields.field("agent_id").map(|f| f.display_value(&agent_id_for_log));
-                         });
+                   // Simpler file logger layer without custom field mapping for now
+                   let file_layer = fmt::layer()
+                       .with_writer(file) // Use the opened file
+                       .with_ansi(false) // No colors in file
+                       .event_format(format) // Use the compact format
+                       .with_span_events(FmtSpan::NONE) // Don't include span events like enter/exit
+                       .with_target(true) // Keep target (module path)
+                       .with_level(true); // Keep log level
 
-                    Some(agent_id_layer.boxed()) // Box the layer
+                   Some(file_layer.boxed()) // Box the layer
                 },
                 Err(e) => {
                     eprintln!("[PRE-LOG] ERROR: Failed to open log file '{}': {}", path.display(), e);
