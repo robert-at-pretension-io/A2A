@@ -7,6 +7,8 @@ use chrono::Utc;
 use tracing::{debug, error, info, trace, warn, instrument}; // Import tracing macros
 use uuid::Uuid;
 
+// Import the LlmClient trait from the bidirectional module (or move it to a shared location if preferred)
+use crate::bidirectional::bidirectional_agent::LlmClient;
 // Import from local server components instead of bidirectional_agent
 use crate::server::{
     task_router::{RoutingDecision, LlmTaskRouterTrait}, // Removed unused TaskRouter import
@@ -32,6 +34,7 @@ pub struct TaskService {
     agent_registry: Option<Arc<AgentRegistry>>,
     
     agent_id: Option<String>, // ID of the agent running this service
+    llm_client: Option<Arc<dyn LlmClient>>, // Add LLM client for rewriting
 }
 
 impl TaskService {
@@ -67,8 +70,9 @@ impl TaskService {
          client_manager: Arc<ClientManager>,
          agent_registry: Arc<AgentRegistry>,
          agent_id: String,
+         llm_client: Option<Arc<dyn LlmClient>>, // Add LLM client parameter
     ) -> Self {
-        info!(%agent_id, "Creating TaskService in bidirectional mode.");
+        info!(%agent_id, llm_available = llm_client.is_some(), "Creating TaskService in bidirectional mode.");
         // Compile-time check for feature consistency (example)
         //
         // compile_error!("Feature 'bidir-local-exec' requires 'bidir-delegate' in this configuration.");
@@ -84,6 +88,7 @@ impl TaskService {
             agent_registry: Some(agent_registry),
             
             agent_id: Some(agent_id),
+            llm_client, // Store the LLM client
         }
     }
 
