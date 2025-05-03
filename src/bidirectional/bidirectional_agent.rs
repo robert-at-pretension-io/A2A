@@ -135,7 +135,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use toml;
-use tracing::{debug, error, info, warn, instrument, Level, Instrument}; // Import Instrument trait
+use tracing::{debug, error, info, trace, warn, instrument, Level, Instrument}; // Import trace, Instrument trait
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, filter}; // For subscriber setup
 use uuid::Uuid;
 
@@ -193,9 +193,116 @@ impl AgentDirectory {
 
     // Note: This uses the AgentCard from crate::types
     // We need the agent_id separately as AgentCard doesn't have it
+    #[instrument(skip(self, card), fields(agent_id = %agent_id, card_name = %card.name))]
     pub fn add_or_update_agent(&self, agent_id: String, card: AgentCard) {
+        debug!("Adding or updating agent in local directory.");
         let entry = AgentDirectoryEntry {
-            card,
+            card: card.clone(), // Clone card for logging if needed later
+            last_seen: Utc::now(),
+            active: true,
+        };
+        self.agents.insert(agent_id.clone(), entry);
+        trace!(agent_id = %agent_id, ?card, "Agent details added/updated.");
+    }
+
+    #[instrument(skip(self))]
+    fn get_agent(&self, agent_id: &str) -> Option<AgentDirectoryEntry> {
+        debug!(%agent_id, "Getting agent from local directory.");
+        let result = self.agents.get(agent_id).map(|e| e.value().clone());
+        trace!(%agent_id, found = result.is_some(), "Agent lookup result.");
+        result
+    }
+
+    #[instrument(skip(self))]
+    fn list_active_agents(&self) -> Vec<AgentDirectoryEntry> {
+        debug!("Listing active agents from local directory.");
+        let agents: Vec<_> = self.agents
+            .iter()
+            .filter(|e| e.value().active)
+            .map(|e| e.value().clone())
+            .collect();
+        trace!(count = agents.len(), "Found active agents.");
+        agents
+    }
+    
+    /// Get a list of all agents with their cards, including inactive ones
+    #[instrument(skip(self))]
+    pub fn list_all_agents(&self) -> Vec<(String, AgentCard)> {
+        debug!("Listing all agents from local directory.");
+        let agents: Vec<_> = self.agents
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().card.clone()))
+            .collect();
+        trace!(count = agents.len(), "Found total agents.");
+        agents
+    }
+    
+    /// Save the current agent directory to a JSON file
+    #[instrument(skip(self, path), fields(path = %path.as_ref().display()))]
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        debug!("Saving agent directory to file.");
+        // Convert DashMap to a regular HashMap for serialization
+        let agents_map: HashMap<String, AgentDirectoryEntry> = self.agents.iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        trace!(count = agents_map.len(), "Collected agents for serialization.");
+        
+        // Serialize to JSON
+        let json = serde_json::to_string_pretty(&agents_map)
+            .map_err(|e| anyhow!("Failed to serialize agent directory: {}", e))?;
+        trace!(json_len = json.len(), "Serialized agent directory to JSON.");
+        
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.as_ref().parent() {
+            if !parent.exists() {
+                trace!("Creating parent directory for agent directory file.");
+                fs::create_dir_all(parent)
+                    .map_err(|e| anyhow!("Failed to create directory for agent directory file: {}", e))?;
+            }
+        }
+        
+        // Write to file
+        trace!("Writing agent directory to file.");
+        fs::write(path.as_ref(), json)
+            .map_err(|e| anyhow!("Failed to write agent directory file: {}", e))?;
+        
+        debug!("Successfully saved agent directory.");
+        Ok(())
+    }
+    
+    /// Load agent directory from a JSON file
+    #[instrument(skip(self, path), fields(path = %path.as_ref().display()))]
+    pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        debug!("Attempting to load agent directory from file.");
+        // Skip if file doesn't exist (start with empty directory)
+        if !path.as_ref().exists() {
+            info!("Agent directory file not found, starting with empty directory.");
+            return Ok(());
+        }
+        
+        // Read file content
+        trace!("Reading agent directory file content.");
+        let file_content = fs::read_to_string(path.as_ref())
+            .map_err(|e| anyhow!("Failed to read agent directory file: {}", e))?;
+        trace!(content_len = file_content.len(), "Read agent directory file content.");
+        
+        // Deserialize from JSON
+        trace!("Deserializing agent directory from JSON.");
+        let loaded_agents: HashMap<String, AgentDirectoryEntry> = serde_json::from_str(&file_content)
+            .map_err(|e| anyhow!("Failed to deserialize agent directory: {}", e))?;
+        trace!(count = loaded_agents.len(), "Deserialized agents.");
+        
+        // Update the directory
+        debug!("Updating agent directory with loaded data.");
+        for (id, entry) in loaded_agents {
+            trace!(agent_id = %id, "Loading agent into directory.");
+            self.agents.insert(id, entry);
+        }
+        
+        debug!("Successfully loaded agent directory.");
+        Ok(())
+    }
+}
             last_seen: Utc::now(),
             active: true,
         };
@@ -300,10 +407,12 @@ impl ClaudeLlmClient {
 
 #[async_trait]
 impl LlmClient for ClaudeLlmClient {
+    #[instrument(skip(self, prompt), fields(prompt_len = prompt.len()))]
     async fn complete(&self, prompt: &str) -> Result<String> {
+        debug!("Sending request to Claude LLM.");
+        trace!(?prompt, "LLM prompt content.");
         // Create a new client for the Claude API
         let client = reqwest::Client::new();
-        
         // Prepare the request payload
         let payload = json!({
             "model": "claude-3-7-sonnet-20250219",
@@ -314,33 +423,42 @@ impl LlmClient for ClaudeLlmClient {
                 "content": prompt
             }]
         });
+        trace!(payload = %payload, "Claude API request payload.");
 
         // Send the request to the Claude API
+        debug!("Posting request to Claude API endpoint.");
         let response = client.post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", &self.api_key) // API key is sensitive, not logged
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&payload)
             .send()
             .await
             .context("Failed to send request to Claude API")?;
+        debug!(status = %response.status(), "Received response from Claude API.");
 
         // Check if the request was successful
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await
                 .unwrap_or_else(|_| "Unknown error".to_string());
+            error!(%status, error_body = %error_text, "Claude API request failed.");
             return Err(anyhow!("Claude API error ({}): {}", status, error_text));
         }
 
         // Parse the response
+        trace!("Parsing Claude API JSON response.");
         let response_json: Value = response.json().await
             .context("Failed to parse Claude API response")?;
-        
+        trace!(response_json = %response_json, "Parsed Claude API response.");
+
         // Extract the completion
+        trace!("Extracting completion text from response.");
         let completion = response_json["content"][0]["text"].as_str()
             .ok_or_else(|| anyhow!("Failed to extract completion from response"))?;
-        
+        debug!(completion_len = completion.len(), "Extracted completion from Claude API.");
+        trace!(completion = %completion, "Completion content.");
+
         Ok(completion.to_string())
     }
 }
@@ -375,9 +493,13 @@ impl BidirectionalTaskRouter {
 
     // Helper to perform the actual routing logic AND tool selection
     // Now returns RoutingDecision directly
+    #[instrument(skip(self, task), fields(task_id = %task.id))]
     pub async fn decide_execution_mode(&self, task: &Task) -> Result<RoutingDecision, ServerError> {
+        debug!("Deciding execution mode for task.");
+        trace!(?task, "Task details for routing decision.");
          // Extract the task content for analysis
         // Use history if available, otherwise maybe the top-level message if applicable
+        trace!("Extracting task text from history/message.");
         let task_text = task.history.as_ref().map(|history| {
             history.iter()
                 .filter(|m| m.role == Role::User)
@@ -402,18 +524,22 @@ impl BidirectionalTaskRouter {
                  )
                  .unwrap_or_default()
         });
+        trace!(task_text = %task_text, "Extracted task text.");
 
 
         if task_text.is_empty() {
             // If still empty after checking history and initial message
-            warn!(task_id = %task.id, "Task text is empty after checking history and message, defaulting to local execution with 'echo' tool.");
+            warn!("Task text is empty after checking history and message, defaulting to local execution with 'echo' tool.");
             return Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
         }
 
         // Get the list of available agents from the local directory
+        debug!("Fetching available agents for routing prompt.");
         let available_agents = self.directory.list_active_agents();
+        trace!(count = available_agents.len(), "Found available agents.");
         let agent_descriptions = available_agents.iter()
             .map(|a| {
+                trace!(agent_name = %a.card.name, "Formatting agent description for prompt.");
                 // Construct capabilities string manually
                 let mut caps = Vec::new();
                 if a.card.capabilities.push_notifications { caps.push("pushNotifications"); }
@@ -435,8 +561,10 @@ impl BidirectionalTaskRouter {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
+        trace!(agent_descriptions = %agent_descriptions, "Formatted agent descriptions for prompt.");
 
         // Build a prompt for the LLM to decide routing
+        debug!("Building routing prompt for LLM.");
         let routing_prompt = format!(r#"
 You need to decide whether to handle a task locally, delegate it to another agent, or reject it entirely.
 
@@ -455,31 +583,34 @@ Please analyze the task and decide whether to:
 
 Your response should be exactly one of those formats, with no additional text.
 "#, agent_descriptions, task_text);
+        trace!(routing_prompt = %routing_prompt, "Constructed routing prompt.");
 
-        info!(task_id = %task.id, "Routing prompt for LLM:\n{}", routing_prompt);
-
+        info!("Requesting routing decision from LLM.");
         // Get the routing decision from the LLM
         let decision_result = self.llm.complete(&routing_prompt).await;
+        trace!(?decision_result, "LLM routing decision result received.");
 
         // Map anyhow::Error from LLM to ServerError::Internal
         let decision = match decision_result {
             Ok(d) => {
                 let trimmed_decision = d.trim().to_string();
-                info!(task_id = %task.id, llm_response = %trimmed_decision, "LLM routing decision response received.");
+                info!(llm_response = %trimmed_decision, "LLM routing decision response received.");
                 trimmed_decision
             }
             Err(e) => {
-                error!(task_id = %task.id, error = %e, "LLM routing decision failed.");
+                error!(error = %e, "LLM routing decision failed. Falling back to local 'echo'.");
                 // Fallback to local echo on LLM error
                 return Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] });
             }
         };
+        trace!(decision = %decision, "Parsed LLM decision.");
 
         // Parse the decision
         if decision == "LOCAL" {
-            info!(task_id = %task.id, "LLM decided LOCAL execution. Proceeding to tool selection.");
+            info!("LLM decided LOCAL execution. Proceeding to tool selection.");
             // --- LLM Tool Selection Logic ---
             let tool_list_str = self.enabled_tools.join(", ");
+            trace!(enabled_tools = %tool_list_str, "Building tool choice prompt.");
             let tool_choice_prompt = format!(
                 "You have the following local tools available:\n{}\n\n\
                 Based on the previous TASK description, choose the single best tool (exact name) to handle it.\n\
@@ -494,44 +625,47 @@ Your response should be exactly one of those formats, with no additional text.
             let chosen_tool_name = match tool_choice_result {
                  Ok(tool_name_raw) => {
                     let tool_name = tool_name_raw.trim().to_string();
+                    trace!(raw_tool_choice = %tool_name_raw, trimmed_tool_choice = %tool_name, "Received tool choice from LLM.");
                     // Validate the LLM's choice against the enabled tools
                     if self.enabled_tools.contains(&tool_name) {
-                         info!(task_id = %task.id, tool_name = %tool_name, "LLM chose tool.");
+                         info!(tool_name = %tool_name, "LLM chose valid tool.");
                          tool_name // Use the valid tool chosen by LLM
                     } else {
-                         warn!(task_id = %task.id, chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool. Falling back to 'echo'.");
+                         warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool. Falling back to 'echo'.");
                          "echo".to_string() // Fallback to echo if choice is invalid
                     }
                  },
                  Err(e) => {
-                     warn!(task_id = %task.id, error = %e, "LLM failed to choose a tool. Falling back to 'echo'.");
+                     warn!(error = %e, "LLM failed to choose a tool. Falling back to 'echo'.");
                      "echo".to_string() // Fallback to echo on error
                  }
             };
+            trace!(chosen_tool_name = %chosen_tool_name, "Final tool name selected.");
 
-            info!(task_id = %task.id, final_tool = %chosen_tool_name, "Final tool decision for local execution.");
+            info!(final_tool = %chosen_tool_name, "Final tool decision for local execution.");
             Ok(RoutingDecision::Local { tool_names: vec![chosen_tool_name] })
             // --- End LLM Tool Selection Logic ---
 
         } else if decision.starts_with("REMOTE: ") {
             let agent_id = decision.strip_prefix("REMOTE: ").unwrap().trim().to_string();
-            info!(task_id = %task.id, remote_agent_id = %agent_id, "LLM decided REMOTE execution.");
+            info!(remote_agent_id = %agent_id, "LLM decided REMOTE execution.");
 
             // Verify the agent exists in the local directory
+            trace!(remote_agent_id = %agent_id, "Verifying remote agent existence in directory.");
             if self.directory.get_agent(&agent_id).is_none() {
-                 warn!(task_id = %task.id, remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'echo' tool.");
+                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'echo' tool.");
                  // Fall back to local if agent not found, using echo tool
                  Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
             } else {
-                 info!(task_id = %task.id, remote_agent_id = %agent_id, "Routing decision: Remote delegation.");
+                 info!(remote_agent_id = %agent_id, "Routing decision: Remote delegation confirmed.");
                  Ok(RoutingDecision::Remote { agent_id })
             }
         } else if decision.starts_with("REJECT: ") {
             let reason = decision.strip_prefix("REJECT: ").unwrap().trim().to_string();
-            info!(task_id = %task.id, reason = %reason, "LLM decided to REJECT the task.");
+            info!(reason = %reason, "LLM decided to REJECT the task.");
             Ok(RoutingDecision::Reject { reason })
         } else {
-            warn!(task_id = %task.id, llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'echo' tool.");
+            warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'echo' tool.");
             // Default to local echo if the decision isn't clear
             Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
         }
@@ -541,9 +675,13 @@ Your response should be exactly one of those formats, with no additional text.
 #[async_trait]
 impl LlmTaskRouterTrait for BidirectionalTaskRouter {
     // Match the trait signature: takes TaskSendParams, returns Result<RoutingDecision, ServerError>
+    #[instrument(skip(self, params), fields(task_id = %params.id))]
     async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
+        debug!("Routing task based on TaskSendParams.");
+        trace!(?params, "TaskSendParams for routing.");
         // We need a Task object to make the decision based on history/message.
         // Construct a temporary Task from TaskSendParams.
+        trace!("Constructing temporary Task object for routing decision.");
         let task = Task {
             id: params.id.clone(),
             status: TaskStatus { // Default status for routing decision
@@ -557,36 +695,56 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
             metadata: params.metadata.clone(),
             session_id: params.session_id.clone(),
         };
+        trace!(?task, "Temporary Task object created.");
 
         // Call the updated decide_execution_mode which now returns RoutingDecision
-        self.decide_execution_mode(&task).await
+        debug!("Delegating routing decision to decide_execution_mode.");
+        let decision = self.decide_execution_mode(&task).await;
+        debug!(?decision, "Routing decision made.");
+        decision
     }
 
     // Add the required process_follow_up method
-    async fn process_follow_up(&self, _task_id: &str, _message: &Message) -> Result<RoutingDecision, ServerError> {
+    #[instrument(skip(self, message), fields(task_id))]
+    async fn process_follow_up(&self, task_id: &str, message: &Message) -> Result<RoutingDecision, ServerError> {
+        debug!("Processing follow-up message for task.");
+        trace!(?message, "Follow-up message details.");
         // For now, always route follow-ups locally as a simple default.
         // A real implementation would likely involve the LLM again.
+        info!("Defaulting follow-up routing to LOCAL execution.");
         Ok(RoutingDecision::Local {
             tool_names: vec!["default_local_tool".to_string()]
         })
     }
-    
+
     // Implement the decide method required by LlmTaskRouterTrait
+    #[instrument(skip(self, params), fields(task_id = %params.id))]
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
+        debug!("Decide method called, delegating to route_task.");
         // Delegate to route_task, which now handles the full decision including tool choice
         self.route_task(params).await
     }
 
     // Implement should_decompose method required by LlmTaskRouterTrait
-    async fn should_decompose(&self, _params: &TaskSendParams) -> Result<bool, ServerError> {
+    #[instrument(skip(self, params), fields(task_id = %params.id))]
+    async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, ServerError> {
+        debug!("Checking if task should be decomposed.");
+        trace!(?params, "Task parameters for decomposition check.");
         // Simple implementation that never decomposes tasks
-        Ok(false)
+        let should = false;
+        debug!(should_decompose = %should, "Decomposition decision.");
+        Ok(should)
     }
-    
+
     // Implement decompose_task method required by LlmTaskRouterTrait
-    async fn decompose_task(&self, _params: &TaskSendParams) -> Result<Vec<crate::server::task_router::SubtaskDefinition>, ServerError> {
+    #[instrument(skip(self, params), fields(task_id = %params.id))]
+    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<crate::server::task_router::SubtaskDefinition>, ServerError> {
+        debug!("Decomposing task (currently no-op).");
+        trace!(?params, "Task parameters for decomposition.");
         // Simple implementation that returns an empty list (no decomposition)
-        Ok(Vec::new())
+        let subtasks = Vec::new();
+        debug!("Returning empty subtask list.");
+        Ok(subtasks)
     }
 }
 
@@ -637,52 +795,68 @@ pub struct BidirectionalAgent {
 }
 
 impl BidirectionalAgent {
+    #[instrument(skip(config), fields(config_path = config.config_file_path))]
     pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
+        info!("Creating new BidirectionalAgent instance.");
+        trace!(?config, "Agent configuration provided.");
         // Create the agent directory (local helper)
+        debug!("Initializing AgentDirectory.");
         let agent_directory = Arc::new(AgentDirectory::new());
-        
         // Load agent directory from file if configured
-        if let Some(dir_path) = &config.tools.agent_directory_path {
-            if let Err(e) = agent_directory.load_from_file(dir_path) {
-                warn!(error = %e, path = %dir_path, "Failed to load agent directory from file.");
+        if let Some(dir_path_str) = &config.tools.agent_directory_path {
+            let dir_path = PathBuf::from(dir_path_str);
+            debug!(path = %dir_path.display(), "Attempting to load agent directory from configured path.");
+            if let Err(e) = agent_directory.load_from_file(&dir_path) {
+                // Log warning but continue, agent will start with empty directory
+                warn!(error = %e, path = %dir_path.display(), "Failed to load agent directory from file. Continuing with empty directory.");
             } else {
-                info!(path = %dir_path, "Successfully loaded agent directory from file.");
+                info!(path = %dir_path.display(), "Successfully loaded agent directory from file.");
             }
+        } else {
+            debug!("No agent directory path configured. Starting with empty directory.");
         }
 
         // Create the LLM client (local helper)
+        debug!("Initializing LLM client.");
         let llm: Arc<dyn LlmClient> = if let Some(api_key) = &config.llm.claude_api_key {
+            info!("Using Claude API key from configuration/environment.");
             Arc::new(ClaudeLlmClient::new(api_key.clone(), config.llm.system_prompt.clone()))
         } else {
             // Allow running without LLM if only acting as server/client without local processing
             warn!("No Claude API key provided. Local LLM processing will not be available.");
             // Provide a dummy LLM client or handle this case appropriately
+            // TODO: Implement a dummy LLM client that returns errors or default responses
             error!("No LLM configuration provided. Set CLAUDE_API_KEY environment variable or add claude_api_key to config file.");
-            return Err(anyhow!("No LLM configuration provided.")); // Or handle differently
+            return Err(anyhow!("No LLM configuration provided. Cannot proceed without LLM client.")); // Make it an error
         };
+        trace!(system_prompt = %config.llm.system_prompt, "LLM client created.");
 
         // Create the task repository (needed by services)
+        debug!("Initializing InMemoryTaskRepository.");
         let task_repository: Arc<dyn TaskRepository> = Arc::new(InMemoryTaskRepository::new());
 
         // Create the canonical agent registry (from server module)
+        debug!("Initializing AgentRegistry.");
         let agent_registry = Arc::new(AgentRegistry::new()); // Assuming AgentRegistry::new() exists
 
         // Create the canonical client manager (from server module)
-        // It needs the registry
+        debug!("Initializing ClientManager.");
         let client_manager = Arc::new(ClientManager::new(agent_registry.clone()));
 
         // Create our custom task router implementation
-        // Create our custom task router implementation (pass enabled tools later)
-        // We need the list of enabled tools first for the executor
+        debug!("Initializing BidirectionalTaskRouter.");
         let enabled_tools_list = config.tools.enabled.clone();
         let enabled_tools = Arc::new(enabled_tools_list); // Arc for sharing
+        trace!(?enabled_tools, "Enabled tools for router and executor.");
 
         // Create a tool executor using the new constructor with enabled tools
+        debug!("Initializing ToolExecutor.");
         let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
             &config.tools.enabled,            // Pass slice of enabled tool names
             llm.clone(),                      // Pass LLM client for tools that need it
             Some(agent_directory.clone()),    // Pass agent directory
         ));
+        trace!("ToolExecutor created.");
 
         // Create the task router, passing the enabled tools list
         let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> =
@@ -691,8 +865,10 @@ impl BidirectionalAgent {
                 agent_directory.clone(),
                 enabled_tools.clone(), // Pass Arc<Vec<String>>
             ));
+        trace!("BidirectionalTaskRouter created.");
 
         // Create the task service using the canonical components and our trait implementations
+        debug!("Initializing TaskService.");
         let task_service = Arc::new(TaskService::bidirectional(
             task_repository.clone(),
             bidirectional_task_router, // Pass our LlmTaskRouterTrait implementation
@@ -704,14 +880,17 @@ impl BidirectionalAgent {
         info!("TaskService created.");
 
         // Create the streaming service
+        debug!("Initializing StreamingService.");
         let streaming_service = Arc::new(StreamingService::new(task_repository.clone()));
         info!("StreamingService created.");
 
         // Create the notification service (pass repository)
+        debug!("Initializing NotificationService.");
         let notification_service = Arc::new(NotificationService::new(task_repository.clone()));
         info!("NotificationService created.");
 
         // Initialize an A2A client if target URL is provided
+        debug!("Checking for client target URL.");
         let client = if let Some(target_url) = &config.client.target_url {
             info!(target_url = %target_url, "Initializing A2A client for target URL.");
             Some(A2aClient::new(target_url))
@@ -719,10 +898,13 @@ impl BidirectionalAgent {
             info!("No target URL provided, A2A client not initialized.");
             None
         };
+        trace!(client_initialized = client.is_some(), "A2A client status.");
 
         // Store agent directory path if provided
         let agent_directory_path = config.tools.agent_directory_path.as_ref().map(PathBuf::from);
+        trace!(?agent_directory_path, "Agent directory path stored.");
 
+        debug!("Constructing BidirectionalAgent struct.");
         let agent = Self {
             task_service,
             streaming_service,
@@ -759,64 +941,93 @@ impl BidirectionalAgent {
         };
         
         // Set up periodic saving of agent directory if path is configured
-        if let Some(dir_path) = agent_directory_path {
+        if let Some(dir_path) = agent_directory_path.clone() { // Clone path for the task
             let dir_clone = agent_directory.clone();
-            let path = dir_path.clone();
-            
+            let agent_id_clone = agent.agent_id.clone(); // Clone agent_id for tracing span
+            let save_interval_secs = 300; // 5 minutes
+
+            info!(path = %dir_path.display(), interval_secs = save_interval_secs, "Spawning background task for periodic agent directory saving.");
             // Spawn a background task for saving
             tokio::spawn(async move {
+                // Create a tracing span for the background task
+                let span = tracing::info_span!(
+                    "bg_save_dir",
+                    agent_id = %agent_id_clone,
+                    save_path = %dir_path.display()
+                );
+                // Enter the span
+                let _enter = span.enter();
+                debug!("Background directory save task started.");
+
                 loop {
                     // Save every 5 minutes
-                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                    
-                    if let Err(e) = dir_clone.save_to_file(&path) {
-                        warn!(error = %e, "Failed to save agent directory to file.");
+                    trace!(seconds = save_interval_secs, "Sleeping before next directory save.");
+                    tokio::time::sleep(std::time::Duration::from_secs(save_interval_secs)).await;
+
+                    debug!("Attempting periodic save of agent directory.");
+                    if let Err(e) = dir_clone.save_to_file(&dir_path) {
+                        warn!(error = %e, "Periodic save of agent directory failed.");
                     } else {
-                        debug!("Successfully saved agent directory to file.");
+                        debug!("Successfully saved agent directory periodically.");
                     }
                 }
             });
+        } else {
+            debug!("Periodic agent directory saving is disabled (no path configured).");
         }
 
         // Logging initialization happens in main() now.
         // We can log that the agent struct itself is constructed.
-        info!(agent_id = %agent.agent_id, bind_address = %agent.bind_address, port = %agent.port, "BidirectionalAgent struct created.");
+        info!(agent_id = %agent.agent_id, bind_address = %agent.bind_address, port = %agent.port, "BidirectionalAgent struct created successfully.");
 
         Ok(agent)
     }
 
     /// Create a session on demand so remote tasks can be grouped
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     async fn ensure_session(&mut self) {
+        trace!("Ensuring session exists.");
         if self.current_session_id.is_none() {
-            let session_id = self.create_new_session(); // existing helper
+            debug!("No current session ID found.");
+            let session_id = self.create_new_session(); // existing helper logs internally
             info!(session_id = %session_id, "Created new session on demand.");
+        } else {
+            trace!(session_id = %self.current_session_id.as_deref().unwrap_or("None"), "Session already exists.");
         }
     }
 
 
     /// Process a message locally (e.g., from REPL input that isn't a command)
-    #[instrument(skip(self), fields(agent_id = %self.agent_id, message_text))]
+    #[instrument(skip(self, message_text), fields(agent_id = %self.agent_id, message_len = message_text.len()))]
     pub async fn process_message_locally(&mut self, message_text: &str) -> Result<String> {
         info!("Processing message locally.");
+        trace!(message = %message_text, "Message content.");
 
         // Ensure we have an active session before processing
-        self.ensure_session().await;
+        debug!("Ensuring session exists before processing message.");
+        self.ensure_session().await; // Logs internally
 
         // Check if we're continuing an existing task that is in InputRequired state
+        debug!("Checking if continuing an InputRequired task.");
         let mut continue_task_id: Option<String> = None;
         if let Some(session_id) = &self.current_session_id {
+            trace!(%session_id, "Current session ID found.");
             if let Some(task_ids) = self.session_tasks.get(session_id) {
+                trace!(task_count = task_ids.len(), "Found tasks in session map.");
                 // Check the last task in the session
                 if let Some(last_task_id) = task_ids.iter().last() {
+                    trace!(%last_task_id, "Checking state of last task in session.");
                     // Get the task to check its state
                     let params = TaskQueryParams {
                         id: last_task_id.clone(),
-                        history_length: None,
+                        history_length: Some(0), // Don't need history to check state
                         metadata: None,
                     };
-                    
+                    trace!(?params, "Params for getting last task state.");
+
                     match self.task_service.get_task(params).await {
                         Ok(task) => {
+                            trace!(task_id = %task.id, state = ?task.status.state, "Got last task state.");
                             if task.status.state == TaskState::InputRequired {
                                 info!(task_id = %last_task_id, "Found task in InputRequired state. Continuing this task.");
                                 // We should continue this task instead of creating a new one
@@ -830,24 +1041,32 @@ impl BidirectionalAgent {
                         }
                     }
                 } else {
-                    debug!(session_id = %session_id, "No previous tasks found in session.");
+                    debug!(session_id = %session_id, "No previous tasks found in session map.");
                 }
+            } else {
+                // This case should ideally not happen if ensure_session is called correctly
+                warn!(%session_id, "Session ID not found in task map while checking for InputRequired task.");
             }
+        } else {
+            warn!("No active session ID while checking for InputRequired task.");
         }
-    
+        trace!(?continue_task_id, "Result of InputRequired check.");
+
         // Create a unique task ID if not continuing an existing task
         let task_id = if let Some(id) = continue_task_id {
             info!(task_id = %id, "Continuing existing task.");
             id
         } else {
             let new_id = Uuid::new_v4().to_string();
-            info!(task_id = %new_id, "Creating new task.");
+            info!(task_id = %new_id, "Creating new task ID.");
             new_id
         };
 
         let task_id_clone = task_id.clone(); // Clone for instrument span
+        trace!(%task_id, "Using task ID for processing.");
 
         // Create the message
+        debug!("Creating initial message structure.");
         let initial_message = Message {
             role: Role::User,
             parts: vec![Part::TextPart(TextPart {
@@ -857,43 +1076,63 @@ impl BidirectionalAgent {
             })],
             metadata: None,
         };
-        
+        trace!(?initial_message, "Initial message created.");
+
         // Create TaskSendParams
+        debug!("Creating TaskSendParams.");
         let params = TaskSendParams {
             id: task_id.clone(),
             message: initial_message,
             session_id: self.current_session_id.clone(),
-            metadata: None,
-            history_length: None,
-            push_notification: None,
+            metadata: None, // Add metadata if needed from REPL context
+            history_length: None, // Request history if needed
+            push_notification: None, // Set push config if needed
         };
+        trace!(?params, "TaskSendParams created.");
 
         info!(task_id = %task_id, "Calling task_service.process_task.");
         // Use task_service to process the task
         // Instrument the call to task_service
-        let task = async {
+        let task_result = async {
             self.task_service.process_task(params).await
-        }.instrument(tracing::info_span!("task_service_process", task_id = %task_id_clone)).await?;
+        }.instrument(tracing::info_span!("task_service_process", task_id = %task_id_clone)).await;
 
-        info!(task_id = %task.id, status = ?task.status.state, "Task processing completed by task_service.");
+        let task = match task_result {
+            Ok(t) => {
+                info!(task_id = %t.id, status = ?t.status.state, "Task processing completed by task_service.");
+                t
+            }
+            Err(e) => {
+                error!(task_id = %task_id, error = %e, "Task processing failed.");
+                // Return the error to the REPL
+                return Err(anyhow!("Task processing failed: {}", e));
+            }
+        };
+        trace!(?task, "Resulting task object after processing.");
 
         // Save task to history
+        debug!(task_id = %task.id, "Saving task to session history.");
         self.save_task_to_history(task.clone()).await?; // save_task_to_history logs internally now
+
         // Extract response from task
-        let mut response = self.extract_text_from_task(&task);
+        debug!(task_id = %task.id, "Extracting text response from task.");
+        let mut response = self.extract_text_from_task(&task); // Logs internally now
+        trace!(response = %response, "Extracted response text.");
 
         // If the task is in InputRequired state, indicate that in the response
         if task.status.state == TaskState::InputRequired {
-            info!(task_id = %task.id, "Task requires more input.");
+            info!(task_id = %task.id, "Task requires more input. Appending message to response.");
             response.push_str("\n\n[The agent needs more information. Your next message will continue this task.]");
         }
 
-        info!(task_id = %task.id, "Responding.");
+        info!(task_id = %task.id, "Local message processing complete. Returning response.");
         Ok(response)
     }
 
     /// Prints the REPL help message to the console.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     fn print_repl_help(&self) {
+        debug!("Printing REPL help message.");
         println!("\n========================================");
         println!("⚡ Bidirectional A2A Agent REPL Commands ⚡");
         println!("========================================");
@@ -921,68 +1160,125 @@ impl BidirectionalAgent {
     }
 
     // Helper to extract text from task
+    #[instrument(skip(self, task), fields(task_id = %task.id))]
     fn extract_text_from_task(&self, task: &Task) -> String {
+        debug!("Extracting text response from task.");
+        trace!(?task, "Task details for text extraction.");
+
         // First check if we have artifacts that contain results
+        trace!("Checking task artifacts for text.");
         if let Some(ref artifacts) = task.artifacts {
             // Get the latest artifact
             if let Some(latest_artifact) = artifacts.iter().last() {
+                trace!(artifact_index = latest_artifact.index, "Found latest artifact.");
                 // Extract text from the artifact
                 let text = latest_artifact.parts.iter()
                     .filter_map(|p| match p {
-                        Part::TextPart(tp) => Some(tp.text.clone()),
-                        _ => None,
+                        Part::TextPart(tp) => {
+                            trace!("Found TextPart in artifact.");
+                            Some(tp.text.clone())
+                        },
+                        _ => {
+                            trace!("Non-TextPart found in artifact, skipping.");
+                            None
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                
+
                 if !text.is_empty() {
+                    trace!(text_len = text.len(), "Extracted text from artifact.");
                     // Extract proper content from the text
                     // If it's in quotes or just a JSON string, clean it up
                     let cleaned_text = text.trim_matches('"');
                     if cleaned_text.starts_with('{') && cleaned_text.ends_with('}') {
+                        trace!("Text looks like JSON, attempting to pretty-print.");
                         // Try to parse and pretty-format the JSON
                         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(cleaned_text) {
-                            return serde_json::to_string_pretty(&json_value).unwrap_or(cleaned_text.to_string());
+                            let pretty_json = serde_json::to_string_pretty(&json_value).unwrap_or(cleaned_text.to_string());
+                            debug!("Returning pretty-printed JSON from artifact.");
+                            return pretty_json;
+                        } else {
+                            trace!("Failed to parse as JSON, returning cleaned text.");
                         }
                     }
+                    debug!("Returning cleaned text from artifact.");
                     return cleaned_text.to_string();
+                } else {
+                    trace!("No text found in latest artifact parts.");
                 }
+            } else {
+                trace!("Artifacts list is empty.");
             }
+        } else {
+            trace!("Task has no artifacts field.");
         }
-        
+
         // If no artifacts, check the status message
+        trace!("Checking task status message for text.");
         if let Some(ref message) = task.status.message {
+            trace!("Found status message.");
             let text = message.parts.iter()
                 .filter_map(|p| match p {
-                    Part::TextPart(tp) => Some(tp.text.clone()),
-                    _ => None,
+                    Part::TextPart(tp) => {
+                        trace!("Found TextPart in status message.");
+                        Some(tp.text.clone())
+                    },
+                    _ => {
+                        trace!("Non-TextPart found in status message, skipping.");
+                        None
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            
+
             if !text.is_empty() {
+                trace!(text_len = text.len(), "Extracted text from status message.");
+                debug!("Returning text from status message.");
                 return text;
+            } else {
+                trace!("No text found in status message parts.");
             }
+        } else {
+            trace!("Task has no status message.");
         }
-        
+
         // Then check history if available
+        trace!("Checking task history for agent messages.");
         if let Some(history) = &task.history {
+            trace!(history_len = history.len(), "Found history.");
             let agent_messages = history.iter()
                 .filter(|m| m.role == Role::Agent)
-                .flat_map(|m| m.parts.iter())
+                .flat_map(|m| {
+                    trace!(message_role = ?m.role, "Processing message in history.");
+                    m.parts.iter()
+                })
                 .filter_map(|p| match p {
-                    Part::TextPart(tp) => Some(tp.text.clone()),
-                    _ => None,
+                    Part::TextPart(tp) => {
+                        trace!("Found TextPart in history agent message.");
+                        Some(tp.text.clone())
+                    },
+                    _ => {
+                        trace!("Non-TextPart found in history agent message, skipping.");
+                        None
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            
+
             if !agent_messages.is_empty() {
+                trace!(text_len = agent_messages.len(), "Extracted text from history agent messages.");
+                debug!("Returning text from history agent messages.");
                 return agent_messages;
+            } else {
+                trace!("No text found in history agent messages.");
             }
+        } else {
+            trace!("Task has no history field.");
         }
-        
+
         // Fallback
+        warn!("No response text found in artifacts, status message, or history.");
         "No response text available.".to_string()
     }
 
@@ -994,7 +1290,9 @@ impl BidirectionalAgent {
         self.print_repl_help();
 
         // --- Spawn Background Task for Initial Connection ---
+        debug!("Checking if background connection task should be spawned.");
         if let Some(initial_url) = self.client_url() {
+            info!(url = %initial_url, "Spawning background task for initial connection attempt.");
             println!("Configured target URL: {}. Attempting connection in background...", initial_url);
             // Clone necessary data for the background task
             // Clone necessary data for the background task's tracing span
@@ -1013,16 +1311,18 @@ impl BidirectionalAgent {
                 // Enter the span
                 let _enter = span.enter();
 
-                info!("Starting background connection attempt.");
+                info!("Background connection task started.");
 
                 let max_retries = 5;
                 let retry_delay = std::time::Duration::from_secs(2);
                 let mut connected = false;
 
                 // Create a *new* client instance specifically for this background task
+                debug!("Creating A2aClient for background connection.");
                 let mut bg_client = A2aClient::new(&initial_url);
 
                 for attempt in 1..=max_retries {
+                    debug!(attempt, max_retries, "Attempting to get agent card in background.");
                     match bg_client.get_agent_card().await {
                         Ok(card) => {
                             let remote_agent_name = card.name.clone();
@@ -1030,7 +1330,9 @@ impl BidirectionalAgent {
                             println!("✅ Background connection successful to {} ({})", remote_agent_name, initial_url); // Print to console as well
 
                             // Update shared state
+                            debug!(url = %initial_url, name = %remote_agent_name, "Updating known servers map.");
                             known_servers.insert(initial_url.clone(), remote_agent_name.clone());
+                            debug!(name = %remote_agent_name, "Updating agent directory.");
                             agent_directory.add_or_update_agent(remote_agent_name.clone(), card.clone()); // Use name as ID here
                             info!(remote_agent_name = %remote_agent_name, "Added/updated agent in directory.");
 
@@ -1038,10 +1340,12 @@ impl BidirectionalAgent {
                             break; // Exit retry loop on success
                         }
                         Err(e) => {
-                            warn!(attempt = %attempt, max_retries = %max_retries, error = %e, "Background connection attempt failed.");
+                            warn!(attempt, max_retries, error = %e, "Background connection attempt failed.");
                             if attempt < max_retries {
                                 info!(delay_seconds = %retry_delay.as_secs(), "Retrying background connection...");
                                 tokio::time::sleep(retry_delay).await;
+                            } else {
+                                error!(attempt, max_retries, "Final background connection attempt failed.");
                             }
                         }
                     }
@@ -1050,8 +1354,12 @@ impl BidirectionalAgent {
                 if !connected {
                     error!(attempts = %max_retries, "Background connection failed after all attempts.");
                     println!("❌ Background connection to {} failed after {} attempts.", initial_url, max_retries); // Print final failure to console
+                } else {
+                    info!("Background connection task finished successfully.");
                 }
             }); // Background task ends here
+        } else {
+            debug!("No initial target URL configured, skipping background connection task.");
         }
         // --- End Background Task Spawn ---
 
@@ -1061,32 +1369,54 @@ impl BidirectionalAgent {
         let mut server_shutdown_token: Option<CancellationToken> = None;
         // Removed misplaced match block and duplicate variable declarations here
 
-        // Check if auto-listen flag is set in environment variable
-        let auto_listen = std::env::var("AUTO_LISTEN").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false);
-        
+        // Check if auto-listen flag is set in environment variable or config
+        let auto_listen = self.client_config.target_url.is_none() || // Auto-listen if no target URL
+                          std::env::var("AUTO_LISTEN").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false) ||
+                          self.mode.auto_listen; // Check config flag too
+        debug!(%auto_listen, "Determined auto-listen status.");
+
         // Start server automatically if auto-listen is enabled
         if auto_listen {
+            info!(port = %self.port, bind_address = %self.bind_address, "Auto-starting server.");
             println!("🚀 Auto-starting server on port {}...", self.port);
-            
+
             // Create a cancellation token
+            debug!("Creating cancellation token for auto-started server.");
             let token = CancellationToken::new();
             server_shutdown_token = Some(token.clone());
-            
+
             // Create a channel to communicate server start status back to REPL
+            debug!("Creating channel for server start status.");
             let (tx, rx) = tokio::sync::oneshot::channel();
-            
+
             // Clone what we need for the task
+            trace!("Cloning services and config for server task.");
             let task_service = self.task_service.clone();
             let streaming_service = self.streaming_service.clone();
             let notification_service = self.notification_service.clone();
             let bind_address = self.bind_address.clone();
             let port = self.port;
-            let agent_card = serde_json::to_value(self.create_agent_card()).unwrap_or_else(|e| {
-                warn!("Failed to serialize agent card: {}", e);
+            debug!("Creating agent card for auto-started server.");
+            let agent_card = serde_json::to_value(self.create_agent_card()).unwrap_or_else(|e| { // create_agent_card logs internally
+                warn!(error = %e, "Failed to serialize agent card for server. Using empty object.");
                 serde_json::json!({})
             });
-            
+            trace!(?agent_card, "Agent card JSON for server.");
+
+            let agent_id_clone = self.agent_id.clone(); // Clone for tracing span
+            debug!("Spawning server task.");
             tokio::spawn(async move {
+                 // Create a tracing span for the server task
+                let span = tracing::info_span!(
+                    "auto_server_task",
+                    agent_id = %agent_id_clone,
+                    %port,
+                    %bind_address
+                );
+                // Enter the span
+                let _enter = span.enter();
+                info!("Auto-started server task running.");
+
                 match run_server(
                     port,
                     &bind_address,
@@ -1097,90 +1427,106 @@ impl BidirectionalAgent {
                     Some(agent_card),
                 ).await {
                     Ok(handle) => {
+                        info!("Server task successfully started.");
                         // Send success status back to REPL
-                        let _ = tx.send(Ok(()));
-                        
+                        trace!("Sending success status back to REPL via channel.");
+                        let _ = tx.send(Ok(())); // Ignore error if REPL already timed out
+
                         // Wait for the server to complete or be cancelled
+                        info!("Waiting for server task to complete or be cancelled.");
                         match handle.await {
-                            Ok(()) => info!("Server shut down gracefully."),
-                            Err(e) => error!("Server error: {}", e),
+                            Ok(()) => info!("Server task shut down gracefully."),
+                            Err(e) => error!(error = %e, "Server task join error."),
                         }
                     },
                     Err(e) => {
+                        error!(error = %e, "Failed to start server task.");
                         // Send error status back to REPL
-                        let _ = tx.send(Err(format!("{}", e)));
-                        error!("Failed to start server: {}", e);
+                        trace!("Sending error status back to REPL via channel.");
+                        let _ = tx.send(Err(format!("{}", e))); // Ignore error if REPL already timed out
                     }
                 }
-            });
-            
+            }); // Server task ends here
+
             // Wait for the server start status
-            // Use a short timeout to avoid blocking the REPL if something goes wrong
-            match tokio::time::timeout(std::time::Duration::from_secs(3), rx).await { // Increased timeout slightly
+            debug!("Waiting for server start status from channel.");
+            let server_start_timeout = std::time::Duration::from_secs(5); // Slightly longer timeout
+            match tokio::time::timeout(server_start_timeout, rx).await {
                 Ok(Ok(Ok(()))) => {
                     server_running = true;
-                    info!(bind_address = %self.bind_address, %port, "Auto-started server successfully.");
-                    println!("✅ Server started on http://{}:{}", self.bind_address, port);
+                    info!(bind_address = %self.bind_address, port = %self.port, "Auto-started server successfully confirmed by REPL.");
+                    println!("✅ Server started on http://{}:{}", self.bind_address, self.port);
                     println!("The server will run until you exit the REPL or send :stop");
                 },
                 Ok(Ok(Err(e))) => {
-                    error!(bind_address = %self.bind_address, %port, error = %e, "Error auto-starting server.");
+                    error!(bind_address = %self.bind_address, port = %self.port, error = %e, "Error reported during auto-start server initialization.");
                     println!("❌ Error starting server: {}", e);
                     println!("The server could not be started. Try a different port or check for other services using this port.");
                     server_shutdown_token = None; // Clean up token
                 },
                 Ok(Err(channel_err)) => {
-                    error!(bind_address = %self.bind_address, %port, error = %channel_err, "Server init channel error during auto-start.");
+                    error!(bind_address = %self.bind_address, port = %self.port, error = %channel_err, "Server init channel error during auto-start (REPL side).");
                     println!("❌ Error: Server initialization failed due to channel error");
                     server_shutdown_token = None; // Clean up token
                 },
                 Err(timeout_err) => {
-                    error!(bind_address = %self.bind_address, %port, error = %timeout_err, "Timeout waiting for auto-start server.");
+                    error!(bind_address = %self.bind_address, port = %self.port, error = %timeout_err, "Timeout waiting for auto-start server confirmation.");
                     println!("❌ Timeout waiting for server to start");
                     println!("The server is taking too long to start. It might be starting in the background or could have failed.");
                     println!("You can try :stop to cancel any server processes that might be running.");
-                    // Keep running flag true so user can try :stop
+                    // Keep running flag true so user can try :stop, but clear token as we don't know its state
                     server_running = true;
+                    server_shutdown_token = None;
+                    warn!("Server state unknown due to timeout, cleared shutdown token.");
                 }
             }
+        } else {
+            debug!("Auto-start server disabled.");
         }
 
         let stdin = io::stdin();
         let mut reader = stdin.lock();
         let mut input = String::new();
-        
-        // Flag to track if we have a listening server running
-        let mut server_running = false;
-        let mut server_shutdown_token: Option<CancellationToken> = None;
-        
+
+        // Flag to track if we have a listening server running is now set above
+        // let mut server_running = false; // Removed duplicate
+        // let mut server_shutdown_token: Option<CancellationToken> = None; // Removed duplicate
+
         loop {
             // Display prompt (with connected agent information if available)
-            if let Some(url) = self.client_url() {
-                print!("agent@{} > ", url);
+            let prompt = if let Some(url) = self.client_url() {
+                format!("agent@{} > ", url)
             } else {
-                print!("agent > ");
-            }
+                "agent > ".to_string()
+            };
+            trace!(prompt = %prompt, "Displaying REPL prompt.");
+            print!("{}", prompt);
             io::stdout().flush().ok();
-            
+
             input.clear();
+            trace!("Reading line from stdin.");
             if reader.read_line(&mut input)? == 0 {
                 // EOF reached (e.g., Ctrl+D)
-                info!("EOF detected. Exiting REPL.");
-                println!("EOF detected. Exiting REPL.");
+                info!("EOF detected on stdin. Exiting REPL.");
+                println!("\nEOF detected. Exiting REPL."); // Add newline for cleaner exit
                 // Perform cleanup similar to :quit
                 // Save agent directory before exiting
                 if let Some(dir_path) = &self.agent_directory_path {
+                    debug!("Saving agent directory on EOF shutdown.");
                     if let Err(e) = self.agent_directory.save_to_file(dir_path) {
                         warn!(error = %e, "Failed to save agent directory on EOF shutdown.");
                     } else {
                         info!("Successfully saved agent directory on EOF shutdown.");
                     }
                 }
-                
+
                 if let Some(token) = server_shutdown_token.take() {
                     info!("Shutting down server due to EOF.");
                     println!("Shutting down server...");
                     token.cancel();
+                    trace!("Server cancellation token cancelled.");
+                } else {
+                    trace!("No server running or token available to cancel on EOF.");
                 }
                 break; // Exit loop
             }
@@ -1189,6 +1535,7 @@ impl BidirectionalAgent {
             info!(user_input = %input_trimmed, "REPL input received.");
 
             if input_trimmed.is_empty() {
+                trace!("Empty input received, continuing loop.");
                 continue;
             }
 
@@ -1196,13 +1543,14 @@ impl BidirectionalAgent {
                 info!(command = %input_trimmed, "Processing REPL command.");
                 // Handle special commands using input_trimmed
                 if input_trimmed == ":help" {
-                    self.print_repl_help();
+                    self.print_repl_help(); // Logs internally
                 } else if input_trimmed == ":quit" {
-                    info!("User initiated quit.");
+                    info!("User initiated :quit command.");
                     println!("Exiting REPL. Goodbye!");
-                    
+
                     // Save agent directory before exiting if path is configured
                     if let Some(dir_path) = &self.agent_directory_path {
+                         debug!("Saving agent directory on :quit command.");
                         if let Err(e) = self.agent_directory.save_to_file(dir_path) {
                             warn!(error = %e, "Failed to save agent directory on shutdown.");
                         } else {
@@ -1212,13 +1560,17 @@ impl BidirectionalAgent {
 
                     // Shutdown server if running
                     if let Some(token) = server_shutdown_token.take() {
-                        info!("Shutting down server.");
+                        info!("Shutting down server via :quit command.");
                         println!("Shutting down server...");
                         token.cancel();
+                        trace!("Server cancellation token cancelled.");
+                    } else {
+                        trace!("No server running or token available to cancel on :quit.");
                     }
                     break; // Exit loop
                 } else if input_trimmed == ":card" {
-                    let card = self.create_agent_card();
+                    debug!("Processing :card command.");
+                    let card = self.create_agent_card(); // Logs internally
                     info!(agent_name = %card.name, "Displaying agent card.");
                     println!("\n📇 Agent Card:");
                     println!("  Name: {}", card.name);
@@ -2186,65 +2538,91 @@ impl BidirectionalAgentConfig {
 #[tokio::main]
 pub async fn main() -> Result<()> {
     // --- Early setup: Parse args, load config ---
+    eprintln!("[PRE-LOG] Starting agent setup...");
     let args: Vec<String> = std::env::args().collect();
+    eprintln!("[PRE-LOG] Args: {:?}", args);
     let mut config = BidirectionalAgentConfig::default();
     config.mode.repl = true; // Default to REPL
+    eprintln!("[PRE-LOG] Initial default config created.");
 
     // Check for environment variable API key *before* loading config file
+    eprintln!("[PRE-LOG] Checking for CLAUDE_API_KEY env var...");
     if config.llm.claude_api_key.is_none() {
-        config.llm.claude_api_key = std::env::var("CLAUDE_API_KEY").ok();
+        if let Ok(env_key) = std::env::var("CLAUDE_API_KEY") {
+             eprintln!("[PRE-LOG] Found CLAUDE_API_KEY in environment.");
+             config.llm.claude_api_key = Some(env_key);
+        } else {
+             eprintln!("[PRE-LOG] CLAUDE_API_KEY not found in environment.");
+        }
     }
 
     // Process command line arguments to potentially load a config file or override settings
+    eprintln!("[PRE-LOG] Processing command line arguments...");
     let mut i = 1;
     while i < args.len() {
         let arg = &args[i];
-        // Use temporary logging before full setup
-        eprintln!("[PRE-LOG] Processing arg: {}", arg);
+        eprintln!("[PRE-LOG] Processing arg [{}]: '{}'", i, arg);
 
         if arg == "--listen" || arg == "-l" {
+            eprintln!("[PRE-LOG] Found --listen flag.");
             config.mode.auto_listen = true;
             std::env::set_var("AUTO_LISTEN", "true"); // Keep env var for REPL auto-start check
-            if i + 1 < args.len() {
+            // Check for optional port after --listen
+            if i + 1 < args.len() && !args[i + 1].starts_with('-') && !args[i + 1].ends_with(".toml") {
                 if let Ok(port) = args[i + 1].parse::<u16>() {
+                    eprintln!("[PRE-LOG] Overriding server port from arg after --listen: {}", port);
                     config.server.port = port;
-                    i += 1;
+                    i += 1; // Consume the port argument
                 } else {
-                     eprintln!("[PRE-LOG] WARN: Argument after --listen ('{}') is not a valid port.", args[i+1]);
+                     eprintln!("[PRE-LOG] WARN: Argument after --listen ('{}') is not a valid port. Ignoring.", args[i+1]);
                 }
             }
         } else if arg.starts_with("--port=") {
-            if let Ok(port) = arg.trim_start_matches("--port=").parse::<u16>() {
+             let port_str = arg.trim_start_matches("--port=");
+            if let Ok(port) = port_str.parse::<u16>() {
+                eprintln!("[PRE-LOG] Overriding server port from --port= arg: {}", port);
                 config.server.port = port;
             } else {
-                 eprintln!("[PRE-LOG] WARN: Invalid port format in '{}'. Using default.", arg);
+                 eprintln!("[PRE-LOG] WARN: Invalid port format in '{}'. Ignoring.", arg);
             }
-        } else if arg.contains(':') && !arg.starts_with(":") {
+        } else if arg.contains(':') && !arg.starts_with(":") && !Path::new(arg).exists() { // Heuristic: host:port vs file path
+            eprintln!("[PRE-LOG] Argument '{}' looks like host:port.", arg);
             let parts: Vec<&str> = arg.split(':').collect();
             if parts.len() == 2 {
                 let server = parts[0];
                 if let Ok(port) = parts[1].parse::<u16>() {
-                    config.client.target_url = Some(format!("http://{}:{}", server, port));
+                    let url = format!("http://{}:{}", server, port);
+                    eprintln!("[PRE-LOG] Setting client target_url from arg: {}", url);
+                    config.client.target_url = Some(url);
                 } else {
-                    eprintln!("[PRE-LOG] WARN: Invalid port in '{}'. Treating as config file.", arg);
-                    load_config_from_path(&mut config, arg)?;
+                    eprintln!("[PRE-LOG] WARN: Invalid port in '{}'. Treating as config file path.", arg);
+                    load_config_from_path(&mut config, arg)?; // Fallback to config file
                 }
             } else {
-                 eprintln!("[PRE-LOG] WARN: Invalid arg format '{}'. Treating as config file.", arg);
-                 load_config_from_path(&mut config, arg)?;
+                 eprintln!("[PRE-LOG] WARN: Invalid host:port format '{}'. Treating as config file path.", arg);
+                 load_config_from_path(&mut config, arg)?; // Fallback to config file
             }
         } else {
+            // Assume it's a config file path
+            eprintln!("[PRE-LOG] Argument '{}' assumed to be config file path.", arg);
             load_config_from_path(&mut config, arg)?;
         }
         i += 1;
     }
+    eprintln!("[PRE-LOG] Finished processing arguments.");
 
     // --- Initialize Logging ---
+    eprintln!("[PRE-LOG] Initializing logging subsystem...");
     // Determine log level (e.g., from RUST_LOG env var, default to info)
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info")); // Default to info if RUST_LOG not set
+        .unwrap_or_else(|e| {
+            eprintln!("[PRE-LOG] WARN: Failed to parse RUST_LOG ('{}'). Using default 'info'.", e);
+            EnvFilter::new("info") // Default to info if RUST_LOG not set or invalid
+        });
+    eprintln!("[PRE-LOG] Log filter determined: {:?}", env_filter);
 
     // Setup console logging layer
+    eprintln!("[PRE-LOG] Setting up console logging layer.");
     let console_layer = fmt::layer()
         .with_writer(io::stderr) // Log to stderr
         .with_ansi(true) // Enable colors
@@ -2252,12 +2630,14 @@ pub async fn main() -> Result<()> {
         .with_level(true); // Show log level
 
     // Setup file logging layer (if configured)
+    eprintln!("[PRE-LOG] Setting up file logging layer (if configured).");
     let file_layer = if let Some(log_path_str) = &config.mode.repl_log_file {
-        eprintln!("[PRE-LOG] Configuring file logging to: {}", log_path_str);
+        eprintln!("[PRE-LOG] File logging configured to: {}", log_path_str);
         let log_path = PathBuf::from(log_path_str);
 
         // 1. Validate path and create directory, resulting in Option<PathBuf>
         let maybe_valid_path = if let Some(parent_dir) = log_path.parent() {
+            eprintln!("[PRE-LOG] Checking/creating parent directory: {}", parent_dir.display());
             if !parent_dir.exists() {
                 match std::fs::create_dir_all(parent_dir) {
                     Ok(_) => {
@@ -2270,14 +2650,17 @@ pub async fn main() -> Result<()> {
                     }
                 }
             } else {
+                 eprintln!("[PRE-LOG] Log directory already exists: {}", parent_dir.display());
                 Some(log_path) // Dir already exists, path is valid
             }
         } else {
+             eprintln!("[PRE-LOG] Log path has no parent directory (relative path?). Assuming valid.");
             Some(log_path) // No parent dir (e.g., relative path), assume valid
         };
 
         // 2. If path is valid, attempt to create the file appender layer
         if let Some(path) = maybe_valid_path {
+            eprintln!("[PRE-LOG] Attempting to open/create log file: {}", path.display());
             // Use a non-rolling file appender that opens the file in append mode
             let file = match std::fs::OpenOptions::new()
                 .create(true)
@@ -2286,41 +2669,42 @@ pub async fn main() -> Result<()> {
                 Ok(file) => {
                     eprintln!("[PRE-LOG] File appender created successfully for {}", path.display());
                     // Create a more straightforward approach using tracing fields
-                    let agent_id = config.server.agent_id.clone();
-                    
+                    let agent_id_for_log = config.server.agent_id.clone(); // Clone for the layer
+
                     // Setup a simpler format for the file
                     let format = fmt::format()
                         .with_level(true)
-                        .with_target(true)
-                        .with_thread_ids(false)
-                        .with_file(false)
-                        .with_line_number(false)
-                        .with_ansi(false)
-                        .compact();
-                    
-                    // Add agent ID as a field to all log messages using a closure
-                    Some(
-                        fmt::layer()
-                            .with_writer(file) // Use file directly
-                            .with_ansi(false)
-                            .event_format(format)
-                            .with_filter(
-                                filter::filter_fn(move |metadata| {
-                                    // Add agent ID to every event
-                                    tracing::debug_span!("bidirectional_agent", agent_id = %agent_id).in_scope(|| true)
-                                })
-                            )
-                            .boxed()
-                    )
+                        .with_target(true) // Keep target for file logs
+                        .with_thread_ids(false) // Maybe disable thread IDs for cleaner file logs
+                        .with_file(false) // Disable source file location
+                        .with_line_number(false) // Disable source line number
+                        .with_ansi(false) // No colors in file
+                        .compact(); // Use compact format
+
+                    // Add agent ID as a field to all log messages using a layer
+                    // This approach is generally cleaner than filter_fn for adding fields
+                    use tracing_subscriber::Layer;
+                    let agent_id_layer = tracing_subscriber::fmt::layer()
+                         .with_writer(move || file.try_clone().expect("Failed to clone log file handle")) // Clone handle per event
+                         .with_ansi(false)
+                         .event_format(format)
+                         .with_span_list(false) // Don't repeat span info in file logs
+                         .map_fields(move |fields| { // Add agent_id field
+                             fields.extend(tracing::field::FieldSet::new(&["agent_id"], tracing::identify_callsite!()));
+                             fields.field("agent_id").map(|f| f.display_value(&agent_id_for_log));
+                         });
+
+                    Some(agent_id_layer.boxed()) // Box the layer
                 },
                 Err(e) => {
                     eprintln!("[PRE-LOG] ERROR: Failed to open log file '{}': {}", path.display(), e);
                     None
                 }
             };
-            
+
             file
         } else {
+            eprintln!("[PRE-LOG] Log file path was invalid, file logging disabled.");
             None // Path was invalid (directory creation failed)
         }
     } else {
@@ -2330,40 +2714,61 @@ pub async fn main() -> Result<()> {
 
 
     // Combine layers and initialize the global subscriber
+    eprintln!("[PRE-LOG] Combining logging layers and initializing subscriber.");
     let subscriber_builder = tracing_subscriber::registry()
         .with(env_filter)
         .with(console_layer);
 
     // Initialize differently based on whether file_layer is Some or None
     if let Some(file_layer) = file_layer {
+         eprintln!("[PRE-LOG] Initializing logging with console and file layers.");
          subscriber_builder.with(file_layer).init(); // Pass the unwrapped Box<dyn Layer...>
     } else {
+         eprintln!("[PRE-LOG] Initializing logging with console layer only.");
          subscriber_builder.init(); // Initialize without the file layer
     }
+    eprintln!("[PRE-LOG] Logging initialization complete.");
 
     // --- Logging is now fully initialized ---
-    info!("Logging initialized.");
+    info!("Logging initialized successfully."); // This should now appear in logs
     info!("Starting Bidirectional Agent main function.");
-    
+
     // Log a prominent line with agent info for better separation in shared logs
     let agent_id = config.server.agent_id.clone();
     let agent_name = config.server.agent_name.clone().unwrap_or_else(|| "Unnamed Agent".to_string());
-    info!("AGENT STARTED: ID: {}, Name: {}, Port: {}", 
-          agent_id, agent_name, config.server.port);
+    info!(agent_id = %agent_id, agent_name = %agent_name, port = %config.server.port, "AGENT_STARTED");
 
     // Log the final effective configuration *after* logging is initialized
-    info!(?config, "Effective configuration loaded."); // Use debug formatting for the whole struct
+    // Use trace level for potentially sensitive full config dump
+    trace!(?config, "Effective configuration loaded.");
+    // Log key config items at info level
+    info!(
+        agent_id = %config.server.agent_id,
+        agent_name = %config.server.agent_name.as_deref().unwrap_or("N/A"),
+        server_port = %config.server.port,
+        bind_address = %config.server.bind_address,
+        client_target = %config.client.target_url.as_deref().unwrap_or("None"),
+        llm_configured = config.llm.claude_api_key.is_some(),
+        tools_enabled = ?config.tools.enabled,
+        agent_dir_path = %config.tools.agent_directory_path.as_deref().unwrap_or("None"),
+        log_file = %config.mode.repl_log_file.as_deref().unwrap_or("None"),
+        "Key configuration values"
+    );
+
 
     // Determine final mode (logic remains similar, but logging works now)
+    debug!("Determining final execution mode.");
     if config.mode.message.is_none()
         && config.mode.remote_task.is_none()
         && !config.mode.get_agent_card
         && !config.mode.repl
     {
+        // No specific mode set in config or args, default to REPL
         if args.len() <= 1 {
              info!("No arguments provided and no mode set in config. Defaulting to REPL mode.");
              config.mode.repl = true;
         } else {
+             // Args were provided, but didn't set a mode (e.g., just a config file path)
              info!("Arguments provided but no specific action mode requested. Defaulting to REPL mode.");
              config.mode.repl = true;
         }
@@ -2372,19 +2777,20 @@ pub async fn main() -> Result<()> {
          info!("Config file loaded but no specific mode set. Defaulting to REPL mode.");
          config.mode.repl = true;
     }
+    debug!(?config.mode, "Final execution mode determined.");
 
     // --- Execute based on mode ---
     if config.mode.repl {
         info!("Starting agent in REPL mode.");
-        let mut agent = BidirectionalAgent::new(config.clone())?;
-        agent.run_repl().await // Return the result directly
+        let mut agent = BidirectionalAgent::new(config.clone())?; // new() logs internally
+        agent.run_repl().await // run_repl() logs internally
     }
     // Process a single message
     else if let Some(message) = &config.mode.message {
-        info!(message = %message, "Starting agent to process single message.");
+        info!(message_len = message.len(), "Starting agent to process single message.");
         let mut agent = BidirectionalAgent::new(config.clone())?;
         println!("Processing message: '{}'", message); // Keep console output
-        let response = agent.process_message_locally(message).await?; // Use renamed function
+        let response = agent.process_message_locally(message).await?; // Logs internally
         println!("Response:\n{}", response); // Keep console output
         info!("Finished processing single message.");
         Ok(())
@@ -2395,10 +2801,10 @@ pub async fn main() -> Result<()> {
             error!("Cannot send remote task: No target URL configured.");
             return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file or provide via argument."));
         }
-        info!(task_message = %task_message, "Starting agent to send remote task.");
+        info!(message_len = task_message.len(), "Starting agent to send remote task.");
         let mut agent = BidirectionalAgent::new(config.clone())?;
         println!("Sending task to remote agent: '{}'", task_message); // Keep console output
-        let task = agent.send_task_to_remote(task_message).await?;
+        let task = agent.send_task_to_remote(task_message).await?; // Logs internally
         println!("Task sent successfully!"); // Keep console output
         println!("Task ID: {}", task.id);
         println!("Initial state reported by remote: {:?}", task.status.state);
@@ -2414,22 +2820,23 @@ pub async fn main() -> Result<()> {
         info!("Starting agent to get remote agent card.");
         let mut agent = BidirectionalAgent::new(config.clone())?;
         println!("Retrieving agent card from remote agent..."); // Keep console output
-        let card = agent.get_remote_agent_card().await?;
+        let card = agent.get_remote_agent_card().await?; // Logs internally
         println!("Remote Agent Card:"); // Keep console output
         println!("  Name: {}", card.name);
         println!("  Version: {}", card.version);
         println!("  Description: {}", card.description.as_deref().unwrap_or("None"));
         println!("  URL: {}", card.url);
-        // ... (print other card details as before) ...
+        // TODO: Print more card details if needed
+        println!("  Capabilities: {:?}", card.capabilities);
         println!("  Skills: {}", card.skills.len());
         info!("Finished getting remote agent card.");
         Ok(())
     }
     // Default mode: Run the server (if not REPL and no other specific action)
     else {
-        info!("Starting agent in default server mode.");
-        let agent = BidirectionalAgent::new(config)?;
-        agent.run().await // Return the result directly
+        info!("Starting agent in default server mode (no REPL or specific action requested).");
+        let agent = BidirectionalAgent::new(config)?; // Logs internally
+        agent.run().await // Logs internally
     }
 }
 
@@ -2437,39 +2844,44 @@ pub async fn main() -> Result<()> {
 /// Logs using eprintln because tracing might not be initialized yet.
 fn load_config_from_path(config: &mut BidirectionalAgentConfig, config_path: &str) -> Result<()> {
     eprintln!("[PRE-LOG] Attempting to load configuration from path: {}", config_path);
-    match BidirectionalAgentConfig::from_file(config_path) {
+    match BidirectionalAgentConfig::from_file(config_path) { // from_file now uses debug/trace internally if logging is up
         Ok(mut loaded_config) => {
+            eprintln!("[PRE-LOG] Config file '{}' loaded successfully. Merging with existing/default config.", config_path);
             // Preserve env var API key if it was set and config file doesn't have one
             if config.llm.claude_api_key.is_some() && loaded_config.llm.claude_api_key.is_none() {
+                eprintln!("[PRE-LOG] Preserving Claude API key from environment variable over config file.");
                 loaded_config.llm.claude_api_key = config.llm.claude_api_key.clone();
-                eprintln!("[PRE-LOG] Preserved Claude API key from environment variable.");
             }
             // Preserve command-line overrides if they were set before loading the file
-            // Example: Preserve port if set via --port= before the config file path
+            // Example: Preserve port if set via --port= or --listen before the config file path
              if config.server.port != default_port() && loaded_config.server.port == default_port() {
+                 eprintln!("[PRE-LOG] Preserving server port override ({}) from command line over config file.", config.server.port);
                  loaded_config.server.port = config.server.port;
-                 eprintln!("[PRE-LOG] Preserved server port override from command line: {}", loaded_config.server.port);
              }
              // Example: Preserve target_url if set via host:port before the config file path
              if config.client.target_url.is_some() && loaded_config.client.target_url.is_none() {
+                 eprintln!("[PRE-LOG] Preserving target URL override ('{}') from command line over config file.", config.client.target_url.as_deref().unwrap_or("N/A"));
                  loaded_config.client.target_url = config.client.target_url.clone();
-                 eprintln!("[PRE-LOG] Preserved target URL override from command line: {}", loaded_config.client.target_url.as_deref().unwrap_or("N/A"));
              }
              // Example: Preserve auto_listen if set via --listen before the config file path
              if config.mode.auto_listen && !loaded_config.mode.auto_listen {
+                 eprintln!("[PRE-LOG] Preserving auto-listen override from command line over config file.");
                  loaded_config.mode.auto_listen = true;
-                 eprintln!("[PRE-LOG] Preserved auto-listen override from command line.");
              }
+             // Preserve REPL log file if set via command line? (Less common, maybe not needed)
 
+            // Preserve the config file path itself
+            loaded_config.config_file_path = Some(config_path.to_string());
+            eprintln!("[PRE-LOG] Setting config_file_path reference to: {}", config_path);
 
             *config = loaded_config; // Overwrite existing config with loaded, potentially merged, config
-            config.config_file_path = Some(config_path.to_string());
             eprintln!("[PRE-LOG] Successfully loaded and applied configuration from {}", config_path);
         },
         Err(e) => {
             // If a config file was specified but failed to load, it's a fatal error.
             eprintln!("[PRE-LOG] ERROR: Failed to load configuration from '{}': {}", config_path, e);
             eprintln!("[PRE-LOG] Please check the configuration file path and syntax.");
+            // Use context to chain the error
             return Err(anyhow!("Configuration file loading failed for path: {}", config_path).context(e));
         }
     }

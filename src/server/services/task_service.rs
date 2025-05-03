@@ -4,6 +4,7 @@ use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskR
 use crate::server::ServerError;
 use std::sync::Arc;
 use chrono::Utc;
+use tracing::{debug, error, info, trace, warn, instrument}; // Import tracing macros
 use uuid::Uuid;
 
 // Import from local server components instead of bidirectional_agent
@@ -34,10 +35,11 @@ pub struct TaskService {
 
 impl TaskService {
     /// Creates a new TaskService for standalone server mode.
+    #[instrument(skip(task_repository))]
     pub fn standalone(task_repository: Arc<dyn TaskRepository>) -> Self {
+        info!("Creating TaskService in standalone mode.");
         Self {
             task_repository,
-            
             task_router: None,
             
             tool_executor: None,
@@ -51,11 +53,13 @@ impl TaskService {
     }
     
     /// Creates a new TaskService that delegates to an external task flow manager
+    #[instrument(skip(task_flow))]
     pub fn with_task_flow(task_flow: Arc<dyn Send + Sync>) -> Self {
+        info!("Creating TaskService with external task flow (simplified).");
         // This is a simplified version for integration
         // We'll just use the standalone variant and let the task_flow handle the actual work
         Self {
-            task_repository: Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new()),
+            task_repository: Arc::new(crate::server::repositories::task_repository::InMemoryTaskRepository::new()), // Use default repo for this mode
             task_router: None,
             tool_executor: None,
             client_manager: None,
@@ -66,6 +70,7 @@ impl TaskService {
 
     /// Creates a new TaskService configured for bidirectional operation.
     /// Requires the corresponding features to be enabled.
+    #[instrument(skip(task_repository, task_router, tool_executor, client_manager, agent_registry), fields(agent_id))]
     pub fn bidirectional(
         task_repository: Arc<dyn TaskRepository>,
         // Accept the trait object for router
@@ -76,13 +81,13 @@ impl TaskService {
          agent_registry: Arc<AgentRegistry>,
          agent_id: String,
     ) -> Self {
+        info!(%agent_id, "Creating TaskService in bidirectional mode.");
         // Compile-time check for feature consistency (example)
-        // 
+        //
         // compile_error!("Feature 'bidir-local-exec' requires 'bidir-delegate' in this configuration.");
 
         Self {
             task_repository,
-            
             task_router: Some(task_router),
             
             tool_executor: Some(tool_executor),
@@ -97,173 +102,242 @@ impl TaskService {
 
 
     /// Process a new task or a follow-up message
+    #[instrument(skip(self, params), fields(task_id = %params.id, session_id = ?params.session_id))]
     pub async fn process_task(&self, params: TaskSendParams) -> Result<Task, ServerError> {
+        info!("Processing task request.");
+        trace!(?params, "Full task parameters received.");
         let task_id = params.id.clone();
-        
+
         // Check if task exists (for follow-up messages)
+        debug!("Checking if task already exists in repository.");
         if let Some(existing_task) = self.task_repository.get_task(&task_id).await? {
+            info!("Task already exists. Processing as follow-up.");
+            trace!(?existing_task, "Existing task details.");
+            // Pass only the new message for follow-up processing
             return self.process_follow_up(existing_task, Some(params.message)).await;
         }
-        
+        info!("Task does not exist. Processing as new task.");
+
         // Clone the necessary parts to avoid partial moves
         let metadata_clone = params.metadata.clone();
         let session_id_clone = params.session_id.clone();
-        
+        let initial_message = params.message.clone(); // Clone the initial message
+
         // Create new task
+        debug!("Creating new task structure.");
+        let session_id = session_id_clone.unwrap_or_else(|| {
+            let new_id = format!("session-{}", Uuid::new_v4());
+            debug!(new_session_id = %new_id, "No session ID provided, generating new one.");
+            new_id
+        });
         let mut task = Task {
             id: task_id.clone(),
-            session_id: Some(session_id_clone.unwrap_or_else(|| format!("session-{}", Uuid::new_v4()))),
+            session_id: Some(session_id),
             status: TaskStatus {
-                state: TaskState::Working,
+                state: TaskState::Submitted, // Start as Submitted
                 timestamp: Some(Utc::now()),
                 message: None,
             },
             artifacts: None,
-            history: None,
+            // Start history with the initial message
+            history: Some(vec![initial_message.clone()]),
             metadata: metadata_clone,
         };
-        
-        // First save the initial state of the task for state history
+        trace!(?task, "Initial task structure created.");
+
+        // First save the initial state (Submitted) of the task for state history
+        debug!("Saving initial (Submitted) task state to repository and history.");
         self.task_repository.save_task(&task).await?;
         self.task_repository.save_state_history(&task.id, &task).await?;
+
+        // Update status to Working before processing
+        task.status.state = TaskState::Working;
+        task.status.timestamp = Some(Utc::now());
+        debug!("Updating task state to Working.");
+        self.task_repository.save_task(&task).await?;
+        self.task_repository.save_state_history(&task.id, &task).await?;
+        trace!(?task, "Task state updated to Working.");
+
 
         // --- Routing and Execution Logic (Slice 2 & 3) ---
-        
-        {
-            if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
-                // Make routing decision based on incoming params
-                match router.decide(&params).await {
-                    Ok(decision_result) => {
-                        println!("Routing decision for task {}: {:?}", task.id, decision_result);
-
-                        // Use TaskFlow to handle the decision if delegation is enabled
-                        
-                        {
-                            // Ensure all components for delegation are present
-                            if let (Some(cm), Some(reg), Some(agent_id)) =
-                                (&self.client_manager, &self.agent_registry, &self.agent_id)
-                            {
-                                let flow = TaskFlow::new(
-                                    task.id.clone(),
-                                    agent_id.clone(),
-                                    self.task_repository.clone(),
-                                    cm.clone(),
-                                    executor.clone(),
-                                    reg.clone(),
-                                );
-                                if let Err(e) = flow.process_decision(decision_result.clone()).await {
-                                    println!("Task flow processing failed for task {}: {}", task.id, e);
-                                    // Update task status to Failed if flow fails
-                                    let mut current_task = self.task_repository.get_task(&task.id).await?.unwrap_or(task);
-                                    current_task.status.state = TaskState::Failed;
-                                    current_task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task processing failed: {}", e), metadata: None })], metadata: None });
-                                    task = current_task;
-                                } else {
-                                    // Flow succeeded, refetch the task to get the final state
-                                    task = self.task_repository.get_task(&task.id).await?.unwrap_or(task);
-                                }
-                            } else {
-                                // Handle missing components needed for delegation
-                                eprintln!("❌ Configuration Error: Missing components required for bidir-delegate feature.");
-                                task.status.state = TaskState::Failed;
-                                task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Agent configuration error: Missing delegation components.".to_string(), metadata: None })], metadata: None });
-                            }
+        debug!("Entering routing and execution logic.");
+        // Check if bidirectional components are configured
+        if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
+            info!("Bidirectional components found (router, executor). Proceeding with routing.");
+            // Make routing decision based on incoming params
+            debug!("Calling task router decide method.");
+            match router.decide(&params).await { // Use the original params for decision
+                Ok(decision_result) => {
+                    info!(?decision_result, "Routing decision received.");
+                    // Use TaskFlow to handle the decision if delegation is enabled
+                    debug!("Checking if delegation components are available for TaskFlow.");
+                    if let (Some(cm), Some(reg), Some(agent_id)) =
+                        (&self.client_manager, &self.agent_registry, &self.agent_id)
+                    {
+                        info!("Delegation components found. Initializing TaskFlow.");
+                        let flow = TaskFlow::new(
+                            task.id.clone(),
+                            agent_id.clone(),
+                            self.task_repository.clone(),
+                            cm.clone(),
+                            executor.clone(),
+                            reg.clone(),
+                        );
+                        trace!("TaskFlow initialized.");
+                        info!("Processing routing decision with TaskFlow.");
+                        if let Err(e) = flow.process_decision(decision_result.clone()).await {
+                            error!(error = %e, "Task flow processing failed.");
+                            // Update task status to Failed if flow fails
+                            // Refetch task first to avoid overwriting intermediate states
+                            let mut current_task = self.task_repository.get_task(&task.id).await?.unwrap_or(task); // Use fetched or original task
+                            warn!("Updating task status to Failed due to TaskFlow error.");
+                            current_task.status.state = TaskState::Failed;
+                            current_task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task processing failed: {}", e), metadata: None })], metadata: None });
+                            current_task.status.timestamp = Some(Utc::now());
+                            task = current_task; // Update the task variable
+                            // Save the failed state
+                            self.task_repository.save_task(&task).await?;
+                            self.task_repository.save_state_history(&task.id, &task).await?;
+                        } else {
+                            info!("TaskFlow processing completed successfully.");
+                            // Flow succeeded, refetch the task to get the final state
+                            debug!("Refetching task from repository to get final state after TaskFlow.");
+                            task = self.task_repository.get_task(&task.id).await?.unwrap_or(task); // Update task with final state
+                            trace!(?task, "Final task state after TaskFlow.");
                         }
-
-                    }
-                    Err(e) => {
-                        // Handle routing error
-                        println!("Routing failed for task {}: {}", task.id, e);
+                    } else {
+                        // Handle missing components needed for delegation
+                        error!("Configuration Error: Missing components required for delegation (ClientManager, AgentRegistry, or AgentID). Task cannot be delegated.");
                         task.status.state = TaskState::Failed;
-                        task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task routing failed: {}", e), metadata: None })], metadata: None });
+                        task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Agent configuration error: Missing delegation components.".to_string(), metadata: None })], metadata: None });
+                        task.status.timestamp = Some(Utc::now());
+                        // Save the failed state
+                        self.task_repository.save_task(&task).await?;
+                        self.task_repository.save_state_history(&task.id, &task).await?;
                     }
                 }
-            } else {
-                // Fallback to default processing if router/executor not available
-                println!("Router/Executor not available, using default processing for task {}", task.id);
-                self.process_task_content(&mut task, Some(params.message.clone())).await?;
-            }
-        }
-
-        // Default processing if bidir-local-exec feature is not enabled
-        
-        {
-            // Using clone to avoid move
-            let message_clone = params.message.clone();
-            self.process_task_content(&mut task, Some(message_clone)).await?;
-        }
-        // --- End Routing and Execution Logic ---
-
-
-        // Store the potentially updated task
-        self.task_repository.save_task(&task).await?;
-        
-        // Save state history again after processing
-        self.task_repository.save_state_history(&task.id, &task).await?;
-        
-        Ok(task)
-    }
-    
-    /// Process follow-up message for an existing task
-    async fn process_follow_up(&self, mut task: Task, message: Option<Message>) -> Result<Task, ServerError> {
-        // Only process follow-up if task is in a state that allows it
-        match task.status.state {
-            TaskState::InputRequired => {
-                // Process the follow-up message
-                if let Some(msg) = message {
-                    // If this is test_input_required_flow, immediately transition to Completed
-                    // We need to bypass the Working state to fix the test
-                    task.status = TaskStatus {
-                        state: TaskState::Completed,
-                        timestamp: Some(Utc::now()),
-                        message: Some(Message {
-                            role: Role::Agent,
-                            parts: vec![Part::TextPart(TextPart {
-                                type_: "text".to_string(),
-                                text: "Follow-up task completed successfully.".to_string(),
-                                metadata: None,
-                            })],
-                            metadata: None,
-                        }),
-                    };
-                    
-                    // Save the updated task and state history
+                Err(e) => {
+                    // Handle routing error
+                    error!(error = %e, "Task routing decision failed.");
+                    task.status.state = TaskState::Failed;
+                    task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task routing failed: {}", e), metadata: None })], metadata: None });
+                    task.status.timestamp = Some(Utc::now());
+                    // Save the failed state
                     self.task_repository.save_task(&task).await?;
                     self.task_repository.save_state_history(&task.id, &task).await?;
                 }
+            }
+        } else {
+            // Fallback to default processing if router/executor not available (standalone mode)
+            info!("Router/Executor not available (standalone mode?). Using default task content processing.");
+            // Pass the initial message for content processing
+            self.process_task_content(&mut task, Some(initial_message)).await?;
+            // Save the final state after default processing
+            debug!("Saving final task state after default processing.");
+            self.task_repository.save_task(&task).await?;
+            self.task_repository.save_state_history(&task.id, &task).await?;
+        }
+        // --- End Routing and Execution Logic ---
+
+        info!(final_state = ?task.status.state, "Finished processing task request.");
+        Ok(task)
+    }
+
+    /// Process follow-up message for an existing task
+    #[instrument(skip(self, task, message), fields(task_id = %task.id, current_state = ?task.status.state))]
+    async fn process_follow_up(&self, mut task: Task, message: Option<Message>) -> Result<Task, ServerError> {
+        info!("Processing follow-up message.");
+        trace!(?message, "Follow-up message details.");
+
+        // Add the follow-up message to history *before* processing
+        if let Some(ref msg) = message {
+             debug!("Adding follow-up message to task history.");
+             task.history.get_or_insert_with(Vec::new).push(msg.clone());
+             // Save intermediate state with new history message
+             self.task_repository.save_task(&task).await?;
+             // Don't save history state here yet, wait until after processing
+        }
+
+
+        // Only process follow-up if task is in a state that allows it
+        match task.status.state {
+            TaskState::InputRequired => {
+                info!("Task is in InputRequired state. Processing follow-up.");
+                // Process the follow-up message using the configured router/executor if available
+                if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
+                     debug!("Using bidirectional components for follow-up processing.");
+                     // TODO: Implement proper follow-up routing/execution logic
+                     // For now, just mark as completed like the standalone version
+                     warn!("Bidirectional follow-up processing not fully implemented. Marking as Completed.");
+                     task.status = TaskStatus {
+                         state: TaskState::Completed,
+                         timestamp: Some(Utc::now()),
+                         message: Some(Message {
+                             role: Role::Agent,
+                             parts: vec![Part::TextPart(TextPart {
+                                 type_: "text".to_string(),
+                                 text: "Follow-up task completed (bidir placeholder).".to_string(),
+                                 metadata: None,
+                             })],
+                             metadata: None,
+                         }),
+                     };
+                } else {
+                    info!("Standalone mode: Processing follow-up content directly.");
+                    // Standalone: Process content directly (or use a simpler logic)
+                    self.process_task_content(&mut task, message).await?; // process_task_content handles state transition
+                }
+
+                // Save the updated task and state history
+                debug!("Saving final task state after follow-up processing.");
+                self.task_repository.save_task(&task).await?;
+                self.task_repository.save_state_history(&task.id, &task).await?;
+
             },
             TaskState::Completed | TaskState::Failed | TaskState::Canceled => {
+                error!("Task is in a final state ({:?}) and cannot accept follow-up messages.", task.status.state);
                 return Err(ServerError::InvalidParameters(
-                    format!("Task {} is in {} state and cannot accept follow-up messages", 
+                    format!("Task {} is in {} state and cannot accept follow-up messages",
                             task.id, task.status.state)
                 ));
             },
-            _ => {
-                // For Working state, we could choose to process the new message or reject it
-                // For simplicity, we'll reject it
+            TaskState::Working | TaskState::Submitted => {
+                // For Working/Submitted state, reject follow-up for now
+                warn!("Task is in {:?} state. Rejecting follow-up message.", task.status.state);
                 return Err(ServerError::InvalidParameters(
-                    format!("Task {} is still processing. Cannot accept follow-up message yet", 
-                            task.id)
+                    format!("Task {} is still processing ({:?}). Cannot accept follow-up message yet.",
+                            task.id, task.status.state)
                 ));
-            }
+            },
+             // Handle Unknown or other potential states if necessary
+             _ => {
+                 error!("Task is in unhandled state ({:?}) for follow-up.", task.status.state);
+                 return Err(ServerError::Internal(format!("Task {} in unhandled state {:?} for follow-up", task.id, task.status.state)));
+             }
         }
-        
+
+        info!(final_state = ?task.status.state, "Finished processing follow-up message.");
         Ok(task)
     }
-    
+
     /// Process the content of a task (simplified implementation for reference server)
+    #[instrument(skip(self, task, message), fields(task_id = %task.id))]
     async fn process_task_content(&self, task: &mut Task, message: Option<Message>) -> Result<(), ServerError> {
+        info!("Processing task content (standalone/fallback logic).");
+        trace!(?message, "Message content being processed.");
         // Simplified implementation - in a real server, this would process the task asynchronously
         // and potentially update the task status multiple times
-        
+
         // If the message has specific mock parameters, we can use them to simulate different behaviors
         let metadata = if let Some(ref msg) = message {
             msg.metadata.clone()
         } else {
             None
         };
-        
+        trace!(?metadata, "Metadata from message (if any).");
+
         // Check if we should request input - check both message metadata and task metadata
+        debug!("Checking if task requires input based on metadata.");
         let require_input = if let Some(ref meta) = metadata {
             meta.get("_mock_require_input").and_then(|v| v.as_bool()).unwrap_or(false)
         } else if let Some(ref task_meta) = task.metadata {
@@ -271,11 +345,14 @@ impl TaskService {
         } else {
             false
         };
-        
+        trace!(%require_input, "Input required flag.");
+
         // Process artifacts if this is a file or data task (for fixing file/data artifact tests)
-        self.process_task_artifacts(task, &message).await?;
-        
+        debug!("Processing potential artifacts from message.");
+        self.process_task_artifacts(task, &message).await?; // Logs internally
+
         if require_input {
+            info!("Task requires input. Updating status to InputRequired.");
             // Update task status to request input
             task.status = TaskStatus {
                 state: TaskState::InputRequired,
@@ -290,33 +367,36 @@ impl TaskService {
                     metadata: None,
                 }),
             };
-            
+            trace!(?task.status, "Task status updated to InputRequired.");
             return Ok(());
-        } 
-            
+        }
+
         // Check if we should keep the task in working state
-        let remain_working = if let Some(ref meta) = task.metadata {
-            meta.get("_mock_remain_working").and_then(|v| v.as_bool()).unwrap_or(false)
+        debug!("Checking if task should remain in Working state based on metadata.");
+        let remain_working = if let Some(ref task_meta) = task.metadata { // Check task metadata
+            task_meta.get("_mock_remain_working").and_then(|v| v.as_bool()).unwrap_or(false)
         } else {
             false
         };
-        
+        trace!(%remain_working, "Remain working flag.");
+
         if remain_working {
-            // Keep the task in working state
-            task.status = TaskStatus {
-                state: TaskState::Working,
-                timestamp: Some(Utc::now()),
-                message: Some(Message {
-                    role: Role::Agent,
-                    parts: vec![Part::TextPart(TextPart {
-                        type_: "text".to_string(),
-                        text: "Task is still processing.".to_string(),
-                        metadata: None,
-                    })],
+            info!("Task metadata indicates it should remain Working.");
+            // Keep the task in working state (or update timestamp/message if needed)
+            task.status.state = TaskState::Working; // Ensure it's Working
+            task.status.timestamp = Some(Utc::now());
+            task.status.message = Some(Message {
+                role: Role::Agent,
+                parts: vec![Part::TextPart(TextPart {
+                    type_: "text".to_string(),
+                    text: "Task is still processing.".to_string(),
                     metadata: None,
-                }),
-            };
+                })],
+                metadata: None,
+            });
+            trace!(?task.status, "Task status kept as Working.");
         } else {
+            info!("Task does not require input or remain working. Marking as Completed.");
             // Just mark as completed for this reference implementation
             task.status = TaskStatus {
                 state: TaskState::Completed,
@@ -331,43 +411,80 @@ impl TaskService {
                     metadata: None,
                 }),
             };
+             // Add artifact for completed task if none exists yet (for basic tests)
+             if task.artifacts.is_none() || task.artifacts.as_ref().map_or(true, |a| a.is_empty()) {
+                 debug!("Adding default completion artifact.");
+                 let completion_artifact = crate::types::Artifact {
+                     index: 0,
+                     name: Some("result.txt".to_string()),
+                     parts: vec![crate::types::Part::TextPart(crate::types::TextPart {
+                         type_: "text".to_string(),
+                         text: "Default task completion result.".to_string(),
+                         metadata: None,
+                     })],
+                     description: Some("Default completion artifact".to_string()),
+                     append: None,
+                     last_chunk: None,
+                     metadata: None,
+                 };
+                 task.artifacts = Some(vec![completion_artifact]);
+                 trace!(?task.artifacts, "Default artifact added.");
+             }
+            trace!(?task.status, "Task status updated to Completed.");
         }
-        
+
         Ok(())
     }
-    
+
     /// Process file or data artifacts
+    #[instrument(skip(self, task, message), fields(task_id = %task.id))]
     async fn process_task_artifacts(&self, task: &mut Task, message: &Option<Message>) -> Result<(), ServerError> {
+        debug!("Processing artifacts from message (if any).");
         // Check if message has file or data parts
         if let Some(ref msg) = message {
+            trace!(part_count = msg.parts.len(), "Checking message parts for files/data.");
             let mut has_file = false;
             let mut has_data = false;
-            
-            for part in &msg.parts {
+
+            for (i, part) in msg.parts.iter().enumerate() {
                 match part {
-                    Part::FilePart(_) => has_file = true,
-                    Part::DataPart(_) => has_data = true,
-                    _ => {}
+                    Part::FilePart(fp) => {
+                        trace!(part_index = i, file_name = ?fp.file.name, "Found FilePart.");
+                        has_file = true;
+                    },
+                    Part::DataPart(dp) => {
+                        trace!(part_index = i, "Found DataPart.");
+                        has_data = true;
+                    },
+                    Part::TextPart(_) => {
+                        trace!(part_index = i, "Found TextPart (ignored for artifact processing).");
+                    }
+                    // Handle unknown part types if necessary
+                    // _ => { warn!(part_index = i, "Found unknown part type."); }
                 }
             }
-            
+            trace!(%has_file, %has_data, "File/Data part check complete.");
+
             // Create artifacts array if needed
-            if task.artifacts.is_none() {
+            if (has_file || has_data) && task.artifacts.is_none() {
+                debug!("Initializing artifacts vector for task.");
                 task.artifacts = Some(Vec::new());
             }
-            
+
             // Add file artifact if found
             if has_file {
+                debug!("Creating artifact for processed file content.");
                 // Create text part for file artifact
                 let text_part = crate::types::TextPart {
                     type_: "text".to_string(),
                     text: "This is processed file content".to_string(),
                     metadata: None,
                 };
-                
+                trace!(?text_part, "Created text part for file artifact.");
+
                 // Create artifact with correct fields based on type definition
                 let file_artifact = crate::types::Artifact {
-                    index: 0,
+                    index: task.artifacts.as_ref().map_or(0, |a| a.len() as i64), // Next index
                     name: Some("processed_file.txt".to_string()),
                     parts: vec![crate::types::Part::TextPart(text_part)],
                     description: Some("Processed file from uploaded content".to_string()),
@@ -375,28 +492,33 @@ impl TaskService {
                     last_chunk: None,
                     metadata: None,
                 };
-                
+                trace!(?file_artifact, "Created file artifact.");
+
                 if let Some(ref mut artifacts) = task.artifacts {
                     artifacts.push(file_artifact);
+                    debug!("Added file artifact to task.");
                 }
             }
-            
+
             // Add data artifact if found
             if has_data {
+                 debug!("Creating artifact for processed data content.");
                 // Create data part for json artifact
                 let mut data_map = serde_json::Map::new();
                 data_map.insert("processed".to_string(), serde_json::json!(true));
                 data_map.insert("timestamp".to_string(), serde_json::json!(chrono::Utc::now().to_rfc3339()));
-                
+                trace!(?data_map, "Created data map for data artifact.");
+
                 let data_part = crate::types::DataPart {
-                    type_: "json".to_string(),
+                    type_: "json".to_string(), // Should this be "data"? Check schema/types.rs
                     data: data_map,
                     metadata: None,
                 };
-                
+                 trace!(?data_part, "Created data part for data artifact.");
+
                 // Create artifact with correct fields based on type definition
                 let data_artifact = crate::types::Artifact {
-                    index: if has_file { 1 } else { 0 }, // Index 1 if file exists, otherwise 0
+                    index: task.artifacts.as_ref().map_or(0, |a| a.len() as i64), // Next index
                     name: Some("processed_data.json".to_string()),
                     parts: vec![crate::types::Part::DataPart(data_part)],
                     description: Some("Processed data from request".to_string()),
@@ -404,94 +526,151 @@ impl TaskService {
                     last_chunk: None,
                     metadata: None,
                 };
-                
+                trace!(?data_artifact, "Created data artifact.");
+
                 if let Some(ref mut artifacts) = task.artifacts {
                     artifacts.push(data_artifact);
+                    debug!("Added data artifact to task.");
                 }
             }
+        } else {
+            trace!("No message provided, skipping artifact processing.");
         }
-        
+
         Ok(())
     }
-    
+
     /// Get a task by ID
+    #[instrument(skip(self, params), fields(task_id = %params.id))]
     pub async fn get_task(&self, params: TaskQueryParams) -> Result<Task, ServerError> {
+        info!("Getting task details.");
+        trace!(?params, "Task query parameters.");
+        debug!("Fetching task from repository.");
         let task = self.task_repository.get_task(&params.id).await?
-            .ok_or_else(|| ServerError::TaskNotFound(params.id.clone()))?;
-            
+            .ok_or_else(|| {
+                warn!("Task not found in repository.");
+                ServerError::TaskNotFound(params.id.clone())
+            })?;
+        info!(state = ?task.status.state, "Task found in repository.");
+        trace!(?task, "Fetched task details.");
+
         // Apply history_length filter if specified
         let mut result = task.clone();
         if let Some(history_length) = params.history_length {
+            debug!(%history_length, "Applying history length filter.");
             if let Some(history) = &mut result.history {
-                if history.len() > history_length as usize {
+                let original_len = history.len();
+                if original_len > history_length as usize {
+                    trace!(original_len, target_len = history_length, "Truncating history.");
                     *history = history.iter()
-                        .skip(history.len() - history_length as usize)
+                        .skip(original_len - history_length as usize)
                         .cloned()
                         .collect();
+                    trace!(final_len = history.len(), "History truncated.");
+                } else {
+                    trace!(original_len, target_len = history_length, "History length is within limit, no truncation needed.");
                 }
+            } else {
+                trace!("Task has no history, filter not applied.");
             }
+        } else {
+            trace!("No history length specified, returning full history.");
         }
-        
+
         Ok(result)
     }
-    
+
     /// Cancel a task
+    #[instrument(skip(self, params), fields(task_id = %params.id))]
     pub async fn cancel_task(&self, params: TaskIdParams) -> Result<Task, ServerError> {
+        info!("Attempting to cancel task.");
+        trace!(?params, "Cancel task parameters.");
+        debug!("Fetching task to check current state.");
         let mut task = self.task_repository.get_task(&params.id).await?
-            .ok_or_else(|| ServerError::TaskNotFound(params.id.clone()))?;
-            
+            .ok_or_else(|| {
+                 warn!("Task not found for cancellation.");
+                 ServerError::TaskNotFound(params.id.clone())
+            })?;
+        info!(current_state = ?task.status.state, "Task found.");
+        trace!(?task, "Task details before cancellation.");
+
         // Check if task can be canceled
         match task.status.state {
             TaskState::Completed | TaskState::Failed | TaskState::Canceled => {
+                warn!("Task is already in a final state ({:?}), cannot cancel.", task.status.state);
                 return Err(ServerError::TaskNotCancelable(format!(
                     "Task {} is in {} state and cannot be canceled",
                     params.id, task.status.state
                 )));
             }
-            _ => {}
+            _ => {
+                info!("Task is in a cancelable state ({:?}). Proceeding with cancellation.", task.status.state);
+            }
         }
-        
+
         // Update task status
+        debug!("Updating task status to Canceled.");
         task.status = TaskStatus {
             state: TaskState::Canceled,
             timestamp: Some(Utc::now()),
             message: Some(Message {
-                role: Role::Agent,
+                role: Role::Agent, // Should be Agent role indicating cancellation reason
                 parts: vec![Part::TextPart(TextPart {
                     type_: "text".to_string(),
-                    text: "Task canceled by user".to_string(),
+                    text: "Task canceled by request".to_string(), // More neutral message
                     metadata: None,
                 })],
                 metadata: None,
             }),
         };
-        
+        trace!(?task.status, "Task status updated.");
+
         // Save the updated task
+        debug!("Saving canceled task state to repository.");
         self.task_repository.save_task(&task).await?;
-        
+
         // Save state history
+        debug!("Saving canceled task state to history.");
         self.task_repository.save_state_history(&task.id, &task).await?;
-        
+
+        info!("Task successfully canceled.");
         Ok(task)
     }
-    
+
     /// Get task state history
+    #[instrument(skip(self), fields(task_id))]
     pub async fn get_task_state_history(&self, task_id: &str) -> Result<Vec<Task>, ServerError> {
+        info!("Getting task state history.");
+        trace!(%task_id, "Task ID for history retrieval.");
         // First check if the task exists
+        debug!("Checking if task exists before getting history.");
         let _ = self.task_repository.get_task(task_id).await?
-            .ok_or_else(|| ServerError::TaskNotFound(task_id.to_string()))?;
-            
+            .ok_or_else(|| {
+                warn!("Task not found when trying to get state history.");
+                ServerError::TaskNotFound(task_id.to_string())
+            })?;
+        debug!("Task exists. Retrieving state history from repository.");
+
         // Retrieve state history
-        self.task_repository.get_state_history(task_id).await
+        let history = self.task_repository.get_state_history(task_id).await?;
+        info!(history_len = history.len(), "Retrieved task state history.");
+        trace!(?history, "Full state history details.");
+        Ok(history)
     }
 
     /// Store a task that was created elsewhere (e.g., remote agent) as a read-only mirror.
     /// This allows tracking remote tasks within local sessions.
+    #[instrument(skip(self, task), fields(task_id = %task.id, original_state = ?task.status.state))]
     pub async fn import_task(&self, task: Task) -> Result<(), ServerError> {
+        info!("Importing external task into repository.");
+        trace!(?task, "Task details being imported.");
         // Save the task itself
+        debug!("Saving imported task to main repository.");
         self.task_repository.save_task(&task).await?;
         // Also save its initial state to history for consistency
+        debug!("Saving imported task's initial state to history.");
         self.task_repository.save_state_history(&task.id, &task).await?;
+        info!("Task imported successfully.");
         Ok(())
     }
 }
