@@ -1907,12 +1907,20 @@ impl BidirectionalAgent {
             &format!("→ {}: '{}' (Session: {:?})", remote_url, message, session_id),
         ).await;
 
+        // Create logging context *before* mutable borrow
+        let log_context = self.clone_for_logging().await;
+
         // Get mutable reference to the client
         let client = self.client.as_mut()
             .ok_or_else(|| {
-                let err_msg = "No remote client configured. Use :connect first.";
-                // Log the error before returning
-                tokio::spawn(self.log_agent_action("REMOTE_SEND_ERROR", err_msg)); // Spawn log action
+                let err_msg = "No remote client configured. Use :connect first.".to_string();
+                // Clone context and message for the spawned task
+                let log_context_clone = log_context.clone();
+                let err_msg_clone = err_msg.clone();
+                // Log the error before returning, using the cloned context
+                tokio::spawn(async move {
+                    log_context_clone.log_agent_action("REMOTE_SEND_ERROR", &err_msg_clone).await;
+                });
                 anyhow!(err_msg) // Return anyhow error
             })?;
 
@@ -1924,42 +1932,60 @@ impl BidirectionalAgent {
             Err(e) => {
                 // Log the specific client error
                 let error_string = format!("Error sending task to {}: {}", remote_url, e);
-                 // Spawn log action as self is borrowed mutably
-                let log_clone = self.log_agent_action("REMOTE_SEND_ERROR", &error_string);
-                tokio::spawn(log_clone);
-                return Err(anyhow!(error_string)); // Return anyhow error
+                // Clone context and message for the spawned task
+                let log_context_clone = log_context.clone();
+                let error_string_clone = error_string.clone(); // Clone the error string to move
+                 // Spawn log action using the cloned context
+                tokio::spawn(async move {
+                    log_context_clone.log_agent_action("REMOTE_SEND_ERROR", &error_string_clone).await;
+                });
+                return Err(anyhow!(error_string)); // Return anyhow error using the original string
             }
         };
 
         // ③ Mirror the returned task locally (read-only copy)
+        let task_id_clone = task.id.clone(); // Clone ID for logging messages
         if let Err(e) = self.task_service.import_task(task.clone()).await {
             // Log warning if caching fails, but don't fail the whole operation
-            let warn_msg = format!("Could not cache remote task {} locally: {}", task.id, e);
+            let warn_msg = format!("Could not cache remote task {} locally: {}", task_id_clone, e);
             warn!("{}", warn_msg); // Use tracing::warn
+            // Clone context and message for the spawned task
+            let log_context_clone = log_context.clone();
+            let warn_msg_clone = warn_msg.clone(); // Clone the warning string to move
              // Spawn log action
-            let log_clone = self.log_agent_action("REMOTE_SEND_CACHE_WARN", &warn_msg);
-            tokio::spawn(log_clone);
+            tokio::spawn(async move {
+                log_context_clone.log_agent_action("REMOTE_SEND_CACHE_WARN", &warn_msg_clone).await;
+            });
         } else {
-            let log_msg = format!("Cached remote task {} locally.", task.id);
+            let log_msg = format!("Cached remote task {} locally.", task_id_clone);
+            // Clone context and message for the spawned task
+            let log_context_clone = log_context.clone();
+            let log_msg_clone = log_msg.clone(); // Clone the log string to move
              // Spawn log action
-            let log_clone = self.log_agent_action("REMOTE_SEND_CACHE_SUCCESS", &log_msg);
-            tokio::spawn(log_clone);
+            tokio::spawn(async move {
+                log_context_clone.log_agent_action("REMOTE_SEND_CACHE_SUCCESS", &log_msg_clone).await;
+            });
         }
 
         // ④ Add the task (local mirror) to the current session history
-        // Use a clone of self for the logging closure inside the spawned task
-        let self_clone_for_log = self.clone_for_logging().await; // Helper needed
-        let task_clone_for_log = task.clone();
+        // Use the cloned log context from before the mutable borrow
+        let task_clone_for_history = task.clone(); // Clone task to move into the spawn
+        let log_context_clone_history = log_context.clone(); // Clone context again for this spawn
         tokio::spawn(async move {
-            if let Err(e) = self_clone_for_log.save_task_to_history(task_clone_for_log).await {
-                 let error_msg = format!("Failed to save remote task {} to session history: {}", task_clone_for_log.id, e);
+            // Clone the task *again* inside the spawn block before using its ID in format!
+            // because the first clone (`task_clone_for_history`) is moved into save_task_to_history.
+            let task_id_for_log = task_clone_for_history.id.clone();
+            if let Err(e) = log_context_clone_history.save_task_to_history(task_clone_for_history).await {
+                 // Use the cloned ID here
+                 let error_msg = format!("Failed to save remote task {} to session history: {}", task_id_for_log, e);
                  eprintln!("⚠️ {}", error_msg); // Log error to stderr
-                 self_clone_for_log.log_agent_action("REMOTE_SEND_HISTORY_ERROR", &error_msg).await;
+                 // Move the error message into the log action
+                 log_context_clone_history.log_agent_action("REMOTE_SEND_HISTORY_ERROR", &error_msg).await;
             }
         });
 
 
-        // Log final success
+        // Log final success using the original self
         self.log_agent_action(
             "REMOTE_SEND_SUCCESS",
             &format!("Stored remote task {} in session {:?}", task.id, session_id),

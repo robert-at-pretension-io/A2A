@@ -123,7 +123,8 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
             let client_clone = Arc::clone(&client_arc);
             async move {
                 let mut client_guard = client_clone.lock().await; // Use async lock
-                client_guard.send_task("This is a test task from Rust runner").await // Await directly
+                // Pass None for the session_id argument
+                client_guard.send_task("This is a test task from Rust runner", None).await // Await directly
             }
         };
 

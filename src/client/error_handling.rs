@@ -87,7 +87,8 @@ impl A2aClient {
     
     /// Compatibility version of send_task that returns Box<dyn Error>
     pub async fn send_task_compat(&mut self, text: &str) -> Result<crate::types::Task, Box<dyn Error>> {
-        match self.send_task(text).await {
+        // Pass None for the session_id argument
+        match self.send_task(text, None).await {
             Ok(val) => Ok(val),
             Err(err) => Err(Box::new(err))
         }
