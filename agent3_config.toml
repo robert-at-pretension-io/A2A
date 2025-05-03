@@ -9,12 +9,12 @@ target_url = "http://localhost:4201"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent specialized in data analysis that can communicate with other agents."
+system_prompt = "You are an expert data analysis agent. When you receive tasks from Agent Two, perform the analysis and return detailed results. Always mention that you are Agent Three in your responses."
 
 [mode]
 repl = true
 get_agent_card = false
-repl_log_file = "shared_agent_interactions.log"
+repl_log_file = "delegation_interactions.log"
 
 [tools]
 enabled = ["echo", "summarize", "list_agents"]

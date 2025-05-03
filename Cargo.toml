@@ -77,6 +77,7 @@ tracing = "0.1.37" # For improved logging
 tracing-appender = "0.2" # For logging to files
 async-stream = "0.3.5" # For SSE streaming
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "registry", "fmt"] } # Add features
+tracing-core = "0.1.33"
 
 [build-dependencies]
 sha2 = "0.10"

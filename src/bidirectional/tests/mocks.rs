@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use crate::bidirectional::bidirectional_agent::LlmClient;
 use crate::client::{A2aClient, errors::ClientError};
-use crate::types::{Task, AgentCard, AgentCapabilities, TaskStatus, TaskState};
+use crate::types::{Task, AgentCard, AgentCapabilities, TaskStatus, TaskState, TaskSendParams, Message};
+use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
 use chrono::Utc;
 
 /// Mock LLM client for testing
@@ -151,4 +152,62 @@ impl MockA2aClient {
             })
         }
     }
+}
+
+/// Mock router that returns a predefined routing decision
+pub struct MockRouter {
+    decision: RoutingDecision,
+    calls: Mutex<Vec<TaskSendParams>>,
+}
+
+impl MockRouter {
+    pub fn new(decision: RoutingDecision) -> Self {
+        Self {
+            decision,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+    
+    pub fn get_calls(&self) -> Vec<TaskSendParams> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl LlmTaskRouterTrait for MockRouter {
+    async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::server::ServerError> {
+        // Record the call
+        self.calls.lock().unwrap().push(params.clone());
+        
+        // Return the predefined decision
+        Ok(self.decision.clone())
+    }
+    
+    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::server::ServerError> {
+        // Record the call
+        self.calls.lock().unwrap().push(params.clone());
+        
+        // Return the predefined decision
+        Ok(self.decision.clone())
+    }
+    
+    async fn process_follow_up(&self, _task_id: &str, _message: &Message) -> Result<RoutingDecision, crate::server::ServerError> {
+        // For follow-up messages, just return the same decision
+        Ok(self.decision.clone())
+    }
+    
+    async fn should_decompose(&self, _params: &TaskSendParams) -> Result<bool, crate::server::ServerError> {
+        // By default, don't decompose tasks
+        Ok(false)
+    }
+    
+    async fn decompose_task(&self, _params: &TaskSendParams) -> Result<Vec<crate::server::task_router::SubtaskDefinition>, crate::server::ServerError> {
+        // Return empty subtasks list
+        Ok(Vec::new())
+    }
+}
+
+/// Helper function to create a MockRouter with a specific decision
+pub fn setup_mock_router(decision: RoutingDecision) -> MockRouter {
+    MockRouter::new(decision)
 }

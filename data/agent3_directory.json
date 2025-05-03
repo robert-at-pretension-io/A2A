@@ -1,0 +1,24 @@
+{
+  "Agent Two": {
+    "card": {
+      "capabilities": {
+        "pushNotifications": true,
+        "stateTransitionHistory": true,
+        "streaming": false
+      },
+      "defaultInputModes": [
+        "text"
+      ],
+      "defaultOutputModes": [
+        "text"
+      ],
+      "description": "A bidirectional A2A agent that can process tasks and delegate to other agents",
+      "name": "Agent Two",
+      "skills": [],
+      "url": "http://0.0.0.0:4201",
+      "version": "1.0.0"
+    },
+    "last_seen": 1746302178,
+    "active": true
+  }
+}

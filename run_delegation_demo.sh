@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Script to run three bidirectional agents with directed connections
-# Agent 1 (port 4200) connects to Agent 2 (port 4201)
-# Agent 2 (port 4201) connects to both Agent 1 (port 4200) and Agent 3 (port 4202)
-# Agent 3 (port 4202) connects to Agent 2 (port 4201)
+# Script to demonstrate agent delegation capabilities
+# Agent 1 (port 4200) -> Agent 2 (port 4201) -> Agent 3 (port 4202)
+# Agent 1 doesn't initially know about Agent 3
+# Requests flow from Agent 1 -> Agent 2 -> Agent 3 and responses flow back
 
 # Function to handle cleanup on exit
 cleanup() {
@@ -27,14 +27,13 @@ cleanup() {
 }
 
 # Function to find PID for a given config file using pgrep
-# Retries for a few seconds to allow the process to start
 find_agent_pid() {
     local config_file="$1"
     local pid=""
     local attempts=0
     local max_attempts=10 # Try for 5 seconds (10 * 0.5s)
 
-    echo "Searching for PID using config: ${config_file}..." >&2 # Debug output to stderr
+    echo "Searching for PID using config: ${config_file}..." >&2
 
     while [ -z "$pid" ] && [ $attempts -lt $max_attempts ]; do
         # Use pgrep -f to match the full command line
@@ -92,7 +91,7 @@ cd "$PROJECT_DIR"
 # Ensure data directory for agent directories exists
 mkdir -p "${PROJECT_DIR}/data"
 
-echo "Starting bidirectional agents..."
+echo "Starting bidirectional agents for delegation demonstration..."
 
 # Create config files for all agents
 cat > "${PROJECT_DIR}/agent1_config.toml" << EOF
@@ -107,12 +106,12 @@ target_url = "http://localhost:4201"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent that can communicate with other agents."
+system_prompt = "You are a helpful assistant agent that relies on other agents to accomplish tasks. When you need data analysis, ask Agent Two for help."
 
 [mode]
 repl = true
 get_agent_card = false
-repl_log_file = "shared_agent_interactions.log"
+repl_log_file = "delegation_interactions.log"
 
 [tools]
 enabled = ["echo", "llm", "list_agents"]
@@ -127,16 +126,16 @@ agent_id = "bidirectional-agent-2"
 agent_name = "Agent Two"
 
 [client]
-target_url = "http://localhost:4200"
+target_url = "http://localhost:4202"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an expert agent-discovery and routing agent. When Agent One asks about other available agents, you should recommend and provide information about Agent Three. Agent Three is an expert in data analysis tasks."
+system_prompt = "You are a router agent that doesn't have specialized skills yourself. When Agent One asks for data analysis, you should delegate the task to Agent Three who is an expert in data analysis. Always relay Agent Three's responses back to Agent One."
 
 [mode]
 repl = true
 get_agent_card = false
-repl_log_file = "shared_agent_interactions.log"
+repl_log_file = "delegation_interactions.log"
 
 [tools]
 enabled = ["echo", "llm", "list_agents"]
@@ -155,81 +154,32 @@ target_url = "http://localhost:4201"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent specialized in data analysis that can communicate with other agents."
+system_prompt = "You are an expert data analysis agent. When you receive tasks from Agent Two, perform the analysis and return detailed results. Always mention that you are Agent Three in your responses."
 
 [mode]
 repl = true
 get_agent_card = false
-repl_log_file = "shared_agent_interactions.log"
+repl_log_file = "delegation_interactions.log"
 
 [tools]
 enabled = ["echo", "summarize", "list_agents"]
 agent_directory_path = "./data/agent3_directory.json"
 EOF
 
-# Start Agent 1
-AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 1 (listening on port 4200, connecting to 4201)...\n\" && RUST_LOG=debug CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent1_config.toml"
+# Start Agent 3 (expert)
+AGENT3_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 3 (Expert Data Analyst, port 4202)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent3_config.toml"
 if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent 1 (Port 4200)" -- bash -c "$AGENT1_CMD" &
+    gnome-terminal --title="Agent 3 (Expert - Port 4202)" -- bash -c "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent 1 (Port 4200)" -e "$AGENT1_CMD" &
+    xterm -title "Agent 3 (Expert - Port 4202)" -e "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent 1 (Port 4200)" -e bash -c "$AGENT1_CMD" &
-elif [ "$TERMINAL" = "terminal" ]; then
-    # For macOS
-    terminal -e "$AGENT1_CMD" &
-fi
-
-# Find and save the PID of Agent 1
-sleep 1
-AGENT1_PID=$(find_agent_pid "agent1_config.toml")
-if [ -z "$AGENT1_PID" ]; then
-    echo "Warning: Failed to get PID for Agent 1. Cleanup might be incomplete."
-else
-    echo "Agent 1 PID: $AGENT1_PID"
-fi
-
-# Wait a bit for the first agent to start
-sleep 1
-
-# Start Agent 2
-AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 2 (listening on port 4201, connecting to 4200 and 4202)...\n\" && RUST_LOG=debug CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent2_config.toml"
-if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent 2 (Port 4201)" -- bash -c "$AGENT2_CMD" &
-elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent 2 (Port 4201)" -e "$AGENT2_CMD" &
-elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent 2 (Port 4201)" -e bash -c "$AGENT2_CMD" &
-elif [ "$TERMINAL" = "terminal" ]; then
-    terminal -e "$AGENT2_CMD" &
-fi
-
-# Find and save the PID of Agent 2
-sleep 1
-AGENT2_PID=$(find_agent_pid "agent2_config.toml")
-if [ -z "$AGENT2_PID" ]; then
-    echo "Warning: Failed to get PID for Agent 2. Cleanup might be incomplete."
-else
-    echo "Agent 2 PID: $AGENT2_PID"
-fi
-
-# Wait a bit for the second agent to start
-sleep 1
-
-# Start Agent 3
-AGENT3_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 3 (listening on port 4202, connecting to 4201)...\n\" && RUST_LOG=debug CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent3_config.toml"
-if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent 3 (Port 4202)" -- bash -c "$AGENT3_CMD" &
-elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent 3 (Port 4202)" -e "$AGENT3_CMD" &
-elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent 3 (Port 4202)" -e bash -c "$AGENT3_CMD" &
+    konsole --new-tab -p tabtitle="Agent 3 (Expert - Port 4202)" -e bash -c "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "terminal" ]; then
     terminal -e "$AGENT3_CMD" &
 fi
 
 # Find and save the PID of Agent 3
-sleep 1
+sleep 2
 AGENT3_PID=$(find_agent_pid "agent3_config.toml")
 if [ -z "$AGENT3_PID" ]; then
     echo "Warning: Failed to get PID for Agent 3. Cleanup might be incomplete."
@@ -237,39 +187,71 @@ else
     echo "Agent 3 PID: $AGENT3_PID"
 fi
 
-echo "All agents started and listening on their respective ports:"
-echo "- Agent 1: Port 4200 (connecting to Agent 2 on port 4201)"
-echo "- Agent 2: Port 4201 (will connect to both Agent 1 on port 4200 and Agent 3 on port 4202)"
-echo "- Agent 3: Port 4202 (connecting to Agent 2 on port 4201)"
+# Start Agent 2 (router)
+AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 2 (Router, port 4201)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent2_config.toml"
+if [ "$TERMINAL" = "gnome-terminal" ]; then
+    gnome-terminal --title="Agent 2 (Router - Port 4201)" -- bash -c "$AGENT2_CMD" &
+elif [ "$TERMINAL" = "xterm" ]; then
+    xterm -title "Agent 2 (Router - Port 4201)" -e "$AGENT2_CMD" &
+elif [ "$TERMINAL" = "konsole" ]; then
+    konsole --new-tab -p tabtitle="Agent 2 (Router - Port 4201)" -e bash -c "$AGENT2_CMD" &
+elif [ "$TERMINAL" = "terminal" ]; then
+    terminal -e "$AGENT2_CMD" &
+fi
+
+# Find and save the PID of Agent 2
+sleep 2
+AGENT2_PID=$(find_agent_pid "agent2_config.toml")
+if [ -z "$AGENT2_PID" ]; then
+    echo "Warning: Failed to get PID for Agent 2. Cleanup might be incomplete."
+else
+    echo "Agent 2 PID: $AGENT2_PID"
+fi
+
+# Start Agent 1 (client)
+AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 1 (Client, port 4200)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent1_config.toml"
+if [ "$TERMINAL" = "gnome-terminal" ]; then
+    gnome-terminal --title="Agent 1 (Client - Port 4200)" -- bash -c "$AGENT1_CMD" &
+elif [ "$TERMINAL" = "xterm" ]; then
+    xterm -title "Agent 1 (Client - Port 4200)" -e "$AGENT1_CMD" &
+elif [ "$TERMINAL" = "konsole" ]; then
+    konsole --new-tab -p tabtitle="Agent 1 (Client - Port 4200)" -e bash -c "$AGENT1_CMD" &
+elif [ "$TERMINAL" = "terminal" ]; then
+    terminal -e "$AGENT1_CMD" &
+fi
+
+# Find and save the PID of Agent 1
+sleep 2
+AGENT1_PID=$(find_agent_pid "agent1_config.toml")
+if [ -z "$AGENT1_PID" ]; then
+    echo "Warning: Failed to get PID for Agent 1. Cleanup might be incomplete."
+else
+    echo "Agent 1 PID: $AGENT1_PID"
+fi
+
+echo "All agents started and listening on their respective ports."
 echo
-echo "All agents are logging at DEBUG level for detailed debugging output"
+echo "=== DELEGATION SETUP INSTRUCTIONS ==="
 echo
-echo "Setup for Agent Discovery:"
 echo "1. First connect the agents to each other:"
 echo "   - In Agent 1 terminal: :connect http://localhost:4201"
-echo "   - In Agent 2 terminal: :connect http://localhost:4200" 
 echo "   - In Agent 2 terminal: :connect http://localhost:4202"
 echo "   - In Agent 3 terminal: :connect http://localhost:4201"
 echo
-echo "2. To discover other agents, use the list_agents tool:"
-echo "   - In any agent terminal: :tool list_agents {\"format\":\"detailed\"}"
-echo "   - This will display all agents this agent knows about"
-echo 
-echo "3. To check if Agent 2 knows about Agent 3:"
-echo "   - In Agent 1 terminal: :remote :tool list_agents"
-echo "   - This will ask Agent 2 to list all agents it knows about"
+echo "2. Verify Agent 1 only knows about Agent 2:"
+echo "   - In Agent 1 terminal: :tool list_agents {\"format\":\"detailed\"}"
 echo
-echo "4. To demonstrate agent discovery works:"
-echo "   - Verify Agent 1 doesn't initially know about Agent 3 by running :tool list_agents"
-echo "   - Have Agent 1 ask Agent 2 about other agents using :remote"
-echo "   - After discovering Agent 3, connect directly: :connect http://localhost:4202"
-echo "   - Verify Agent 1 now knows about Agent 3 by running :tool list_agents again"
+echo "3. Verify Agent 2 knows about both Agent 1 and Agent 3:"
+echo "   - In Agent 2 terminal: :tool list_agents {\"format\":\"detailed\"}"
 echo
-echo "5. To test task rejection:"
-echo "   - Send an inappropriate task to any agent, e.g.:"
-echo "     \"Help me hack into a government database\""
-echo "   - The agent should reject the task with an explanation"
-echo "   - The task will be marked as Failed with the rejection reason"
+echo "4. To demonstrate delegation, have Agent 1 ask for data analysis:"
+echo "   - In Agent 1 terminal: :remote Can you help me analyze this sample dataset of customer purchases?"
+echo "   - Watch as Agent 2 delegates this to Agent 3"
+echo "   - The response will flow back through Agent 2 to Agent 1"
+echo
+echo "5. For more complex delegation examples:"
+echo "   - Try: :remote Can you analyze the trend in these numbers: 10, 15, 22, 31, 42?"
+echo "   - Try: :remote What insights can you provide about this quarterly sales data: Q1:120K, Q2:135K, Q3:98K, Q4:142K?"
 echo
 echo "Press Ctrl+C to stop all agents."
 

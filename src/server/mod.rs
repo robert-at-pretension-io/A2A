@@ -8,7 +8,6 @@ pub mod tests;
 // Local modules for functionality previously from bidirectional_agent
 pub mod agent_registry;
 pub mod client_manager;
-pub mod task_flow;
 pub mod task_router;
 pub mod tool_executor;
 
@@ -38,7 +37,6 @@ use crate::server::{
     tool_executor::ToolExecutor,
     client_manager::ClientManager,
     agent_registry::AgentRegistry,
-    task_flow::TaskFlow,
 };
 
 
