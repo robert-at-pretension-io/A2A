@@ -2035,7 +2035,7 @@ impl BidirectionalAgent {
 
         AgentCard {
             // id field does not exist on AgentCard in types.rs
-            name: self.agent_name.clone(), // Use the configured agent name
+            name: self.agent_name.clone(), // Use the configured agent name (falls back to agent_id if None)
             description: Some("A bidirectional A2A agent that can process tasks and delegate to other agents".to_string()),
             version: AGENT_VERSION.to_string(), // version is String
             url: format!("http://{}:{}", self.bind_address, self.port), // url is String
@@ -2090,6 +2090,7 @@ pub struct ToolsConfig {
 pub struct BidirectionalAgentConfig {
     #[serde(default)]
     pub server: ServerConfig,
+    #[serde(default)] // <-- Add default back
     pub client: ClientConfig,
     #[serde(default)]
     pub llm: LlmConfig,

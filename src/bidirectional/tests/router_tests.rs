@@ -132,11 +132,24 @@ async fn test_router_prompt_formatting() {
     let _ = router.decide_execution_mode(&task).await.unwrap();
     
     // Check that the prompt sent to the LLM contains key elements
+    // The router now makes TWO calls: one for routing, one for tool choice if local.
     let calls = llm.calls.lock().unwrap();
-    assert_eq!(calls.len(), 1);
-    let prompt = &calls[0];
+    assert_eq!(calls.len(), 2, "Expected two LLM calls (routing + tool choice)");
     
-    // The prompt should contain these key elements
+    // Check the first prompt (routing)
+    let routing_prompt = &calls[0];
+    assert!(routing_prompt.contains("You need to decide whether to handle a task locally or delegate it to another agent"));
+    assert!(routing_prompt.contains("Please route this task appropriately"));
+    assert!(routing_prompt.contains("test-agent-1"));
+    assert!(routing_prompt.contains("test-agent-2"));
+    assert!(routing_prompt.contains("LOCAL"));
+    assert!(routing_prompt.contains("REMOTE"));
+
+    // Check the second prompt (tool choice)
+    let tool_choice_prompt = &calls[1];
+    assert!(tool_choice_prompt.contains("You have the following local tools available"));
+    assert!(tool_choice_prompt.contains("echo, llm")); // Check enabled tools list
+    assert!(tool_choice_prompt.contains("choose the single best tool"));
     assert!(prompt.contains("You need to decide whether to handle a task locally or delegate it to another agent"));
     assert!(prompt.contains("Please route this task appropriately"));
     assert!(prompt.contains("test-agent-1"));
