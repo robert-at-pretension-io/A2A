@@ -8,6 +8,7 @@ use crate::types::{
 use anyhow; // Import anyhow for error handling in new tools
 
 use serde_json::{json, Value};
+use tracing::instrument;
 use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::Utc;
@@ -342,13 +343,13 @@ impl ToolExecutor {
             match name.as_str() {
                 "llm" => {
                     if !map.contains_key("llm") {
-                        map.insert("llm".into(), Box::new(LlmTool::new(llm.clone())));
+                        map.insert("llm".into(), Box::new(LlmTool::new(llm.unwrap().clone())));
                         tracing::debug!("Tool 'llm' registered.");
                     }
                 }
                 "summarize" => {
                      if !map.contains_key("summarize") {
-                        map.insert("summarize".into(), Box::new(SummarizeTool::new(llm.clone())));
+                        map.insert("summarize".into(), Box::new(SummarizeTool::new(llm.unwrap().clone())));
                         tracing::debug!("Tool 'summarize' registered.");
                     }
                 }
@@ -473,10 +474,9 @@ impl ToolExecutor {
             // Add a warning message to the task history
             let warning_msg = format!("Tool '{}' not found - using default '{}' tool instead.",
                                      requested_tool_name, default_tool_name);
-            let warning_message = Message {
-                role: Role::Agent, // System/Agent message indicating fallback
-                let mut history = task.history.clone().unwrap_or_default();
-                history.push(Message {
+            
+                
+                task.history.get_or_insert_with(Vec::new).push(Message {
                     role: Role::Agent, // Using Agent role as system role isn't available
                     parts: vec![Part::TextPart(TextPart {
                         type_: "text".to_string(),
@@ -484,10 +484,9 @@ impl ToolExecutor {
                         metadata: None,
                     })],
                     metadata: None,
-                };
-                task.history.get_or_insert_with(Vec::new).push(warning_message);
+                });
                 default_tool_name
-            }
+            
         };
         tracing::info!(%tool_name, "Final tool name selected for execution."); // Add tracing
 
@@ -699,190 +698,5 @@ impl ToolExecutor {
             }
         }
     }
-}
-                let data_part = DataPart {
-                    type_: "json".to_string(),
-                    data: {
-                        let mut map = serde_json::Map::new();
-                        if result_value.is_object() {
-                            map = result_value.as_object().unwrap().clone();
-                        } else {
-                            map.insert("result".to_string(), result_value.clone());
-                        }
-                        map
-                    },
-                    metadata: None,
-                };
-                
-                // Create an artifact from the parts
-                let artifact = Artifact {
-                    parts: vec![Part::TextPart(text_part), Part::DataPart(data_part)],
-                    index: task.artifacts.as_ref().map_or(0, |a| a.len()) as i64, // Next index
-                    name: Some(format!("{}_result", tool_name)),
-                    description: Some(format!("Result from tool '{}'", tool_name)),
-                    append: None,
-                    last_chunk: Some(true), // Mark as last chunk
-                    metadata: None,
-                };
-
-                // Add artifact to the task
-                task.artifacts.get_or_insert_with(Vec::new).push(artifact);
-
-                // Update Task Status to Completed
-                task.status = TaskStatus {
-                    state: TaskState::Completed,
-                    timestamp: Some(Utc::now()),
-                    // Provide a response message that includes the actual tool result
-                    message: Some(Message {
-                        role: Role::Agent,
-                        parts: vec![Part::TextPart(TextPart {
-                            type_: "text".to_string(),
-                            // Format the response based on the tool and result
-                            text: if tool_name == "list_agents" {
-                                // Special handling for list_agents tool
-                                let mut response = String::new();
-                                
-                                // Try to parse as JSON and create a formatted list
-                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result_value.to_string()) {
-                                    // Check if it contains agent count and list
-                                    if let (Some(count), Some(agents)) = (json.get("count"), json.get("agents")) {
-                                        response.push_str(&format!("Found {} agents:\n\n", count));
-                                        
-                                        if let Some(agents_array) = agents.as_array() {
-                                            for (i, agent) in agents_array.iter().enumerate() {
-                                                // Get agent details
-                                                let id = agent.get("id").and_then(|v| v.as_str()).unwrap_or("Unknown ID");
-                                                let name = agent.get("name").and_then(|v| v.as_str()).unwrap_or("Unnamed Agent");
-                                                let desc = agent.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                                                
-                                                response.push_str(&format!("{}. Agent: {} ({})\n", i+1, name, id));
-                                                if !desc.is_empty() {
-                                                    response.push_str(&format!("   Description: {}\n", desc));
-                                                }
-                                                response.push_str("\n");
-                                            }
-                                        }
-                                    } else {
-                                        // Fallback if JSON structure is unexpected
-                                        response = format!("Agent Directory: {}", result_value);
-                                    }
-                                } else {
-                                    // Fallback if not valid JSON
-                                    response = result_value.to_string();
-                                }
-                                response
-                            } else if using_llm_tool {
-                                // For LLM, the response is already formatted text
-                                result_value.to_string().trim_matches('"').to_string()
-                            } else {
-                                // Default formatting for other tools
-                                match result_value.to_string().trim_matches('"') {
-                                    // If it's just a JSON string with quotes, unwrap it
-                                    s if s.starts_with("{") && s.ends_with("}") => s.to_string(),
-                                    // Otherwise, use the result directly
-                                    s => s.to_string(),
-                                }
-                            },
-                            metadata: None,
-                        })],
-                        metadata: None,
-                    }),
-                };
-                Ok(())
-            }
-            Err(tool_error) => {
-                // Update Task Status to Failed
-                task.status = TaskStatus {
-                    state: TaskState::Failed,
-                    timestamp: Some(Utc::now()),
-                    // Provide an error message from the agent
-                    message: Some(Message {
-                        role: Role::Agent,
-                        parts: vec![Part::TextPart(TextPart {
-                            type_: "text".to_string(),
-                            text: format!("Tool execution failed: {}", tool_error),
-                            metadata: None,
-                        })],
-                        metadata: None,
-                    }),
-                };
-                // Convert ToolError to ServerError before returning
-                Err(tool_error.into())
-            }
-        }
-    }
     
-    /// Process a follow-up message using the tool
-    pub async fn process_follow_up(&self, task: &mut Task, message: Message) -> Result<(), ServerError> {
-        // Default to echo tool for follow-up processing
-        let tool_name = "echo";
-        
-        // Extract parameters from the message
-        let params = self.extract_params_from_message(&message);
-        
-        // Execute the tool
-        match self.execute_tool(tool_name, params).await {
-            Ok(result_value) => {
-                // Create a text part for the result
-                let text_part = TextPart {
-                    type_: "text".to_string(),
-                    text: result_value.to_string(),
-                    metadata: None,
-                };
-                
-                // Create an artifact with the result
-                let artifact = Artifact {
-                    parts: vec![Part::TextPart(text_part)],
-                    index: task.artifacts.as_ref().map_or(0, |a| a.len()) as i64,
-                    name: Some("follow_up_result".to_string()),
-                    description: Some("Result from follow-up message processing".to_string()),
-                    append: None,
-                    last_chunk: Some(true),
-                    metadata: None,
-                };
-                
-                // Add artifact to the task
-                task.artifacts.get_or_insert_with(Vec::new).push(artifact);
-                
-                // Update task status
-                task.status = TaskStatus {
-                    state: TaskState::Completed,
-                    timestamp: Some(Utc::now()),
-                    message: Some(Message {
-                        role: Role::Agent,
-                        parts: vec![Part::TextPart(TextPart {
-                            type_: "text".to_string(),
-                            // Include the tool result in the response message, not just a confirmation
-                            text: match result_value.to_string().trim_matches('"') {
-                                // If it's just a JSON string with quotes, unwrap it
-                                s if s.starts_with("{") && s.ends_with("}") => s.to_string(),
-                                // Otherwise, use the result directly
-                                s => s.to_string(),
-                            },
-                            metadata: None,
-                        })],
-                        metadata: None,
-                    }),
-                };
-                Ok(())
-            }
-            Err(tool_error) => {
-                // Update Task Status to Failed
-                task.status = TaskStatus {
-                    state: TaskState::Failed,
-                    timestamp: Some(Utc::now()),
-                    message: Some(Message {
-                        role: Role::Agent,
-                        parts: vec![Part::TextPart(TextPart {
-                            type_: "text".to_string(),
-                            text: format!("Follow-up processing failed: {}", tool_error),
-                            metadata: None,
-                        })],
-                        metadata: None,
-                    }),
-                };
-                Err(tool_error.into())
-            }
-        }
-    }
 }
