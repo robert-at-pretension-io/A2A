@@ -2106,49 +2106,55 @@ pub async fn main() -> Result<()> {
     let file_layer = if let Some(log_path_str) = &config.mode.repl_log_file {
         eprintln!("[PRE-LOG] Configuring file logging to: {}", log_path_str);
         let log_path = PathBuf::from(log_path_str);
-        // Create the directory if it doesn't exist
-        if let Some(parent_dir) = log_path.parent() {
+
+        // 1. Validate path and create directory, resulting in Option<PathBuf>
+        let maybe_valid_path = if let Some(parent_dir) = log_path.parent() {
             if !parent_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(parent_dir) {
-                     eprintln!("[PRE-LOG] ERROR: Failed to create log directory '{}': {}", parent_dir.display(), e);
-                     // Continue without file logging if directory creation fails
-                     None
-                } else {
-                     eprintln!("[PRE-LOG] Created log directory: {}", parent_dir.display());
-                     Some(log_path) // Use the path if dir created successfully
+                match std::fs::create_dir_all(parent_dir) {
+                    Ok(_) => {
+                        eprintln!("[PRE-LOG] Created log directory: {}", parent_dir.display());
+                        Some(log_path) // Dir created, path is valid
+                    }
+                    Err(e) => {
+                        eprintln!("[PRE-LOG] ERROR: Failed to create log directory '{}': {}", parent_dir.display(), e);
+                        None // Dir creation failed, path is invalid
+                    }
                 }
             } else {
-                 Some(log_path) // Use the path if dir already exists
+                Some(log_path) // Dir already exists, path is valid
             }
         } else {
-             Some(log_path) // Use the path if it has no parent (e.g., relative path in current dir)
-        }
-        .and_then(|path| { // Only proceed if we have a valid path
-            // Match on the Result returned by rolling::daily
+            Some(log_path) // No parent dir (e.g., relative path), assume valid
+        };
+
+        // 2. If path is valid, attempt to create the file appender layer
+        if let Some(path) = maybe_valid_path {
             match tracing_appender::rolling::daily(
-                path.parent().unwrap_or_else(|| Path::new(".")),
-                path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("agent.log"))
+                path.parent().unwrap_or_else(|| Path::new(".")), // Use validated path's parent
+                path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("agent.log")) // Use validated path's filename
             ) {
-                Ok(file_appender) => { // Handle the Ok case
+                Ok(file_appender) => {
                     eprintln!("[PRE-LOG] File appender created successfully for {}", path.display());
                     Some(
-                        fmt::layer() // Create the layer if appender is successful
+                        fmt::layer()
                             .with_writer(file_appender)
-                            .with_ansi(false) // No colors in file
+                            .with_ansi(false)
                             .with_target(true)
                             .with_level(true)
-                            .boxed() // Box the layer for dynamic dispatch
+                            .boxed()
                     )
                 },
-                Err(e) => { // Handle the Err case
+                Err(e) => {
                     eprintln!("[PRE-LOG] ERROR: Failed to create file appender for '{}': {}", path.display(), e);
-                    None // Return None if file appender creation fails
+                    None // Appender creation failed
                 }
             }
-        }) // End of and_then closure
+        } else {
+            None // Path was invalid (directory creation failed)
+        }
     } else {
         eprintln!("[PRE-LOG] File logging not configured.");
-        None
+        None // No log file path configured
     };
 
 
