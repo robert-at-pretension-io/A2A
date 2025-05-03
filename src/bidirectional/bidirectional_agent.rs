@@ -557,13 +557,13 @@ Your response should be exactly one of those formats, with no additional text.
                          info!(tool_name = %tool_name, "LLM chose valid tool.");
                          tool_name // Use the valid tool chosen by LLM
                     } else {
-                         warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool. Falling back to 'echo'.");
-                         "echo".to_string() // Fallback to echo if choice is invalid
+                         warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool. Falling back to 'llm' tool.");
+                         "llm".to_string() // Fallback to llm tool if choice is invalid
                     }
                  },
                  Err(e) => {
-                     warn!(error = %e, "LLM failed to choose a tool. Falling back to 'echo'.");
-                     "echo".to_string() // Fallback to echo on error
+                     warn!(error = %e, "LLM failed to choose a tool. Falling back to 'llm' tool.");
+                     "llm".to_string() // Fallback to llm tool on error
                  }
             };
             trace!(chosen_tool_name = %chosen_tool_name, "Final tool name selected.");
