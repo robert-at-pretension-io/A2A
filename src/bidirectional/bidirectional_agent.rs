@@ -582,7 +582,7 @@ impl BidirectionalAgent {
             repl_log_file: config.mode.repl_log_file.map(std::path::PathBuf::from),
         };
 
-        // Log agent initialization attempt (cannot use log_agent_action yet as self is not fully formed)
+        // Log agent initialization attempt *before* returning Ok()
         if let Some(log_path) = &agent.repl_log_file {
              let timestamp = Utc::now().to_rfc3339();
              let log_entry = format!(
@@ -598,7 +598,7 @@ impl BidirectionalAgent {
                  .and_then(|mut file| file.write_all(log_entry.as_bytes()));
         }
 
-        Ok(agent)
+        Ok(agent) // Return the constructed agent
     }
 
     /// Process a message (Example: could be used for direct interaction or testing)
@@ -1986,18 +1986,31 @@ pub async fn main() -> Result<()> {
         
         i += 1;
     }
-    
-    if args.len() <= 1 {
-        info!("No arguments provided. Using default configuration and entering REPL mode.");
-        config.mode.repl = true; // Ensure REPL if no args
-    } else {
-         // If arguments were provided but none explicitly set a mode (like message, remote_task, etc.)
-         // and REPL wasn't set in a config file, default to REPL.
-         if config.mode.message.is_none() && config.mode.remote_task.is_none() && !config.mode.get_agent_card && !config.mode.repl {
-              info!("No specific action mode requested via args/config. Defaulting to REPL mode.");
-              config.mode.repl = true;
-         }
+
+    // Determine final mode after processing all args and potential config files.
+    // If no specific action mode was set (via args or config) and REPL wasn't explicitly disabled, default to REPL.
+    if config.mode.message.is_none()
+        && config.mode.remote_task.is_none()
+        && !config.mode.get_agent_card
+        && !config.mode.repl // Check if REPL was explicitly set to true in config/args
+    {
+        // If no arguments were given OR if arguments were given but didn't imply a mode, default to REPL.
+        if args.len() <= 1 {
+             info!("No arguments provided. Defaulting to REPL mode.");
+             config.mode.repl = true;
+        } else {
+             // Check if any argument *implied* a mode other than REPL (like --listen without a specific action)
+             // If arguments were present but didn't set message/remote_task/get_card, assume REPL.
+             info!("No specific action mode requested via args/config. Defaulting to REPL mode.");
+             config.mode.repl = true;
+        }
+    } else if args.len() <= 1 && !config.mode.repl {
+        // Handles the case where a config file was loaded (args.len() > 1 is false)
+        // but didn't specify repl=true or any other mode.
+         info!("Config file loaded but no specific mode set. Defaulting to REPL mode.");
+         config.mode.repl = true;
     }
+
 
     // Log final effective configuration before starting agent/action
     info!("Effective configuration: {:?}", config);
@@ -2103,24 +2116,12 @@ fn load_config_from_path(config: &mut BidirectionalAgentConfig, config_path: &st
             // If a config file was specified but failed to load, exit with an error.
             error!("Failed to load configuration from '{}': {}", config_path, e);
             error!("Please check the configuration file syntax and ensure all required fields are present.");
+            // Exit with an error if the specified config file fails to load.
             return Err(anyhow!("Configuration file loading failed for path: {}", config_path));
-            match BidirectionalAgentConfig::from_file(config_path) {
-                Ok(loaded_config) => {
-                    config = loaded_config;
-                    config.config_file_path = Some(config_path.to_string());
-                    info!("Successfully loaded configuration from {}", config_path);
-                },
-                Err(e) => {
-                    // If a config file was specified but failed to load, exit with an error.
-                    // Don't silently fall back to defaults in this case.
-                    error!("Failed to load configuration from '{}': {}", config_path, e);
-                    error!("Please check the configuration file syntax and ensure all required fields are present.");
-                    return Err(anyhow!("Configuration file loading failed"));
-                }
-            }
         }
-        
-        i += 1;
+    }
+    Ok(()) // Return Ok if loading succeeded or no error occurred
+}
     }
     
     if args.len() <= 1 {
