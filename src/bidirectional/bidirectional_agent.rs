@@ -1305,7 +1305,7 @@ impl BidirectionalAgent {
 
         // Start server automatically if auto-listen is enabled
         // Use the calculated should_auto_listen variable
-        if auto_listen {
+        if should_auto_listen {
             info!(port = %self.port, bind_address = %self.bind_address, "Auto-starting server.");
             println!("🚀 Auto-starting server on port {}...", self.port);
 
