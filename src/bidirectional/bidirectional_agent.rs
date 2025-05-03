@@ -1741,8 +1741,11 @@ pub async fn main() -> Result<()> {
                     info!("Successfully loaded configuration from {}", config_path);
                 },
                 Err(e) => {
-                    warn!("Failed to load configuration from {}: {}. Using default configuration.", config_path, e);
-                    // Continue with default configuration
+                    // If a config file was specified but failed to load, exit with an error.
+                    // Don't silently fall back to defaults in this case.
+                    error!("Failed to load configuration from '{}': {}", config_path, e);
+                    error!("Please check the configuration file syntax and ensure all required fields are present.");
+                    return Err(anyhow!("Configuration file loading failed"));
                 }
             }
         }

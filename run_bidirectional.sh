@@ -50,11 +50,9 @@ else
     exit 1
 fi
 
-# Build the agent if it doesn't exist
-if [ ! -f "./target/debug/bidirectional-agent" ]; then
-    echo "Building bidirectional agent..."
-    RUSTFLAGS="-A warnings" cargo build --bin bidirectional-agent
-fi
+# Build the agent
+echo "Building bidirectional agent..."
+RUSTFLAGS="-A warnings" cargo build --bin bidirectional-agent || { echo "Build failed, exiting."; exit 1; }
 
 # Directory where the a2a-test-suite is located
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,6 +76,7 @@ system_prompt = "You are an AI agent that can communicate with other agents."
 
 [mode]
 repl = true
+get_agent_card = false # Explicitly add the field
 EOF
 
 # Create config file for Agent 2 (Port 4201)
@@ -96,6 +95,7 @@ system_prompt = "You are an AI agent that can communicate with other agents."
 
 [mode]
 repl = true
+get_agent_card = false # Explicitly add the field
 EOF
 
 # Start Agent 1 (listens on 4200, connects to 4201)
