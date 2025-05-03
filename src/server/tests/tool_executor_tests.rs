@@ -129,8 +129,9 @@ async fn test_tool_executor_with_list_agents() {
     // Create tool executor with list_agents enabled
     let executor = ToolExecutor::with_enabled_tools(
         &["echo".to_string(), "list_agents".to_string()],
-        llm,
+        Some(llm), // Wrap LLM client in Some()
         Some(directory),
+        None, // Add None for the missing agent_registry argument
     );
     
     // Check that list_agents tool is registered

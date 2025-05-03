@@ -64,10 +64,12 @@ async fn test_task_local_processing() {
 
     // Check that the task was routed for local processing
     match decision {
-        RoutingDecision::Local { tool_names } => {
-            assert!(!tool_names.is_empty(), "Tool names should not be empty");
-            // Default to echo when tool choice is handled by the router
-            assert_eq!(tool_names[0], "echo", "Expected echo tool to be selected");
+        // Check the tool_name field, ignore params for this test
+        RoutingDecision::Local { tool_name, params: _ } => {
+            assert!(!tool_name.is_empty(), "Tool name should not be empty");
+            // The mock LLM just returns "LOCAL", the router then asks again for tool choice.
+            // Without a second mock response, it defaults to "llm".
+            assert_eq!(tool_name, "llm", "Expected llm tool to be selected by default");
         },
         other => panic!("Expected Local decision, got {:?}", other),
     }

@@ -27,8 +27,8 @@ async fn test_router_local_decision() {
     let decision = router.decide_execution_mode(&task).await.unwrap();
 
     // Verify that the decision is to execute locally (RoutingDecision::Local)
-    // We also check that a tool was selected (e.g., "echo" as fallback)
-    assert!(matches!(decision, RoutingDecision::Local { tool_names } if !tool_names.is_empty()));
+    // Check that a tool_name was provided and params exist (ignore params content for now)
+    assert!(matches!(decision, RoutingDecision::Local { tool_name, params: _ } if !tool_name.is_empty()));
 }
 
 #[tokio::test]
@@ -78,8 +78,8 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
     let decision = router.decide_execution_mode(&task).await.unwrap();
 
     // Verify that the decision falls back to local execution (RoutingDecision::Local)
-    // It should default to the 'echo' tool in this case.
-    assert!(matches!(decision, RoutingDecision::Local { tool_names } if tool_names == vec!["echo".to_string()]));
+    // It should default to the 'llm' tool when the LLM fails to choose or chooses an invalid tool.
+    assert!(matches!(decision, RoutingDecision::Local { tool_name, params: _ } if tool_name == "llm"));
 }
 
 #[tokio::test]
@@ -102,8 +102,8 @@ async fn test_router_fallback_to_local_for_unclear_decision() {
     let decision = router.decide_execution_mode(&task).await.unwrap();
 
     // Verify that the decision falls back to local execution (RoutingDecision::Local)
-    // It should default to the 'echo' tool in this case.
-    assert!(matches!(decision, RoutingDecision::Local { tool_names } if tool_names == vec!["echo".to_string()]));
+    // It should default to the 'llm' tool when the LLM decision is unclear.
+    assert!(matches!(decision, RoutingDecision::Local { tool_name, params: _ } if tool_name == "llm"));
 }
 
 #[tokio::test]
