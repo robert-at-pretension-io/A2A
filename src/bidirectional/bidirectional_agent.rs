@@ -434,37 +434,38 @@ Your response should be exactly one of those formats, with no additional text.
                     let tool_name = tool_name_raw.trim().to_string();
                     // Validate the LLM's choice against the enabled tools
                     if self.enabled_tools.contains(&tool_name) {
-                         debug!("LLM chose tool: {}", tool_name);
+                         info!(task_id = %task.id, tool_name = %tool_name, "LLM chose tool.");
                          tool_name // Use the valid tool chosen by LLM
                     } else {
-                         warn!("LLM chose an unknown/disabled tool ('{}'). Falling back to 'echo'. Enabled: [{}]", tool_name, tool_list_str);
+                         warn!(task_id = %task.id, chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool. Falling back to 'echo'.");
                          "echo".to_string() // Fallback to echo if choice is invalid
                     }
                  },
                  Err(e) => {
-                     warn!("LLM failed to choose a tool: {}. Falling back to 'echo'.", e);
+                     warn!(task_id = %task.id, error = %e, "LLM failed to choose a tool. Falling back to 'echo'.");
                      "echo".to_string() // Fallback to echo on error
                  }
             };
 
-            debug!("Final tool decision: {}", chosen_tool_name);
+            info!(task_id = %task.id, final_tool = %chosen_tool_name, "Final tool decision for local execution.");
             Ok(RoutingDecision::Local { tool_names: vec![chosen_tool_name] })
             // --- End LLM Tool Selection Logic ---
 
         } else if decision.starts_with("REMOTE: ") {
             let agent_id = decision.strip_prefix("REMOTE: ").unwrap().trim().to_string();
+            info!(task_id = %task.id, remote_agent_id = %agent_id, "LLM decided REMOTE execution.");
 
             // Verify the agent exists in the local directory
             if self.directory.get_agent(&agent_id).is_none() {
-                 warn!("LLM decided to delegate to unknown agent '{}', falling back to local execution with 'echo' tool.", agent_id);
+                 warn!(task_id = %task.id, remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'echo' tool.");
                  // Fall back to local if agent not found, using echo tool
                  Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
             } else {
-                 debug!("Routing decision: Remote delegation to agent '{}'", agent_id);
+                 info!(task_id = %task.id, remote_agent_id = %agent_id, "Routing decision: Remote delegation.");
                  Ok(RoutingDecision::Remote { agent_id })
             }
         } else {
-            warn!("LLM routing decision was unclear ('{}'), falling back to local execution with 'echo' tool.", decision);
+            warn!(task_id = %task.id, llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'echo' tool.");
             // Default to local echo if the decision isn't clear
             Ok(RoutingDecision::Local { tool_names: vec!["echo".to_string()] })
         }
