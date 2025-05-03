@@ -163,7 +163,7 @@ get_agent_card = false
 repl_log_file = "shared_agent_interactions.log"
 
 [tools]
-enabled = ["echo", "summarize", "list_agents"]
+enabled = ["echo", "summarize", "list_agents", "remember_agent"]
 agent_directory_path = "./data/agent3_directory.json"
 EOF
 

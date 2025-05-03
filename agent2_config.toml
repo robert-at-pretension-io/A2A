@@ -5,16 +5,16 @@ agent_id = "bidirectional-agent-2"
 agent_name = "Agent Two"
 
 [client]
-target_url = "http://localhost:4202"
+target_url = "http://localhost:4200"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are a router agent that doesn't have specialized skills yourself. When Agent One asks for data analysis, you should delegate the task to Agent Three who is an expert in data analysis. Always relay Agent Three's responses back to Agent One."
+system_prompt = "You are an expert agent-discovery and routing agent. When Agent One asks about other available agents, you should recommend and provide information about Agent Three. Agent Three is an expert in data analysis tasks."
 
 [mode]
 repl = true
 get_agent_card = false
-repl_log_file = "delegation_interactions.log"
+repl_log_file = "shared_agent_interactions.log"
 
 [tools]
 enabled = ["echo", "llm", "list_agents"]
