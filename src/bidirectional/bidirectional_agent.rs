@@ -1539,11 +1539,12 @@ pub struct ModeConfig {
     
     // Direct message to process (non-interactive mode)
     pub message: Option<String>,
-    
+
     // Remote agent operations
+    #[serde(default)] // Make this optional, defaults to false if missing
     pub get_agent_card: bool,
     pub remote_task: Option<String>,
-    
+
     // Auto-listen on server port at startup
     #[serde(default)]
     pub auto_listen: bool,
