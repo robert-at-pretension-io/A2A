@@ -134,7 +134,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use toml;
-use tracing::{debug, error, info, warn, instrument, Level}; // Import instrument and Level
+use tracing::{debug, error, info, warn, instrument, Level, Instrument}; // Import Instrument trait
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer}; // For subscriber setup
 use uuid::Uuid;
 
@@ -2124,11 +2124,15 @@ pub async fn main() -> Result<()> {
              Some(log_path) // Use the path if it has no parent (e.g., relative path in current dir)
         }
         .and_then(|path| { // Only proceed if we have a valid path
-            match tracing_appender::rolling::daily(path.parent().unwrap_or_else(|| Path::new(".")), path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("agent.log"))) {
-                Ok(file_appender) => {
+            // Match on the Result returned by rolling::daily
+            match tracing_appender::rolling::daily(
+                path.parent().unwrap_or_else(|| Path::new(".")),
+                path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("agent.log"))
+            ) {
+                Ok(file_appender) => { // Handle the Ok case
                     eprintln!("[PRE-LOG] File appender created successfully for {}", path.display());
                     Some(
-                        fmt::layer()
+                        fmt::layer() // Create the layer if appender is successful
                             .with_writer(file_appender)
                             .with_ansi(false) // No colors in file
                             .with_target(true)
@@ -2136,12 +2140,12 @@ pub async fn main() -> Result<()> {
                             .boxed() // Box the layer for dynamic dispatch
                     )
                 },
-                Err(e) => {
+                Err(e) => { // Handle the Err case
                     eprintln!("[PRE-LOG] ERROR: Failed to create file appender for '{}': {}", path.display(), e);
                     None // Return None if file appender creation fails
                 }
             }
-        })
+        }) // End of and_then closure
     } else {
         eprintln!("[PRE-LOG] File logging not configured.");
         None
