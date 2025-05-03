@@ -678,7 +678,7 @@ If no specific parameters are needed or mentioned in the task, respond with an e
 // REMOVE #[async_trait] from the impl block
 impl LlmTaskRouterTrait for BidirectionalTaskRouter {
     // Match the trait signature: takes TaskSendParams, returns Result<RoutingDecision, ServerError>
-    #[instrument(skip(self, params), fields(task_id = %params.id))]
+    // REMOVED #[instrument(skip(self, params), fields(task_id = %params.id))]
     async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
         debug!("Routing task based on TaskSendParams.");
         trace!(?params, "TaskSendParams for routing.");
@@ -706,9 +706,9 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
         debug!(?decision, "Routing decision made.");
         decision
     }
-
+ 
     // Add the required process_follow_up method
-    #[instrument(skip(self, message), fields(task_id))]
+    // REMOVED #[instrument(skip(self, message), fields(task_id))]
     async fn process_follow_up(&self, task_id: &str, message: &Message) -> Result<RoutingDecision, ServerError> {
         debug!("Processing follow-up message for task.");
         trace!(?message, "Follow-up message details.");
