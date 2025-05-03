@@ -788,36 +788,48 @@ impl BidirectionalAgent {
                 let log_closure_bind_address = bind_address.clone();
                 // port is Copy, no need to clone explicitly
 
-                // Define the helper closure. Capture clones by reference.
-                // The closure itself doesn't need `move` because the references it captures
-                // live for the duration of the `tokio::spawn` block.
-                // The inner `async` block needs `move` to capture the String args.
-                let log_action = |action_type: String, details: String| async move {
-                     // Use the cloned variables captured by reference
-                     if let Some(log_path) = &log_closure_repl_log_file {
-                        let timestamp = Utc::now().to_rfc3339();
-                        // Use captured clones and moved String args in format!
-                        let log_entry = format!(
-                            "{} [{}@{}:{}] {}: {}\n",
-                            timestamp, log_closure_agent_id, log_closure_bind_address, port, action_type, details.trim()
-                        );
-                        // Open the file asynchronously
-                        match OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(log_path)
-                            .await
-                        {
-                            Ok(mut file) => {
-                                // Write and flush asynchronously
-                                if let Err(e) = file.write_all(log_entry.as_bytes()).await {
-                                    eprintln!("⚠️ Background log write error: {}", e);
-                                } else if let Err(e) = file.flush().await {
-                                     eprintln!("⚠️ Background log flush error: {}", e);
+                // Define the helper closure as a function that returns a Future
+                // Make it Clone so we can use it multiple times
+                let log_action = {
+                    // Create a wrapper to create a new future each time
+                    let log_closure_repl_log_file = log_closure_repl_log_file.clone();
+                    let log_closure_agent_id = log_closure_agent_id.clone();
+                    let log_closure_bind_address = log_closure_bind_address.clone();
+                    let port = port;
+                    
+                    move |action_type: String, details: String| {
+                        let log_closure_repl_log_file = log_closure_repl_log_file.clone();
+                        let log_closure_agent_id = log_closure_agent_id.clone();
+                        let log_closure_bind_address = log_closure_bind_address.clone();
+                        
+                        async move {
+                            // Use the cloned variables
+                            if let Some(log_path) = &log_closure_repl_log_file {
+                                let timestamp = Utc::now().to_rfc3339();
+                                // Use captured clones and moved String args in format!
+                                let log_entry = format!(
+                                    "{} [{}@{}:{}] {}: {}\n",
+                                    timestamp, log_closure_agent_id, log_closure_bind_address, port, action_type, details.trim()
+                                );
+                                // Open the file asynchronously
+                                match OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(log_path)
+                                    .await
+                                {
+                                    Ok(mut file) => {
+                                        // Write and flush asynchronously
+                                        if let Err(e) = file.write_all(log_entry.as_bytes()).await {
+                                            eprintln!("⚠️ Background log write error: {}", e);
+                                        } else if let Err(e) = file.flush().await {
+                                            eprintln!("⚠️ Background log flush error: {}", e);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("⚠️ Background log open error: {}", e);
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                eprintln!("⚠️ Background log open error: {}", e);
                             }
                         }
                     }
