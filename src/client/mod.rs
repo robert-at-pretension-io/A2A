@@ -140,13 +140,45 @@ impl A2aClient {
             Err(e) => Err(ClientError::JsonError(format!("Failed to parse agent card: {}", e)))
         }
     }
-    
-    /// Send a task to the A2A server
-    pub async fn send_task(&mut self, text: &str) -> Result<Task, ClientError> {
-        // Call send_task_with_metadata with no metadata
-        self.send_task_with_metadata(text, None).await
+
+    /// Send a task to the A2A server, optionally associating it with a session.
+    pub async fn send_task(
+        &mut self,
+        text: &str,
+        session_id: Option<String>, // <-- Add session_id parameter
+    ) -> Result<Task, ClientError> {
+        // Create a simple text message
+        let text_part = TextPart {
+            type_: "text".to_string(),
+            text: text.to_string(),
+            metadata: None,
+        };
+
+        let message = Message {
+            role: Role::User,
+            parts: vec![Part::TextPart(text_part)],
+            metadata: None,
+        };
+
+        // Create request parameters using the proper TaskSendParams type
+        let params = TaskSendParams {
+            id: uuid::Uuid::new_v4().to_string(), // Generate a new task ID
+            message: message,
+            history_length: None,
+            metadata: None, // Keep metadata separate for now, use send_task_with_metadata for that
+            push_notification: None,
+            session_id, // <-- Use the provided session_id
+        };
+
+        // Send request and return result
+        let params_value = match serde_json::to_value(params) {
+            Ok(v) => v,
+            Err(e) => return Err(ClientError::JsonError(format!("Failed to serialize params: {}", e)))
+        };
+
+        self.send_jsonrpc::<Task>("tasks/send", params_value).await
     }
-    
+
     /// Send a task to the A2A server with optional metadata
     /// 
     /// Metadata can include testing parameters like:

@@ -513,4 +513,14 @@ impl TaskService {
         // Retrieve state history
         self.task_repository.get_state_history(task_id).await
     }
+
+    /// Store a task that was created elsewhere (e.g., remote agent) as a read-only mirror.
+    /// This allows tracking remote tasks within local sessions.
+    pub async fn import_task(&self, task: Task) -> Result<(), ServerError> {
+        // Save the task itself
+        self.task_repository.save_task(&task).await?;
+        // Also save its initial state to history for consistency
+        self.task_repository.save_state_history(&task.id, &task).await?;
+        Ok(())
+    }
 }

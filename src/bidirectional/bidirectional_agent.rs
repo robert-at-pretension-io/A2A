@@ -137,6 +137,54 @@ use toml;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+// Lightweight struct for passing logging context to spawned tasks
+#[derive(Clone)]
+struct AgentLogContext {
+    repl_log_file: Option<std::path::PathBuf>,
+    agent_id: String,
+    bind_address: String,
+    port: u16,
+    // Add fields needed by methods called within the log context
+    current_session_id: Option<String>,
+    session_tasks: Arc<DashMap<String, Vec<String>>>,
+}
+
+impl AgentLogContext {
+    // Replicate log_agent_action for the context struct
+    async fn log_agent_action(&self, action_type: &str, details: &str) {
+         if let Some(log_path) = &self.repl_log_file {
+            let timestamp = Utc::now().to_rfc3339();
+            let log_entry = format!(
+                "{} [{}@{}:{}] {}: {}\n",
+                timestamp, self.agent_id, self.bind_address, self.port, action_type, details.trim()
+            );
+            match OpenOptions::new().create(true).append(true).open(log_path).await {
+                Ok(mut file) => {
+                    let _ = file.write_all(log_entry.as_bytes()).await;
+                    let _ = file.flush().await;
+                }
+                Err(e) => eprintln!("⚠️ Error opening/writing log in AgentLogContext: {}", e),
+            }
+        }
+    }
+
+     // Replicate save_task_to_history for the context struct
+     async fn save_task_to_history(&self, task: Task) -> Result<()> {
+        if let Some(session_id) = &self.current_session_id {
+            if let Some(mut tasks) = self.session_tasks.get_mut(session_id) {
+                self.log_agent_action("SESSION_SAVE_TASK", &format!("Adding task {} to session {}", task.id, session_id)).await;
+                tasks.push(task.id.clone());
+            } else {
+                 self.log_agent_action("SESSION_SAVE_TASK_WARN", &format!("Session {} not found in map while trying to save task {}", session_id, task.id)).await;
+            }
+        } else {
+             self.log_agent_action("SESSION_SAVE_TASK_WARN", &format!("No active session while trying to save task {}", task.id)).await;
+        }
+        Ok(())
+    }
+}
+
+
 // Constants
 const AGENT_NAME: &str = "Bidirectional A2A Agent";
 const AGENT_VERSION: &str = "1.0.0";
@@ -664,6 +712,41 @@ impl BidirectionalAgent {
 
         Ok(agent) // Return the constructed agent
     }
+
+    /// Create a session on demand so remote tasks can be grouped
+    fn ensure_session(&mut self) {
+        if self.current_session_id.is_none() {
+            let session_id = self.create_new_session(); // existing helper
+            // Log session creation (moved from create_new_session due to async context)
+            // Use tokio::spawn for fire-and-forget logging if needed, or make ensure_session async
+            // For simplicity, we'll log synchronously here, assuming it's called from an async context
+            // where blocking briefly is acceptable (like the REPL loop).
+            // If called from a highly concurrent context, consider spawning the log action.
+            let log_path = self.repl_log_file.clone();
+            let agent_id = self.agent_id.clone();
+            let bind_address = self.bind_address.clone();
+            let port = self.port;
+            tokio::spawn(async move { // Spawn the logging to avoid blocking
+                if let Some(log_path) = log_path {
+                    let timestamp = Utc::now().to_rfc3339();
+                    let log_entry = format!(
+                        "{} [{}@{}:{}] {}: {}\n",
+                        timestamp, agent_id, bind_address, port,
+                        "SESSION_ENSURE", &format!("Created new session on demand: {}", session_id)
+                    );
+                    // Use async file operations within the spawned task
+                    match OpenOptions::new().create(true).append(true).open(&log_path).await {
+                        Ok(mut file) => {
+                            let _ = file.write_all(log_entry.as_bytes()).await;
+                            let _ = file.flush().await;
+                        }
+                        Err(e) => eprintln!("⚠️ Error opening/writing log in ensure_session: {}", e),
+                    }
+                }
+            });
+        }
+    }
+
 
     /// Process a message (Example: could be used for direct interaction or testing)
     pub async fn process_message_directly(&self, message_text: &str) -> Result<String> {
@@ -1714,6 +1797,21 @@ impl BidirectionalAgent {
         }
     }
 
+    /// Creates a lightweight clone containing only fields needed for logging within spawned tasks.
+    /// This avoids lifetime issues when self is borrowed mutably.
+    async fn clone_for_logging(&self) -> AgentLogContext {
+        AgentLogContext {
+            repl_log_file: self.repl_log_file.clone(),
+            agent_id: self.agent_id.clone(),
+            bind_address: self.bind_address.clone(),
+            port: self.port,
+            // Include fields needed by methods called within the log context (like save_task_to_history)
+            current_session_id: self.current_session_id.clone(),
+            session_tasks: self.session_tasks.clone(),
+        }
+    }
+
+
     /// Get the URL of the currently configured client from the agent's config
     fn client_url(&self) -> Option<String> {
         // Use the target_url stored in the agent's own configuration
@@ -1797,29 +1895,79 @@ impl BidirectionalAgent {
         }
     }
 
-    /// Send a task to a remote agent using the A2A client
+    /// Send a task to a remote agent using the A2A client, ensuring session consistency.
     pub async fn send_task_to_remote(&mut self, message: &str) -> Result<Task> {
-        let remote_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
-        self.log_agent_action("REMOTE_SEND_START", &format!("Attempting to send task to {}: '{}'", remote_url, message)).await;
+        // ① Ensure a session exists locally
+        self.ensure_session();
+        let session_id = self.current_session_id.clone(); // Clone session_id for logging and sending
 
-        // Check if we have a client configured
-        if let Some(client) = &mut self.client {
-            // Use the simple send_task method for now
-            match client.send_task(message).await {
-                Ok(task) => {
-                    self.log_agent_action("REMOTE_SEND_SUCCESS", &format!("Task {} sent successfully to {}. State: {:?}", task.id, remote_url, task.status.state)).await;
-                    info!("Remote task created with ID: {}", task.id); // Keep tracing info
-                    Ok(task)
-                }
-                Err(e) => {
-                    self.log_agent_action("REMOTE_SEND_ERROR", &format!("Error sending task to {}: {}", remote_url, e)).await;
-                    Err(anyhow!("Error sending task to remote agent: {}", e))
-                }
+        let remote_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
+        self.log_agent_action(
+            "REMOTE_SEND_START",
+            &format!("→ {}: '{}' (Session: {:?})", remote_url, message, session_id),
+        ).await;
+
+        // Get mutable reference to the client
+        let client = self.client.as_mut()
+            .ok_or_else(|| {
+                let err_msg = "No remote client configured. Use :connect first.";
+                // Log the error before returning
+                tokio::spawn(self.log_agent_action("REMOTE_SEND_ERROR", err_msg)); // Spawn log action
+                anyhow!(err_msg) // Return anyhow error
+            })?;
+
+        // ② Send the task with the current session ID
+        let task_result = client.send_task(message, session_id.clone()).await; // Pass cloned session_id
+
+        let task = match task_result {
+            Ok(t) => t,
+            Err(e) => {
+                // Log the specific client error
+                let error_string = format!("Error sending task to {}: {}", remote_url, e);
+                 // Spawn log action as self is borrowed mutably
+                let log_clone = self.log_agent_action("REMOTE_SEND_ERROR", &error_string);
+                tokio::spawn(log_clone);
+                return Err(anyhow!(error_string)); // Return anyhow error
             }
+        };
+
+        // ③ Mirror the returned task locally (read-only copy)
+        if let Err(e) = self.task_service.import_task(task.clone()).await {
+            // Log warning if caching fails, but don't fail the whole operation
+            let warn_msg = format!("Could not cache remote task {} locally: {}", task.id, e);
+            warn!("{}", warn_msg); // Use tracing::warn
+             // Spawn log action
+            let log_clone = self.log_agent_action("REMOTE_SEND_CACHE_WARN", &warn_msg);
+            tokio::spawn(log_clone);
         } else {
-            self.log_agent_action("REMOTE_SEND_ERROR", "No A2A client configured.").await;
-            Err(anyhow!("No A2A client configured. Use --target-url to specify a remote agent."))
+            let log_msg = format!("Cached remote task {} locally.", task.id);
+             // Spawn log action
+            let log_clone = self.log_agent_action("REMOTE_SEND_CACHE_SUCCESS", &log_msg);
+            tokio::spawn(log_clone);
         }
+
+        // ④ Add the task (local mirror) to the current session history
+        // Use a clone of self for the logging closure inside the spawned task
+        let self_clone_for_log = self.clone_for_logging().await; // Helper needed
+        let task_clone_for_log = task.clone();
+        tokio::spawn(async move {
+            if let Err(e) = self_clone_for_log.save_task_to_history(task_clone_for_log).await {
+                 let error_msg = format!("Failed to save remote task {} to session history: {}", task_clone_for_log.id, e);
+                 eprintln!("⚠️ {}", error_msg); // Log error to stderr
+                 self_clone_for_log.log_agent_action("REMOTE_SEND_HISTORY_ERROR", &error_msg).await;
+            }
+        });
+
+
+        // Log final success
+        self.log_agent_action(
+            "REMOTE_SEND_SUCCESS",
+            &format!("Stored remote task {} in session {:?}", task.id, session_id),
+        ).await;
+
+        info!("Remote task {} created and linked to session {:?}", task.id, session_id); // Keep tracing info
+
+        Ok(task) // Return the original task received from the remote agent
     }
     
     /// Get capabilities of a remote agent (using A2A client)
