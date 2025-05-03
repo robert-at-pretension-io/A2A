@@ -1501,12 +1501,20 @@ impl BidirectionalAgent {
                         history_length: None, // Get full history
                         metadata: None,
                     };
-                    
-                    if let Ok(task) = self.task_service.get_task(params).await {
-                        tasks.push(task);
+
+                    match self.task_service.get_task(params).await {
+                        Ok(task) => tasks.push(task),
+                        Err(e) => {
+                            self.log_agent_action("SESSION_GET_TASKS_ERROR", &format!("Failed to get task {}: {}", task_id, e)).await;
+                            // Continue trying to get other tasks
+                        }
                     }
                 }
+            } else {
+                 self.log_agent_action("SESSION_GET_TASKS_WARN", &format!("Session {} not found in map.", session_id)).await;
             }
+        } else {
+             self.log_agent_action("SESSION_GET_TASKS_WARN", "No active session.").await;
         }
         Ok(tasks)
     }
