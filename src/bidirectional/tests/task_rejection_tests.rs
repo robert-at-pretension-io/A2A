@@ -1,4 +1,5 @@
-use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter, AgentDirectory, LlmClient};
+use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter, LlmClient}; // Removed AgentDirectory
+use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; // Import canonical registry
 use crate::server::task_router::RoutingDecision;
 use crate::types::{Task, TaskState, Message, Part, TextPart, Role, TaskStatus, AgentCard};
 use std::sync::Arc;
@@ -80,8 +81,8 @@ async fn test_task_remote_delegation() {
     // Create a task with content that should be delegated
     let task = create_test_task("Analyze this complex data set for statistical patterns");
 
-    // Create a directory with a data analysis agent
-    let directory = Arc::new(AgentDirectory::new());
+    // Create a registry with a data analysis agent
+    let registry = Arc::new(AgentRegistry::new()); // Use registry
     let agent_card = AgentCard {
         name: "Data Analysis Agent".to_string(),
         url: "http://localhost:8080".to_string(),
@@ -95,11 +96,14 @@ async fn test_task_remote_delegation() {
         skills: vec![],
         version: "1.0.0".to_string(),
     };
-    directory.add_or_update_agent("data-agent".to_string(), agent_card);
+    // Add agent to registry map
+    registry.agents.insert("data-agent".to_string(), CachedAgentInfo {
+        card: agent_card.clone(), last_seen: Utc::now(), active: true, base_url: agent_card.url.clone(),
+    });
 
     // Create a router that will delegate to the data agent
-    let router = create_test_router_with_directory_and_response(
-        directory,
+    let router = create_test_router_with_registry_and_response( // Use updated helper
+        registry, // Pass registry
         "REMOTE: data-agent".to_string()
     );
 
@@ -145,20 +149,20 @@ fn create_test_task(message_text: &str) -> Task {
 
 // Helper to create a router with a fixed response
 fn create_test_router_with_response(response: &str) -> BidirectionalTaskRouter {
-    let directory = Arc::new(AgentDirectory::new());
+    let registry = Arc::new(AgentRegistry::new()); // Use registry
     let llm = Arc::new(MockLlmClient::new(response.to_string()));
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
     
     BidirectionalTaskRouter::new(
         llm,
-        directory,
+        registry, // Pass registry
         enabled_tools,
     )
 }
 
-// Helper to create a router with custom directory and response
-fn create_test_router_with_directory_and_response(
-    directory: Arc<AgentDirectory>,
+// Helper to create a router with custom registry and response
+fn create_test_router_with_registry_and_response( // Renamed function
+    registry: Arc<AgentRegistry>, // Use registry
     response: String,
 ) -> BidirectionalTaskRouter {
     let llm = Arc::new(MockLlmClient::new(response));
@@ -166,7 +170,7 @@ fn create_test_router_with_directory_and_response(
     
     BidirectionalTaskRouter::new(
         llm,
-        directory,
+        registry, // Pass registry
         enabled_tools,
     )
 }

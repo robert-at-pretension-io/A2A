@@ -327,8 +327,7 @@ pub struct ToolExecutor {
     pub tools: Arc<HashMap<String, Box<dyn Tool>>>,
     // Add registry for tools that need it
     agent_registry: Option<Arc<crate::server::agent_registry::AgentRegistry>>, // Use canonical type
-    // Keep local directory for tools that might still use it (like list_agents)
-    agent_directory: Option<Arc<AgentDirectory>>,
+    // REMOVED agent_directory field
     // Reference to known_servers map from BidirectionalAgent
     known_servers: Option<Arc<DashMap<String, String>>>,
     // Keep LLM client for tools that need it
@@ -357,7 +356,7 @@ impl ToolExecutor {
     pub fn with_enabled_tools(
         enabled: &[String],
         llm: Option<Arc<dyn LlmClient>>, // Make LLM optional
-        agent_directory: Option<Arc<AgentDirectory>>, // Optional agent directory for agent-related tools
+        // REMOVED agent_directory parameter
         agent_registry: Option<Arc<crate::server::agent_registry::AgentRegistry>>, // Add registry parameter
         known_servers: Option<Arc<DashMap<String, String>>>, // Optional map of known servers from BidirectionalAgent
     ) -> Self {
@@ -424,7 +423,7 @@ impl ToolExecutor {
         Self {
             tools: Arc::new(map),
             agent_registry, // Store the registry
-            agent_directory, // Store the directory
+            // REMOVED agent_directory storage
             known_servers, // Store the known_servers map
             llm, // Store the LLM client
         }

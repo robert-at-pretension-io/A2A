@@ -18,4 +18,4 @@ repl_log_file = "shared_agent_interactions.log"
 
 [tools]
 enabled = ["echo", "llm", "list_agents"]
-agent_directory_path = "./data/agent2_directory.json"
+# REMOVED agent_directory_path

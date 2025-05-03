@@ -1,6 +1,7 @@
 // Import RoutingDecision from the correct path
 use crate::server::task_router::RoutingDecision;
-use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter, AgentDirectory}; // Remove ExecutionMode import
+use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter}; // Removed AgentDirectory import
+use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; // Import canonical registry
 use crate::bidirectional::tests::mocks::MockLlmClient;
 use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities};
 use std::sync::Arc;
@@ -12,13 +13,13 @@ async fn test_router_local_decision() {
     // Create a mock LLM client that always returns "LOCAL"
     let llm = Arc::new(MockLlmClient::new().with_default_response("LOCAL"));
     
-    // Create an agent directory
-    let directory = Arc::new(AgentDirectory::new());
+    // Create an agent registry
+    let registry = Arc::new(AgentRegistry::new());
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, directory, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools);
 
     // Create a test task
     let task = create_test_task("What is the capital of France?");
@@ -36,17 +37,22 @@ async fn test_router_remote_decision() {
     // Create a mock LLM client that returns a remote decision
     let llm = Arc::new(MockLlmClient::new().with_default_response("REMOTE: test-agent"));
     
-    // Create an agent directory
-    let directory = Arc::new(AgentDirectory::new());
+    // Create an agent registry
+    let registry = Arc::new(AgentRegistry::new());
     
-    // Add a test agent to the directory
+    // Add a test agent to the registry
     let agent_card = create_test_agent_card("http://example.com/agent");
-    directory.add_or_update_agent("test-agent".to_string(), agent_card);
+    registry.agents.insert("test-agent".to_string(), CachedAgentInfo {
+        card: agent_card.clone(),
+        last_seen: Utc::now(),
+        active: true,
+        base_url: agent_card.url.clone(),
+    });
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, directory, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools);
 
     // Create a test task
     let task = create_test_task("Please forward this to test-agent");
@@ -63,13 +69,13 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
     // Create a mock LLM client that returns a remote decision for an unknown agent
     let llm = Arc::new(MockLlmClient::new().with_default_response("REMOTE: unknown-agent"));
     
-    // Create an agent directory (with no agents)
-    let directory = Arc::new(AgentDirectory::new());
+    // Create an agent registry (with no agents)
+    let registry = Arc::new(AgentRegistry::new());
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, directory, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools);
 
     // Create a test task
     let task = create_test_task("Please forward this to unknown-agent");
@@ -87,13 +93,13 @@ async fn test_router_fallback_to_local_for_unclear_decision() {
     // Create a mock LLM client that returns an unclear decision
     let llm = Arc::new(MockLlmClient::new().with_default_response("I'm not sure"));
     
-    // Create an agent directory
-    let directory = Arc::new(AgentDirectory::new());
+    // Create an agent registry
+    let registry = Arc::new(AgentRegistry::new());
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, directory, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools);
 
     // Create a test task
     let task = create_test_task("What should I do with this?");
@@ -111,19 +117,23 @@ async fn test_router_prompt_formatting() {
     // Create a mock LLM client to capture the prompt
     let llm = Arc::new(MockLlmClient::new());
     
-    // Create an agent directory with some test agents
-    let directory = Arc::new(AgentDirectory::new());
+    // Create an agent registry with some test agents
+    let registry = Arc::new(AgentRegistry::new());
     
-    // Add test agents to the directory
+    // Add test agents to the registry
     let agent_card1 = create_test_agent_card("http://example.com/agent1");
     let agent_card2 = create_test_agent_card("http://example.com/agent2");
-    directory.add_or_update_agent("test-agent-1".to_string(), agent_card1);
-    directory.add_or_update_agent("test-agent-2".to_string(), agent_card2);
+    registry.agents.insert("test-agent-1".to_string(), CachedAgentInfo {
+        card: agent_card1.clone(), last_seen: Utc::now(), active: true, base_url: agent_card1.url.clone(),
+    });
+    registry.agents.insert("test-agent-2".to_string(), CachedAgentInfo {
+        card: agent_card2.clone(), last_seen: Utc::now(), active: true, base_url: agent_card2.url.clone(),
+    });
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm.clone(), directory, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools);
 
     // Create a test task
     let task = create_test_task("Please route this task appropriately");

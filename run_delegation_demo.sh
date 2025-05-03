@@ -115,7 +115,7 @@ repl_log_file = "delegation_interactions.log"
 
 [tools]
 enabled = ["echo", "llm", "list_agents"]
-agent_directory_path = "./data/agent1_directory.json"
+# REMOVED agent_directory_path
 EOF
 
 cat > "${PROJECT_DIR}/agent2_config.toml" << EOF
@@ -139,7 +139,7 @@ repl_log_file = "delegation_interactions.log"
 
 [tools]
 enabled = ["echo", "llm", "list_agents"]
-agent_directory_path = "./data/agent2_directory.json"
+# REMOVED agent_directory_path
 EOF
 
 cat > "${PROJECT_DIR}/agent3_config.toml" << EOF
@@ -163,7 +163,7 @@ repl_log_file = "delegation_interactions.log"
 
 [tools]
 enabled = ["echo", "summarize", "list_agents"]
-agent_directory_path = "./data/agent3_directory.json"
+# REMOVED agent_directory_path
 EOF
 
 # Start Agent 3 (expert)

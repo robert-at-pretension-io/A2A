@@ -36,9 +36,10 @@ Always think step-by-step about the best way to handle each request.
 
 # Tool configuration
 [tools]
-# List the tools you want to enable. Available: "llm", "summarize", "echo"
+# List the tools you want to enable. Available: "llm", "summarize", "echo", "list_agents", "remember_agent"
 # If empty or missing, only "echo" will be available.
-enabled = ["llm", "echo", "summarize"]
+enabled = ["llm", "echo", "summarize", "list_agents", "remember_agent"]
+# REMOVED agent_directory_path
 
 # Mode configuration - uncomment the mode you want to use
 # If no mode is specified, the agent runs in standard server mode

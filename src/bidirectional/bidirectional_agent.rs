@@ -395,15 +395,15 @@ impl LlmClient for ClaudeLlmClient {
 #[derive(Clone)]
 pub struct BidirectionalTaskRouter {
     llm: Arc<dyn LlmClient>,
-    directory: Arc<AgentDirectory>, // Use the local directory for routing logic
-    enabled_tools: Arc<Vec<String>>, // <-- new: Store enabled tool names
+    agent_registry: Arc<AgentRegistry>, // Use the canonical registry
+    enabled_tools: Arc<Vec<String>>,
 }
 
 impl BidirectionalTaskRouter {
      pub fn new(
          llm: Arc<dyn LlmClient>,
-         directory: Arc<AgentDirectory>,
-         enabled_tools: Arc<Vec<String>>, // <-- new parameter
+         agent_registry: Arc<AgentRegistry>, // Use canonical registry
+         enabled_tools: Arc<Vec<String>>,
      ) -> Self {
         // Ensure "echo" is always considered enabled internally for fallback, even if not in config
         let mut tools = enabled_tools.as_ref().clone();
@@ -412,8 +412,8 @@ impl BidirectionalTaskRouter {
         }
         Self {
             llm,
-            directory,
-            enabled_tools: Arc::new(tools), // Store the potentially modified list
+            agent_registry, // Store the registry
+            enabled_tools: Arc::new(tools),
         }
     }
 
@@ -461,30 +461,24 @@ impl BidirectionalTaskRouter {
             return Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) });
         }
  
-        // Get the list of available agents from the local directory
-        debug!("Fetching available agents for routing prompt.");
-        let available_agents = self.directory.list_active_agents();
-        trace!(count = available_agents.len(), "Found available agents.");
+        // Get the list of available agents from the canonical registry
+        debug!("Fetching available agents from AgentRegistry for routing prompt.");
+        let available_agents = self.agent_registry.list_all_agents(); // Returns Vec<(String, AgentCard)>
+        trace!(count = available_agents.len(), "Found available agents in registry.");
         let agent_descriptions = available_agents.iter()
-            .map(|a| {
-                trace!(agent_name = %a.card.name, "Formatting agent description for prompt.");
+            .map(|(agent_id, card)| { // Use agent_id and card directly from registry list
+                trace!(%agent_id, agent_name = %card.name, "Formatting agent description for prompt.");
                 // Construct capabilities string manually
                 let mut caps = Vec::new();
-                if a.card.capabilities.push_notifications { caps.push("pushNotifications"); }
-                if a.card.capabilities.state_transition_history { caps.push("stateTransitionHistory"); }
-                if a.card.capabilities.streaming { caps.push("streaming"); }
+                if card.capabilities.push_notifications { caps.push("pushNotifications"); }
+                if card.capabilities.state_transition_history { caps.push("stateTransitionHistory"); }
+                if card.capabilities.streaming { caps.push("streaming"); }
                 // Add other capabilities fields if they exist in AgentCapabilities struct
 
-                // Find the agent_id (key) associated with this card's URL
-                let agent_id = self.directory.agents.iter()
-                    .find(|entry| entry.value().card.url == a.card.url)
-                    .map(|e| e.key().clone())
-                    .unwrap_or_else(|| "unknown-id".to_string()); // Fallback if not found
-
                 format!("ID: {}\nName: {}\nDescription: {}\nCapabilities: {}",
-                    agent_id,
-                    a.card.name.as_str(), // name is String
-                    a.card.description.as_ref().unwrap_or(&"".to_string()),
+                    agent_id, // Use the ID from the registry list
+                    card.name.as_str(),
+                    card.description.as_deref().unwrap_or(""), // Use deref for Option<String>
                     caps.join(", "))
             })
             .collect::<Vec<_>>()
@@ -629,10 +623,10 @@ Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
             let agent_id = decision.strip_prefix("REMOTE: ").unwrap().trim().to_string();
             info!(remote_agent_id = %agent_id, "LLM decided REMOTE execution.");
 
-            // Verify the agent exists in the local directory
-            trace!(remote_agent_id = %agent_id, "Verifying remote agent existence in directory.");
-            if self.directory.get_agent(&agent_id).is_none() {
-                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent, falling back to local execution with 'llm' tool and original task text.");
+            // Verify the agent exists in the canonical registry
+            trace!(remote_agent_id = %agent_id, "Verifying remote agent existence in AgentRegistry.");
+            if self.agent_registry.get(&agent_id).is_none() { // Check canonical registry
+                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent (not in registry), falling back to local execution with 'llm' tool and original task text.");
                  // Fall back to local if agent not found, using llm tool with original text
                  Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
             } else {
@@ -759,8 +753,8 @@ pub struct BidirectionalAgent {
     client_manager: Arc<ClientManager>, // From crate::server::client_manager
 
     // Local components for specific logic
-    agent_directory: Arc<AgentDirectory>, // Local directory for routing decisions
-    agent_directory_path: Option<PathBuf>, // Path to persist agent directory
+    // REMOVED agent_directory field
+    // REMOVED agent_directory_path field
     llm: Arc<dyn LlmClient>, // Local LLM client
 
     // Server configuration
@@ -802,22 +796,7 @@ impl BidirectionalAgent {
     pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
         info!("Creating new BidirectionalAgent instance.");
         trace!(?config, "Agent configuration provided.");
-        // Create the agent directory (local helper)
-        debug!("Initializing AgentDirectory.");
-        let agent_directory = Arc::new(AgentDirectory::new());
-        // Load agent directory from file if configured
-        if let Some(dir_path_str) = &config.tools.agent_directory_path {
-            let dir_path = PathBuf::from(dir_path_str);
-            debug!(path = %dir_path.display(), "Attempting to load agent directory from configured path.");
-            if let Err(e) = agent_directory.load_from_file(&dir_path) {
-                // Log warning but continue, agent will start with empty directory
-                warn!(error = %e, path = %dir_path.display(), "Failed to load agent directory from file. Continuing with empty directory.");
-            } else {
-                info!(path = %dir_path.display(), "Successfully loaded agent directory from file.");
-            }
-        } else {
-            debug!("No agent directory path configured. Starting with empty directory.");
-        }
+        // REMOVED AgentDirectory creation and loading logic
 
         // Create the LLM client (local helper)
         debug!("Initializing LLM client.");
@@ -860,18 +839,18 @@ impl BidirectionalAgent {
         let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
             &config.tools.enabled,            // Pass slice of enabled tool names
             Some(llm.clone()),                // Pass LLM client (as Option)
-            Some(agent_directory.clone()),    // Pass agent directory (as Option)
-            Some(agent_registry.clone()),     // <-- Pass canonical AgentRegistry (as Option)
+            // REMOVED agent_directory argument
+            Some(agent_registry.clone()),     // Pass canonical AgentRegistry (as Option)
             Some(known_servers.clone()),      // Pass known_servers map for synchronization
         ));
         trace!("ToolExecutor created.");
 
-        // Create the task router, passing the enabled tools list
+        // Create the task router, passing the enabled tools list and registry
         let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> =
             Arc::new(BidirectionalTaskRouter::new(
                 llm.clone(),
-                agent_directory.clone(),
-                enabled_tools.clone(), // Pass Arc<Vec<String>>
+                agent_registry.clone(), // Pass registry instead of directory
+                enabled_tools.clone(),
             ));
         trace!("BidirectionalTaskRouter created.");
 
@@ -924,8 +903,8 @@ impl BidirectionalAgent {
             client_manager,
 
             // Store local helper components
-            agent_directory: agent_directory.clone(), // Keep local directory for routing logic
-            agent_directory_path: agent_directory_path.clone(), // Store path for saving
+            // REMOVED agent_directory field
+            // REMOVED agent_directory_path field
             llm,
 
             port: config.server.port,
@@ -949,41 +928,7 @@ impl BidirectionalAgent {
             known_servers: known_servers,
         };
         
-        // Set up periodic saving of agent directory if path is configured
-        if let Some(dir_path) = agent_directory_path.clone() { // Clone path for the task
-            let dir_clone = agent_directory.clone();
-            let agent_id_clone = agent.agent_id.clone(); // Clone agent_id for tracing span
-            let save_interval_secs = 300; // 5 minutes
-
-            info!(path = %dir_path.display(), interval_secs = save_interval_secs, "Spawning background task for periodic agent directory saving.");
-            // Spawn a background task for saving
-            tokio::spawn(async move {
-                // Create a tracing span for the background task
-                let span = tracing::info_span!(
-                    "bg_save_dir",
-                    agent_id = %agent_id_clone,
-                    save_path = %dir_path.display()
-                );
-                // Enter the span
-                let _enter = span.enter();
-                debug!("Background directory save task started.");
-
-                loop {
-                    // Save every 5 minutes
-                    trace!(seconds = save_interval_secs, "Sleeping before next directory save.");
-                    tokio::time::sleep(std::time::Duration::from_secs(save_interval_secs)).await;
-
-                    debug!("Attempting periodic save of agent directory.");
-                    if let Err(e) = dir_clone.save_to_file(&dir_path) {
-                        warn!(error = %e, "Periodic save of agent directory failed.");
-                    } else {
-                        debug!("Successfully saved agent directory periodically.");
-                    }
-                }
-            });
-        } else {
-            debug!("Periodic agent directory saving is disabled (no path configured).");
-        }
+        // REMOVED periodic agent directory saving logic
 
         // Logging initialization happens in main() now.
         // We can log that the agent struct itself is constructed.
@@ -1308,7 +1253,7 @@ impl BidirectionalAgent {
             // Clone necessary data for the background task's tracing span
             let bg_agent_id = self.agent_id.clone();
             let bg_initial_url = initial_url.clone();
-            let agent_directory = self.agent_directory.clone(); // Local directory for routing
+            // Remove agent_directory clone
             let agent_registry = self.agent_registry.clone(); // Canonical registry for execution
             let known_servers = self.known_servers.clone(); // Clone Arc<DashMap>
 
@@ -1340,23 +1285,21 @@ impl BidirectionalAgent {
                             info!(remote_agent_name = %remote_agent_name, "Background connection successful.");
                             println!("✅ Background connection successful to {} ({})", remote_agent_name, initial_url); // Print to console as well
 
-                            // Update shared state
-                            debug!(url = %initial_url, name = %remote_agent_name, "Updating known servers map.");
-                            known_servers.insert(initial_url.clone(), remote_agent_name.clone());
-                            debug!(name = %remote_agent_name, "Updating agent directory.");
-                            agent_directory.add_or_update_agent(remote_agent_name.clone(), card.clone()); // Update local directory
-                            info!(remote_agent_name = %remote_agent_name, "Added/updated agent in local directory.");
-
-                            // Also update the canonical AgentRegistry
-                            debug!(url = %initial_url, "Attempting to update canonical AgentRegistry.");
+                            // Update canonical AgentRegistry via discover
+                            debug!(url = %initial_url, "Attempting to update canonical AgentRegistry via discover.");
                             match agent_registry.discover(&initial_url).await {
-                                Ok(agent_id) => {
-                                    info!(url = %initial_url, agent_id = %agent_id, "Successfully updated canonical AgentRegistry.");
-                                    // No need to update known_servers here as it's already done above
-                                },
+                                Ok(discovered_agent_id) => {
+                                    info!(url = %initial_url, %discovered_agent_id, "Successfully updated canonical AgentRegistry.");
+                                    // Update known servers map with the ID from discover
+                                    debug!(url = %initial_url, name = %discovered_agent_id, "Updating known servers map.");
+                                    known_servers.insert(initial_url.clone(), discovered_agent_id);
+                                }
                                 Err(reg_err) => {
                                     // Log warning if updating canonical registry fails, but don't fail the connection
                                     warn!(error = %reg_err, url = %initial_url, "Failed to update canonical AgentRegistry after successful connection.");
+                                    // Still update known_servers with the name from the card as a fallback
+                                    debug!(url = %initial_url, name = %remote_agent_name, "Updating known servers map with card name as fallback.");
+                                    known_servers.insert(initial_url.clone(), remote_agent_name.clone());
                                 }
                             }
 
@@ -1537,15 +1480,7 @@ impl BidirectionalAgent {
                 info!("EOF detected on stdin. Exiting REPL.");
                 println!("\nEOF detected. Exiting REPL."); // Add newline for cleaner exit
                 // Perform cleanup similar to :quit
-                // Save agent directory before exiting
-                if let Some(dir_path) = &self.agent_directory_path {
-                    debug!("Saving agent directory on EOF shutdown.");
-                    if let Err(e) = self.agent_directory.save_to_file(dir_path) {
-                        warn!(error = %e, "Failed to save agent directory on EOF shutdown.");
-                    } else {
-                        info!("Successfully saved agent directory on EOF shutdown.");
-                    }
-                }
+                // REMOVED agent directory saving on exit
 
                 if let Some(token) = server_shutdown_token.take() {
                     info!("Shutting down server due to EOF.");
@@ -1580,15 +1515,7 @@ impl BidirectionalAgent {
                     info!("User initiated :quit command.");
                     println!("Exiting REPL. Goodbye!");
 
-                    // Save agent directory before exiting if path is configured
-                    if let Some(dir_path) = &self.agent_directory_path {
-                         debug!("Saving agent directory on :quit command.");
-                        if let Err(e) = self.agent_directory.save_to_file(dir_path) {
-                            warn!(error = %e, "Failed to save agent directory on shutdown.");
-                        } else {
-                            info!("Successfully saved agent directory on shutdown.");
-                        }
-                    }
+                    // REMOVED agent directory saving on exit
 
                     // Shutdown server if running
                     if let Some(token) = server_shutdown_token.take() {

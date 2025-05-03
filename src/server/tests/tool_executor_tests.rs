@@ -150,7 +150,7 @@ async fn test_tool_executor_with_list_agents() {
     let executor = ToolExecutor::with_enabled_tools(
         &["echo".to_string(), "list_agents".to_string()],
         Some(llm),
-        None, // Pass None for agent_directory
+        // REMOVED agent_directory argument
         Some(registry), // Pass the registry
         None,
     );

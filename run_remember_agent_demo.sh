@@ -109,7 +109,7 @@ repl_log_file = "remember_agent_demo.log"
 [tools]
 # Enable remember_agent and list_agents
 enabled = ["echo", "list_agents", "remember_agent"] 
-agent_directory_path = "./data/agent_remember_directory.json"
+# REMOVED agent_directory_path
 EOF
 
 # Create config file for Agent Target (Port 4301)
@@ -133,7 +133,7 @@ repl_log_file = "remember_agent_demo.log"
 
 [tools]
 enabled = ["echo"] # Only basic tools needed
-agent_directory_path = "./data/agent_target_directory.json"
+# REMOVED agent_directory_path
 EOF
 
 # Start Agent Target (listens on 4301)
