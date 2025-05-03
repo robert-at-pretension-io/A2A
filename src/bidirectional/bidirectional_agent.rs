@@ -302,81 +302,7 @@ impl AgentDirectory {
         debug!("Successfully loaded agent directory.");
         Ok(())
     }
-} // Removed extra closing brace here
-            last_seen: Utc::now(),
-            active: true,
-        };
-        self.agents.insert(agent_id, entry);
-    }
-
-    fn get_agent(&self, agent_id: &str) -> Option<AgentDirectoryEntry> {
-        self.agents.get(agent_id).map(|e| e.value().clone())
-    }
-
-    fn list_active_agents(&self) -> Vec<AgentDirectoryEntry> {
-        self.agents
-            .iter()
-            .filter(|e| e.value().active)
-            .map(|e| e.value().clone())
-            .collect()
-    }
     
-    /// Get a list of all agents with their cards, including inactive ones
-    pub fn list_all_agents(&self) -> Vec<(String, AgentCard)> {
-        self.agents
-            .iter()
-            .map(|entry| (entry.key().clone(), entry.value().card.clone()))
-            .collect()
-    }
-    
-    /// Save the current agent directory to a JSON file
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        // Convert DashMap to a regular HashMap for serialization
-        let agents_map: HashMap<String, AgentDirectoryEntry> = self.agents.iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
-            .collect();
-        
-        // Serialize to JSON
-        let json = serde_json::to_string_pretty(&agents_map)
-            .map_err(|e| anyhow!("Failed to serialize agent directory: {}", e))?;
-        
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = path.as_ref().parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| anyhow!("Failed to create directory for agent directory file: {}", e))?;
-            }
-        }
-        
-        // Write to file
-        fs::write(path, json)
-            .map_err(|e| anyhow!("Failed to write agent directory file: {}", e))?;
-        
-        Ok(())
-    }
-    
-    /// Load agent directory from a JSON file
-    pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        // Skip if file doesn't exist (start with empty directory)
-        if !path.as_ref().exists() {
-            return Ok(());
-        }
-        
-        // Read file content
-        let file_content = fs::read_to_string(path)
-            .map_err(|e| anyhow!("Failed to read agent directory file: {}", e))?;
-        
-        // Deserialize from JSON
-        let loaded_agents: HashMap<String, AgentDirectoryEntry> = serde_json::from_str(&file_content)
-            .map_err(|e| anyhow!("Failed to deserialize agent directory: {}", e))?;
-        
-        // Update the directory
-        for (id, entry) in loaded_agents {
-            self.agents.insert(id, entry);
-        }
-        
-        Ok(())
-    }
 }
 
 
@@ -2412,6 +2338,8 @@ impl BidirectionalAgent {
         card
     } // Added missing closing brace for impl BidirectionalAgent
 }
+#[derive(Clone, Debug, Deserialize)]
+
 pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
@@ -2742,9 +2670,9 @@ pub async fn main() -> Result<()> {
                          .with_writer(move || file.try_clone().expect("Failed to clone log file handle")) // Clone handle per event
                          .with_ansi(false)
                          .event_format(format)
-                         .with_span_list(false) // Don't repeat span info in file logs
-                         .map_fields(move |fields| { // Add agent_id field
-                             fields.extend(tracing::field::FieldSet::new(&["agent_id"], tracing::identify_callsite!()));
+                         .with_span_events(false) // Don't repeat span info in file logs
+                         .map_fmt_fields(move |fields| { // Add agent_id field
+                             fields.extend(tracing::field::FieldSet::new(&["agent_id"], tracing_core::identify_callsite!()));
                              fields.field("agent_id").map(|f| f.display_value(&agent_id_for_log));
                          });
 
