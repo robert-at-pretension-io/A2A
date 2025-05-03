@@ -198,6 +198,8 @@ impl AgentDirectory {
         debug!("Adding or updating agent in local directory.");
         let entry = AgentDirectoryEntry {
             card: card.clone(), // Clone card for logging if needed later
+            last_seen: Utc::now(),
+            active: true,
         };
         self.agents.insert(agent_id.clone(), entry);
         trace!(agent_id = %agent_id, ?card, "Agent details added/updated.");
