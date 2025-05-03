@@ -132,6 +132,7 @@ async fn test_tool_executor_with_list_agents() {
         Some(llm), // Wrap LLM client in Some()
         Some(directory),
         None, // Add None for the missing agent_registry argument
+        None, // Add None for the missing known_servers argument
     );
     
     // Check that list_agents tool is registered
