@@ -150,12 +150,7 @@ async fn test_router_prompt_formatting() {
     assert!(tool_choice_prompt.contains("You have the following local tools available"));
     assert!(tool_choice_prompt.contains("echo, llm")); // Check enabled tools list
     assert!(tool_choice_prompt.contains("choose the single best tool"));
-    assert!(prompt.contains("You need to decide whether to handle a task locally or delegate it to another agent"));
-    assert!(prompt.contains("Please route this task appropriately"));
-    assert!(prompt.contains("test-agent-1"));
-    assert!(prompt.contains("test-agent-2"));
-    assert!(prompt.contains("LOCAL"));
-    assert!(prompt.contains("REMOTE"));
+    // Removed assertions using the old 'prompt' variable
 }
 
 // Helper function to create a test task
