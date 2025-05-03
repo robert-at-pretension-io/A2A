@@ -811,9 +811,10 @@ impl BidirectionalAgent {
             task_repository.clone(),
             bidirectional_task_router, // Pass our LlmTaskRouterTrait implementation
             bidirectional_tool_executor, // Pass the ToolExecutor
-            client_manager.clone(), // Pass canonical ClientManager
-            agent_registry.clone(), // Pass canonical AgentRegistry
-            config.server.agent_id.clone(), // Pass agent_id
+            client_manager.clone(),
+            agent_registry.clone(),
+            config.server.agent_id.clone(),
+            Some(llm.clone()), // Pass the LLM client to TaskService
         ));
         info!("TaskService created.");
 

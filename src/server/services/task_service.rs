@@ -194,10 +194,72 @@ impl TaskService {
                 }
                 RoutingDecision::Remote { agent_id: remote_agent_id } => {
                     info!(%remote_agent_id, "Delegating task to remote agent.");
-                    // Prepare TaskSendParams for delegation
+
+                    // --- LLM Rewrite Logic ---
+                    let mut message_to_send = initial_message.clone(); // Start with original message
+                    let delegating_agent_id = self.agent_id.as_deref().unwrap_or("UnknownAgent");
+
+                    if let Some(llm) = &self.llm_client {
+                        debug!("Attempting to rewrite message using LLM for delegation.");
+                        // Extract original text
+                        let original_text = initial_message.parts.iter()
+                            .filter_map(|p| match p {
+                                Part::TextPart(tp) => Some(tp.text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+
+                        if !original_text.is_empty() {
+                            let rewrite_prompt = format!(
+                                r#"You are helping Agent '{delegating_agent_id}' delegate a task to Agent '{remote_agent_id}'.
+Agent '{delegating_agent_id}' received the following request from a user:
+"{original_text}"
+
+Rewrite this request as a message FROM Agent '{delegating_agent_id}' TO Agent '{remote_agent_id}'.
+The rewritten message should:
+1. Briefly introduce Agent '{delegating_agent_id}'.
+2. Explain that it's forwarding a request from a user.
+3. Clearly state the user's original request (rephrased naturally if needed, keeping the core intent).
+
+Respond ONLY with the rewritten message text, suitable for sending directly to Agent '{remote_agent_id}'."#
+                            );
+                            trace!(prompt = %rewrite_prompt, "Sending rewrite prompt to LLM.");
+
+                            match llm.complete(&rewrite_prompt).await {
+                                Ok(rewritten_text) => {
+                                    info!("Successfully rewrote message for delegation.");
+                                    trace!(rewritten_text = %rewritten_text, "Rewritten message content.");
+                                    // Replace the message content with the rewritten text
+                                    message_to_send = Message {
+                                        role: Role::User, // Keep role as User from the perspective of the receiving agent
+                                        parts: vec![Part::TextPart(TextPart {
+                                            type_: "text".to_string(),
+                                            text: rewritten_text.trim().to_string(),
+                                            metadata: None,
+                                        })],
+                                        metadata: None, // Or copy metadata if needed
+                                    };
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "LLM rewrite failed. Sending original message.");
+                                    // message_to_send remains the original message
+                                }
+                            }
+                        } else {
+                            warn!("Original message text was empty. Skipping rewrite.");
+                        }
+                    } else {
+                        debug!("LLM client not available in TaskService. Sending original message.");
+                        // message_to_send remains the original message
+                    }
+                    // --- End LLM Rewrite Logic ---
+
+
+                    // Prepare TaskSendParams for delegation using the potentially rewritten message
                     let delegation_params = TaskSendParams {
                         id: Uuid::new_v4().to_string(), // Generate a new ID for the remote task
-                        message: initial_message.clone(),
+                        message: message_to_send, // Use the (potentially rewritten) message
                         session_id: Some(session_id.clone()), // Pass session ID
                         metadata: task.metadata.clone(),
                         history_length: None,
@@ -206,6 +268,7 @@ impl TaskService {
                     let remote_task_id = delegation_params.id.clone(); // Store remote task ID
 
                     // Initiate delegation
+                    info!(remote_agent_id=%remote_agent_id, remote_task_id=%remote_task_id, "Sending task parameters to ClientManager.");
                     match cm.send_task(&remote_agent_id, delegation_params).await {
                         Ok(initial_remote_task) => {
                             info!(%remote_agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Delegation initiated successfully.");
