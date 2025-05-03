@@ -675,7 +675,7 @@ If no specific parameters are needed or mentioned in the task, respond with an e
     }
 }
  
-// REMOVE #[async_trait] from the impl block
+#[async_trait]
 impl LlmTaskRouterTrait for BidirectionalTaskRouter {
     // Match the trait signature: takes TaskSendParams, returns Result<RoutingDecision, ServerError>
     // REMOVED #[instrument(skip(self, params), fields(task_id = %params.id))]
@@ -866,11 +866,15 @@ impl BidirectionalAgent {
 
         // Create a tool executor using the new constructor with enabled tools
         debug!("Initializing ToolExecutor.");
+        // Create new known_servers map to pass to ToolExecutor
+        let known_servers = Arc::new(DashMap::new());
+        
         let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
             &config.tools.enabled,            // Pass slice of enabled tool names
             Some(llm.clone()),                // Pass LLM client (as Option)
             Some(agent_directory.clone()),    // Pass agent directory (as Option)
             Some(agent_registry.clone()),     // <-- Pass canonical AgentRegistry (as Option)
+            Some(known_servers.clone()),      // Pass known_servers map for synchronization
         ));
         trace!("ToolExecutor created.");
 
@@ -953,8 +957,8 @@ impl BidirectionalAgent {
             // Initialize REPL log file path
             repl_log_file: config.mode.repl_log_file.map(std::path::PathBuf::from),
 
-            // Initialize known servers map
-            known_servers: Arc::new(DashMap::new()),
+            // Initialize known servers map with the one we already passed to ToolExecutor
+            known_servers: known_servers,
         };
         
         // Set up periodic saving of agent directory if path is configured
@@ -1172,6 +1176,7 @@ impl BidirectionalAgent {
         println!("  :cancelTask ID   - Cancel a running task");
         println!("  :file PATH MSG   - Send message with a file attachment");
         println!("  :data JSON MSG   - Send message with JSON data");
+        println!("  :tool NAME [PARAMS] - Execute local tool with optional JSON parameters");
         println!("  :quit            - Exit the REPL");
         println!("========================================\n");
     }
@@ -1356,11 +1361,15 @@ impl BidirectionalAgent {
 
                             // Also update the canonical AgentRegistry
                             debug!(url = %initial_url, "Attempting to update canonical AgentRegistry.");
-                            if let Err(reg_err) = agent_registry.discover(&initial_url).await {
-                                // Log warning if updating canonical registry fails, but don't fail the connection
-                                warn!(error = %reg_err, url = %initial_url, "Failed to update canonical AgentRegistry after successful connection.");
-                            } else {
-                                info!(url = %initial_url, "Successfully updated canonical AgentRegistry.");
+                            match agent_registry.discover(&initial_url).await {
+                                Ok(agent_id) => {
+                                    info!(url = %initial_url, agent_id = %agent_id, "Successfully updated canonical AgentRegistry.");
+                                    // No need to update known_servers here as it's already done above
+                                },
+                                Err(reg_err) => {
+                                    // Log warning if updating canonical registry fails, but don't fail the connection
+                                    warn!(error = %reg_err, url = %initial_url, "Failed to update canonical AgentRegistry after successful connection.");
+                                }
                             }
 
                             connected = true;
@@ -1571,10 +1580,15 @@ impl BidirectionalAgent {
 
             if input_trimmed.starts_with(":") {
                 info!(command = %input_trimmed, "Processing REPL command.");
-                // Handle special commands using input_trimmed
-                if input_trimmed == ":help" {
+                
+                // Parse command to extract command name and arguments
+                let parts: Vec<&str> = input_trimmed.splitn(2, ' ').collect();
+                let command = parts[0].trim_start_matches(':');
+                
+                // Handle special commands using input_trimmed and parsed command
+                if command == "help" || input_trimmed == ":help" {
                     self.print_repl_help(); // Logs internally
-                } else if input_trimmed == ":quit" {
+                } else if command == "quit" || input_trimmed == ":quit" {
                     info!("User initiated :quit command.");
                     println!("Exiting REPL. Goodbye!");
 
@@ -2129,16 +2143,24 @@ impl BidirectionalAgent {
                             }
                         }
                     }
-                } else {
-                    warn!(command = %input_trimmed, "Unknown REPL command entered.");
-                    println!("❌ Unknown command: {}", input_trimmed);
-                    println!("Type :help for a list of commands");
-                }
-            } else if input_trimmed.starts_with(":tool ") { // <-- Add specific handling for :tool
-                let parts: Vec<&str> = input_trimmed.splitn(3, ' ').collect();
-                if parts.len() >= 2 {
-                    let tool_name = parts[1];
-                    let params_str = if parts.len() == 3 { parts[2] } else { "{}" }; // Default to empty JSON object if no params
+                } else if command == "tool" {
+                    if parts.len() < 2 {
+                        error!("No tool name provided for :tool command.");
+                        println!("❌ Error: No tool name provided. Use :tool TOOL_NAME [JSON_PARAMS]");
+                        continue;
+                    }
+                    
+                    let tool_args = parts[1]; // Get everything after ":tool "
+                    let tool_parts: Vec<&str> = tool_args.splitn(2, ' ').collect();
+                    
+                    if tool_parts.is_empty() {
+                        error!("No tool name provided for :tool command.");
+                        println!("❌ Error: No tool name provided. Use :tool TOOL_NAME [JSON_PARAMS]");
+                        continue;
+                    }
+                    
+                    let tool_name = tool_parts[0];
+                    let params_str = if tool_parts.len() > 1 { tool_parts[1] } else { "{}" }; // Default to empty JSON object if no params
                     info!(tool_name = %tool_name, params_str = %params_str, "Processing :tool command.");
 
                     // Parse parameters as JSON
@@ -2174,7 +2196,7 @@ impl BidirectionalAgent {
                     error!("Invalid format for :tool command.");
                     println!("❌ Error: Invalid format. Use :tool <tool_name> [json_params]");
                 }
-            } else {
+                } else {
                 // Process the message locally using the agent's capabilities
                 debug!(message = %input_trimmed, "Processing input as local message.");
                 match self.process_message_locally(input_trimmed).await { // Renamed function logs internally

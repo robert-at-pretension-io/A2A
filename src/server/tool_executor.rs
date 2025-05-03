@@ -6,6 +6,7 @@ use crate::types::{
     Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact, AgentCard
 };
 use anyhow; // Import anyhow for error handling in new tools
+use dashmap::DashMap; // For known_servers sync
 
 use serde_json::{json, Value};
 use tracing::instrument;
@@ -238,15 +239,24 @@ impl Tool for SummarizeTool {
 }
 
 /// Tool to remember another agent by storing its card in the canonical AgentRegistry
+/// and updating the list of known servers
 pub struct RememberAgentTool {
     // This tool needs access to the canonical registry
     agent_registry: Arc<crate::server::agent_registry::AgentRegistry>, // Use canonical registry type
+    // Also needs access to known_servers to keep them in sync
+    known_servers: Option<Arc<DashMap<String, String>>>,
 }
 
 impl RememberAgentTool {
-    // Constructor requires the AgentRegistry
-    pub fn new(agent_registry: Arc<crate::server::agent_registry::AgentRegistry>) -> Self {
-        Self { agent_registry }
+    // Constructor requires the AgentRegistry and optionally the known_servers map
+    pub fn new(
+        agent_registry: Arc<crate::server::agent_registry::AgentRegistry>,
+        known_servers: Option<Arc<DashMap<String, String>>>
+    ) -> Self {
+        Self { 
+            agent_registry,
+            known_servers,
+        }
     }
 }
 
@@ -285,11 +295,17 @@ impl Tool for RememberAgentTool {
         // Use the registry's discover method. This verifies the agent is reachable
         // and fetches the latest card from the source URL before storing/updating.
         tracing::info!(%agent_url, "Attempting to discover and register/update agent via AgentRegistry.");
+        
         // Use ? to propagate ServerError, which will be converted to ToolError::ExternalError
-        self.agent_registry.discover(agent_url).await?;
+        // The discover method now returns the agent name/ID on success
+        let agent_name = self.agent_registry.discover(agent_url).await?;
+        
+        // If we have known_servers, update it with the agent name returned by discover
+        if let Some(known_servers) = &self.known_servers {
+            tracing::info!(%agent_url, %agent_name, "Updating known_servers map to keep in sync with agent registry.");
+            known_servers.insert(agent_url.to_string(), agent_name);
+        }
 
-        // If discover succeeds, the agent is now in the registry.
-        // We don't easily get the name back here without changing AgentRegistry::discover.
         // Return a success message using the URL.
         let response_text = format!("Successfully discovered and remembered agent from URL '{}'.", agent_url);
         tracing::info!(%response_text);
@@ -312,6 +328,8 @@ pub struct ToolExecutor {
     agent_registry: Option<Arc<crate::server::agent_registry::AgentRegistry>>, // Use canonical type
     // Keep local directory for tools that might still use it (like list_agents)
     agent_directory: Option<Arc<AgentDirectory>>,
+    // Reference to known_servers map from BidirectionalAgent
+    known_servers: Option<Arc<DashMap<String, String>>>,
     // Keep LLM client for tools that need it
     llm: Option<Arc<dyn LlmClient>>,
 }
@@ -329,6 +347,7 @@ impl ToolExecutor {
             tools: Arc::new(tools),
             agent_registry: None, // Initialize new fields
             agent_directory: None,
+            known_servers: None,
             llm: None,
         }
     }
@@ -339,6 +358,7 @@ impl ToolExecutor {
         llm: Option<Arc<dyn LlmClient>>, // Make LLM optional
         agent_directory: Option<Arc<AgentDirectory>>, // Optional agent directory for agent-related tools
         agent_registry: Option<Arc<crate::server::agent_registry::AgentRegistry>>, // Add registry parameter
+        known_servers: Option<Arc<DashMap<String, String>>>, // Optional map of known servers from BidirectionalAgent
     ) -> Self {
         let mut map: HashMap<String, Box<dyn Tool>> = HashMap::new();
 
@@ -383,7 +403,8 @@ impl ToolExecutor {
                 "remember_agent" => { // <-- Register the new tool
                     if !map.contains_key("remember_agent") {
                         if let Some(reg) = agent_registry.clone() {
-                            map.insert("remember_agent".into(), Box::new(RememberAgentTool::new(reg)));
+                            // Pass both agent_registry and known_servers to the tool                            
+                            map.insert("remember_agent".into(), Box::new(RememberAgentTool::new(reg, known_servers.clone())));
                             tracing::debug!("Tool 'remember_agent' registered.");
                         } else {
                             tracing::warn!("Cannot register 'remember_agent' tool: agent_registry not provided.");
@@ -402,6 +423,7 @@ impl ToolExecutor {
             tools: Arc::new(map),
             agent_registry, // Store the registry
             agent_directory, // Store the directory
+            known_servers, // Store the known_servers map
             llm, // Store the LLM client
         }
     }
