@@ -1678,15 +1678,12 @@ impl BidirectionalAgent {
         }
     }
 
-    /// Get the URL of the currently connected client
+    /// Get the URL of the currently configured client
     fn client_url(&self) -> Option<String> {
-        // Since we don't have a getter for the URL in the client,
-        // we'll use a simple approach to track the URL for now
-        // In a real implementation, you'd add a getter to A2aClient
-        // or track the URL separately
-        self.client.as_ref().map(|c| extract_base_url_from_client(c))
+        // Access the public base_url field directly from the A2aClient
+        self.client.as_ref().map(|c| c.base_url.clone())
     }
-    
+
     /// Run the agent server
     pub async fn run(&self) -> Result<()> {
         // Create a cancellation token for graceful shutdown
