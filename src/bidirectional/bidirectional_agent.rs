@@ -1236,7 +1236,8 @@ impl BidirectionalAgent {
             // Clone necessary data for the background task's tracing span
             let bg_agent_id = self.agent_id.clone();
             let bg_initial_url = initial_url.clone();
-            let agent_directory = self.agent_directory.clone();
+            let agent_directory = self.agent_directory.clone(); // Local directory for routing
+            let agent_registry = self.agent_registry.clone(); // Canonical registry for execution
             let known_servers = self.known_servers.clone(); // Clone Arc<DashMap>
 
             tokio::spawn(async move {
@@ -1271,8 +1272,17 @@ impl BidirectionalAgent {
                             debug!(url = %initial_url, name = %remote_agent_name, "Updating known servers map.");
                             known_servers.insert(initial_url.clone(), remote_agent_name.clone());
                             debug!(name = %remote_agent_name, "Updating agent directory.");
-                            agent_directory.add_or_update_agent(remote_agent_name.clone(), card.clone()); // Use name as ID here
-                            info!(remote_agent_name = %remote_agent_name, "Added/updated agent in directory.");
+                            agent_directory.add_or_update_agent(remote_agent_name.clone(), card.clone()); // Update local directory
+                            info!(remote_agent_name = %remote_agent_name, "Added/updated agent in local directory.");
+
+                            // Also update the canonical AgentRegistry
+                            debug!(url = %initial_url, "Attempting to update canonical AgentRegistry.");
+                            if let Err(reg_err) = agent_registry.discover(&initial_url).await {
+                                // Log warning if updating canonical registry fails, but don't fail the connection
+                                warn!(error = %reg_err, url = %initial_url, "Failed to update canonical AgentRegistry after successful connection.");
+                            } else {
+                                info!(url = %initial_url, "Successfully updated canonical AgentRegistry.");
+                            }
 
                             connected = true;
                             break; // Exit retry loop on success
