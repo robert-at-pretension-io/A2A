@@ -1,6 +1,6 @@
 // Import RoutingDecision from the correct path
 use crate::server::task_router::RoutingDecision;
-use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter}; // Removed AgentDirectory import
+use crate::bidirectional::task_router::BidirectionalTaskRouter; // <-- Update path
 use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; // Import canonical registry
 // MockLlmClient is defined locally in this test file, no change needed here
 use crate::bidirectional::tests::mocks::MockLlmClient;

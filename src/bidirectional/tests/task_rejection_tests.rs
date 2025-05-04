@@ -1,4 +1,5 @@
-use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter, LlmClient}; // Removed AgentDirectory
+use crate::bidirectional::task_router::BidirectionalTaskRouter; // <-- Update path
+use crate::bidirectional::llm_client::LlmClient; // <-- Use new path
 use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; // Import canonical registry
 use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
 use crate::types::{Task, TaskState, Message, Part, TextPart, Role, TaskStatus, AgentCard};
