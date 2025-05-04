@@ -434,6 +434,28 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     });
                     self.task_repository.save_task(&task).await?;
                     self.task_repository.save_state_history(&task.id, &task).await?;
+                },
+                RoutingDecision::NeedsClarification { question } => {
+                    info!(task_id = %task.id, "Routing decision: Needs Clarification.");
+                    // Update task state to InputRequired with the clarification question
+                    task.status.state = TaskState::InputRequired;
+                    task.status.message = Some(Message::agent(question)); // Use the question from the decision
+                    task.status.timestamp = Some(Utc::now());
+                    self.task_repository.save_task(&task).await?;
+                    self.task_repository.save_state_history(&task.id, &task).await?;
+                },
+                RoutingDecision::Decompose { subtasks } => {
+                    info!(task_id = %task.id, subtask_count = subtasks.len(), "Routing decision: Decompose.");
+                    // TODO: Implement actual decomposition logic
+                    // - Create child tasks based on subtasks
+                    // - Manage dependencies and execution flow
+                    // - Synthesize results (NP4)
+                    warn!(task_id = %task.id, "Task decomposition not yet fully implemented in TaskService. Marking task as Failed.");
+                    task.status.state = TaskState::Failed;
+                    task.status.message = Some(Message::agent("Task decomposition is not yet supported.".to_string()));
+                    task.status.timestamp = Some(Utc::now());
+                    self.task_repository.save_task(&task).await?;
+                    self.task_repository.save_state_history(&task.id, &task).await?;
                 }
             }
         } else {
@@ -761,6 +783,27 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                          })],
                                          metadata: None,
                                      });
+                                     self.task_repository.save_task(&task).await?;
+                                     self.task_repository.save_state_history(&task.id, &task).await?;
+                                 },
+                                 RoutingDecision::NeedsClarification { question } => {
+                                     // This case should ideally not happen during follow-up processing,
+                                     // as clarification should occur before routing.
+                                     // If it does, treat it as needing human input again.
+                                     warn!(task_id = %task.id, "Received NeedsClarification decision during follow-up processing. Setting state to InputRequired.");
+                                     task.status.state = TaskState::InputRequired;
+                                     task.status.message = Some(Message::agent(question));
+                                     task.status.timestamp = Some(Utc::now());
+                                     self.task_repository.save_task(&task).await?;
+                                     self.task_repository.save_state_history(&task.id, &task).await?;
+                                 },
+                                 RoutingDecision::Decompose { subtasks } => {
+                                     // Similar to NeedsClarification, decomposition should ideally happen
+                                     // on the initial routing, not during follow-up.
+                                     warn!(task_id = %task.id, subtask_count = subtasks.len(), "Received Decompose decision during follow-up processing. Marking task as Failed.");
+                                     task.status.state = TaskState::Failed;
+                                     task.status.message = Some(Message::agent("Task decomposition during follow-up is not supported.".to_string()));
+                                     task.status.timestamp = Some(Utc::now());
                                      self.task_repository.save_task(&task).await?;
                                      self.task_repository.save_state_history(&task.id, &task).await?;
                                  }
