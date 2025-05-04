@@ -9,7 +9,7 @@ use anyhow; // Import anyhow for error handling in new tools
 use dashmap::DashMap; // For known_servers sync
 
 use serde_json::{json, Value};
-use tracing::instrument;
+use tracing::{instrument, debug, info};
 use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::Utc;
