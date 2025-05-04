@@ -818,8 +818,37 @@ impl BidirectionalAgent {
     /// Process a message locally (e.g., from REPL input that isn't a command)
     #[instrument(skip(self, message_text), fields(agent_id = %self.agent_id, message_len = message_text.len()))]
     pub async fn process_message_locally(&mut self, message_text: &str) -> Result<String> {
-        debug!("Processing message locally."); // Changed to debug
+        debug!("Processing message locally.");
         trace!(message = %message_text, "Message content.");
+
+        // --- Command Interception ---
+        let trimmed_text = message_text.trim();
+        let (command, args) = match trimmed_text.split_once(' ') {
+            Some((cmd, arguments)) => (cmd.to_lowercase(), arguments.trim()),
+            None => (trimmed_text.to_lowercase(), ""),
+        };
+
+        // Check if the input matches a known command keyword
+        // Note: :listen and :stop are excluded here as they need direct access to run_repl state
+        let is_command = [
+            "help", "card", "servers", "connect", "disconnect", "remote",
+            "session", "history", "tasks", "task", "artifacts", "cancelTask", "tool"
+        ].contains(&command.as_str())
+        // Special case for session commands
+        || (command == "session" && ["new", "show"].contains(&args));
+
+        if is_command {
+            info!(command = %command, args_len = args.len(), "Input matches command keyword. Handling directly.");
+            // Call the central command handler
+            // We need to pass the *original* arguments string, not the potentially empty one
+            let full_args = if command == trimmed_text.to_lowercase() { "" } else { trimmed_text.split_once(' ').map_or("", |(_, a)| a) };
+            return self.handle_repl_command(&command, full_args).await;
+        }
+        // --- End Command Interception ---
+
+
+        // --- Original Logic (if not intercepted as a command) ---
+        debug!("Input does not match command keyword. Proceeding with standard task processing.");
 
         // Ensure we have an active session before processing
         debug!("Ensuring session exists before processing message.");
@@ -1358,254 +1387,45 @@ impl BidirectionalAgent {
             }
 
             let input_trimmed = input.trim();
-            debug!(user_input = %input_trimmed, "REPL input received."); // Changed to debug
+            debug!(user_input = %input_trimmed, "REPL input received.");
 
             if input_trimmed.is_empty() {
                 trace!("Empty input received, continuing loop.");
                 continue;
             }
 
+            // --- Updated REPL Command Handling ---
             if input_trimmed.starts_with(":") {
-                debug!(command = %input_trimmed, "Processing REPL command."); // Changed to debug
-                
-                // Parse command to extract command name and arguments
+                debug!(command = %input_trimmed, "Processing REPL command.");
+
                 let parts: Vec<&str> = input_trimmed.splitn(2, ' ').collect();
-                let command = parts[0].trim_start_matches(':');
-                
-                // Handle special commands using input_trimmed and parsed command
-                if command == "help" || input_trimmed == ":help" {
-                    self.print_repl_help(); // Logs internally
-                } else if command == "quit" || input_trimmed == ":quit" {
-                    info!("User initiated :quit command."); // Keep info for quit
-                    println!("👋 Exiting REPL. Goodbye!"); // Added emoji
+                let command = parts[0].trim_start_matches(':').to_lowercase(); // Lowercase for matching
+                let args = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
-                    // REMOVED agent directory saving on exit
-
-                    // Shutdown server if running
+                // Handle commands that need direct access to run_repl state (:listen, :stop, :quit)
+                if command == "quit" {
+                    info!("User initiated :quit command.");
+                    println!("👋 Exiting REPL. Goodbye!");
                     if let Some(token) = server_shutdown_token.take() {
-                        info!("Shutting down server via :quit command."); // Keep info for shutdown
-                        println!("🔌 Shutting down server..."); // Added emoji
+                        info!("Shutting down server via :quit command.");
+                        println!("🔌 Shutting down server...");
                         token.cancel();
                         trace!("Server cancellation token cancelled.");
-                    } else {
-                        trace!("No server running or token available to cancel on :quit.");
                     }
                     break; // Exit loop
-                } else if input_trimmed == ":card" {
-                    debug!("Processing :card command.");
-                    let card = self.create_agent_card(); // Logs internally
-                    info!(agent_name = %card.name, "Displaying agent card.");
-                    println!("\n📇 Agent Card:");
-                    println!("  Name: {}", card.name);
-                    println!("  Description: {}", card.description.as_deref().unwrap_or("None"));
-                    println!("  URL: {}", card.url);
-                    println!("  Version: {}", card.version);
-                    println!("  Capabilities:");
-                    println!("    - Streaming: {}", card.capabilities.streaming);
-                    println!("    - Push Notifications: {}", card.capabilities.push_notifications);
-                    println!("    - State Transition History: {}", card.capabilities.state_transition_history);
-                    println!("  Input Modes: {}", card.default_input_modes.join(", "));
-                    println!("  Output Modes: {}", card.default_output_modes.join(", "));
-                    println!("");
-                } else if input_trimmed == ":servers" {
-                    debug!("Processing :servers command."); // Changed to debug
-                    // List known servers from the shared map
-                    if self.known_servers.is_empty() {
-                        info!("No known servers found."); // Keep info for empty list
-                        println!("📡 No known servers. Connect to a server or wait for background connection attempt."); // Added emoji
-                    } else {
-                        info!(count = %self.known_servers.len(), "Displaying known servers."); // Keep info for listing
-                        println!("\n📡 Known Servers:"); // Added emoji
-                        // Collect servers into a Vec and sort for consistent display order
-                        let mut server_list: Vec<(String, String)> = self.known_servers.iter()
-                            .map(|entry| (entry.value().clone(), entry.key().clone())) // (Name, URL)
-                            .collect();
-                        server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name
-
-                        for (i, (name, url)) in server_list.iter().enumerate() {
-                            // Mark the currently connected server with an asterisk
-                            let marker = if Some(url) == self.client_url().as_ref() { "*" } else { " " };
-                            println!("  {}{}: {} - {}", marker, i + 1, name, url);
-                        }
-                        println!("\nUse :connect N to connect to a server by number");
-                        println!("");
-                    }
-                } else if input_trimmed == ":disconnect" {
-                    debug!("Processing :disconnect command."); // Changed to debug
-                    // Disconnect from current server
-                    if self.client.is_some() {
-                        let url = self.client_url().unwrap_or_else(|| "unknown".to_string());
-                        self.client = None;
-                        info!(disconnected_from = %url, "Disconnected from remote agent."); // Keep info for disconnect
-                        println!("🔌 Disconnected from {}", url);
-                    } else {
-                        debug!("Attempted disconnect but not connected."); // Changed to debug
-                        println!("⚠️ Not connected to any server"); // Added emoji
-                    }
-                } else if input_trimmed.starts_with(":connect ") {
-                    let target = input_trimmed.trim_start_matches(":connect ").trim();
-                    debug!(target = %target, "Processing :connect command."); // Changed to debug
-
-                    // Check if it's a number (referring to a server in the list)
-                    if let Ok(server_idx) = target.parse::<usize>() {
-                        // Read from shared known_servers map
-                        let mut server_list: Vec<(String, String)> = self.known_servers.iter()
-                            .map(|entry| (entry.value().clone(), entry.key().clone())) // (Name, URL)
-                            .collect();
-                        server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name to match display order
-
-                        if server_idx > 0 && server_idx <= server_list.len() {
-                            let (name, url) = &server_list[server_idx - 1];
-                            let url_clone = url.clone(); // Clone for async block
-
-                            // Create a new client with the selected URL
-                            self.client = Some(A2aClient::new(&url_clone));
-                            info!(server_name = %name, server_url = %url_clone, "Connecting to known server by number."); // Keep info for connection attempt
-                            println!("🔗 Connecting to {}: {}", name, url_clone);
-
-                            // Attempt to get card after connecting (spawn to avoid blocking REPL)
-                            let mut agent_client = self.client.as_mut().unwrap().clone(); // Clone client for task
-                            let agent_registry_clone = self.agent_registry.clone(); // Clone registry for update
-                            let known_servers_clone = self.known_servers.clone(); // Clone known_servers
-                            let agent_id_clone = self.agent_id.clone(); // For tracing span
-
-                            tokio::spawn(async move {
-                                let span = tracing::info_span!("connect_get_card", agent_id = %agent_id_clone, remote_url = %url_clone);
-                                let _enter = span.enter();
-                                match agent_client.get_agent_card().await {
-                                    Ok(card) => {
-                                        let remote_agent_name = card.name.clone();
-                                        debug!(%remote_agent_name, "Successfully got card after connecting."); // Changed to debug
-                                        // Update known servers
-                                        known_servers_clone.insert(url_clone.clone(), remote_agent_name.clone());
-                                        // Update canonical registry using discover
-                                        match agent_registry_clone.discover(&url_clone).await {
-                                            Ok(discovered_agent_id) => {
-                                                debug!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by number."); // Changed to debug
-                                                // Ensure known_servers uses the ID from discover if different from card name
-                                                if discovered_agent_id != remote_agent_name {
-                                                    debug!(url = %url_clone, old_name = %remote_agent_name, new_id = %discovered_agent_id, "Updating known_servers with discovered ID."); // Changed to debug
-                                                    known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
-                                                }
-                                            }
-                                            Err(e) => {
-                                                warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by number.");
-                                            }
-                                        }
-                                        println!("📇 Remote agent verified: {}", remote_agent_name);
-                                    }
-                                    Err(e) => {
-                                        warn!(error = %e, "Connected, but failed to get card.");
-                                        println!("⚠️ Could not retrieve agent card after connecting: {}", e);
-                                    }
-                                }
-                            });
-                        } else {
-                            error!(index = %server_idx, "Invalid server number provided.");
-                            println!("❌ Error: Invalid server number. Use :servers to see available servers.");
-                        }
-                    } else {
-                        // Treat as URL
-                        let target_url = target.to_string(); // Use target_url consistently
-                        if target_url.is_empty() {
-                            error!("No URL provided for :connect command.");
-                            println!("❌ Error: No URL provided. Use :connect URL");
-                            continue;
-                        }
-
-                        debug!(url = %target_url, "Attempting connection to URL."); // Changed to debug
-                        // Create a new client with the provided URL, but don't assume connection will succeed
-                        let mut client = A2aClient::new(&target_url);
-
-                        // Try to get the agent card to verify connection
-                        match client.get_agent_card().await {
-                            Ok(card) => {
-                                let remote_agent_name = card.name.clone();
-                                info!(remote_agent_name = %remote_agent_name, url = %target_url, "Successfully connected to agent."); // Keep info for success
-                                println!("✅ Successfully connected to agent: {}", remote_agent_name);
-
-                                // Add/Update known servers map
-                                self.known_servers.insert(target_url.clone(), remote_agent_name.clone());
-
-                                // Store the client since connection was successful
-                                self.client = Some(client);
-
-                                // Update known servers map
-                                self.known_servers.insert(target_url.clone(), remote_agent_name.clone());
-
-                                // Update the canonical registry using discover (spawn to avoid blocking)
-                                let registry_clone = self.agent_registry.clone();
-                                let url_clone = target_url.clone();
-                                let known_servers_clone = self.known_servers.clone(); // Clone for task
-                                let remote_agent_name_clone = remote_agent_name.clone(); // Clone for task
-
-                                tokio::spawn(async move {
-                                    match registry_clone.discover(&url_clone).await {
-                                        Ok(discovered_agent_id) => {
-                                            debug!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by URL."); // Changed to debug
-                                            // Ensure known_servers uses the ID from discover if different from card name
-                                            if discovered_agent_id != remote_agent_name_clone {
-                                                debug!(url = %url_clone, old_name = %remote_agent_name_clone, new_id = %discovered_agent_id, "Updating known_servers with discovered ID."); // Changed to debug
-                                                known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by URL.");
-                                        }
-                                    }
-                                });
-                                debug!("Agent added/updated in registry."); // Changed to debug
-
-                            },
-                            Err(e) => {
-                                error!(url = %target_url, error = %e, "Failed to connect to agent via URL.");
-                                println!("❌ Failed to connect to agent at {}: {}", target_url, e);
-                                println!("Please check that the server is running and the URL is correct.");
-
-                                // Ask to add to known servers even if connection failed
-                                if !self.known_servers.contains_key(&target_url) {
-                                    println!("Connection failed. Add this URL to the known servers list anyway? (y/n)");
-                                    let mut answer = String::new();
-                                    let stdin_temp = io::stdin();
-                                    let mut reader_temp = stdin_temp.lock();
-                                    reader_temp.read_line(&mut answer).unwrap_or_default();
-
-                                    if answer.trim().to_lowercase() == "y" {
-                                        let unknown_name = "Unknown Agent".to_string();
-                                        self.known_servers.insert(target_url.clone(), unknown_name.clone());
-                                        info!(url = %target_url, "Added URL to known servers as 'Unknown Agent'.");
-                                        println!("Added URL to known servers list as '{}'.", unknown_name);
-                                    }
-                                } else {
-                                     info!(url = %target_url, "Connection failed, but URL is already in the known servers list.");
-                                     println!("Connection failed, but URL is already in the known servers list.");
-                                }
-                            }
-                        };
-                    }
-                } else if input_trimmed.starts_with(":listen ") {
-                    let port_str = input_trimmed.trim_start_matches(":listen ").trim();
-                    debug!(port_str = %port_str, "Processing :listen command."); // Changed to debug
-
-                    // Check if already running
+                } else if command == "listen" {
+                    debug!(port_str = %args, "Processing :listen command directly in run_repl.");
                     if server_running {
                         warn!("Attempted to listen while server already running.");
                         println!("⚠️ Server already running. Stop it first with :stop");
                         continue;
                     }
-
-                    // Parse port
-                    match port_str.parse::<u16>() {
+                    match args.parse::<u16>() {
                         Ok(port) => {
-                            // Update the port in the agent
                             self.port = port;
-
-                            // Create a cancellation token
                             let token = CancellationToken::new();
-                            server_shutdown_token = Some(token.clone());
-
-                            // Start server in background task
-                            info!(%port, "Attempting to start server."); // Keep info for server start
+                            server_shutdown_token = Some(token.clone()); // Store token locally
+                            info!(%port, "Attempting to start server.");
                             println!("🚀 Starting server on port {}...", port);
 
                             // Clone what we need for the task
@@ -1617,10 +1437,10 @@ impl BidirectionalAgent {
                                 warn!("Failed to serialize agent card: {}", e);
                                 serde_json::json!({})
                             });
-                            
+
                             // Create a channel to communicate server start status back to REPL
                             let (tx, rx) = tokio::sync::oneshot::channel();
-                            
+
                             tokio::spawn(async move {
                                 match run_server(
                                     port,
@@ -1633,9 +1453,9 @@ impl BidirectionalAgent {
                                 ).await {
                                     Ok(handle) => {
                                         let _ = tx.send(Ok(())); // Send success
-                                        debug!(%port, "Server task started."); // Changed to debug
+                                        debug!(%port, "Server task started.");
                                         match handle.await { // Wait for server task completion
-                                            Ok(()) => info!(%port, "Server shut down gracefully."), // Keep info for shutdown
+                                            Ok(()) => info!(%port, "Server shut down gracefully."),
                                             Err(e) => error!(%port, error = %e, "Server error."),
                                         }
                                     },
@@ -1650,10 +1470,10 @@ impl BidirectionalAgent {
                             // Wait for the server start status
                             match tokio::time::timeout(std::time::Duration::from_secs(3), rx).await {
                                 Ok(Ok(Ok(()))) => {
-                                    server_running = true;
-                                    info!(%port, "Server started successfully via REPL command."); // Keep info for success
+                                    server_running = true; // Update local state
+                                    info!(%port, "Server started successfully via REPL command.");
                                     println!("✅ Server started on http://{}:{}", self.bind_address, port);
-                                    println!("   (Server will run until you exit the REPL or send :stop)"); // Indented
+                                    println!("   (Server will run until you exit the REPL or send :stop)");
                                 },
                                 Ok(Ok(Err(e))) => {
                                     error!(%port, error = %e, "Error starting server via REPL command.");
@@ -1672,387 +1492,50 @@ impl BidirectionalAgent {
                                     println!("The server is taking too long to start. It might be starting in the background or could have failed.");
                                     println!("You can try :stop to cancel any server processes that might be running.");
                                     server_running = true; // Keep running flag true so user can try :stop
+                                    // server_shutdown_token remains Some, allowing :stop attempt
                                 }
                             }
                         },
                         Err(parse_err) => {
-                            error!(input = %port_str, error = %parse_err, "Invalid port format for :listen command.");
+                            error!(input = %args, error = %parse_err, "Invalid port format for :listen command.");
                             println!("❌ Error: Invalid port number. Please provide a valid port.");
                         }
                     }
-                } else if input_trimmed == ":stop" {
-                    debug!("Processing :stop command."); // Changed to debug
-                    // Stop the server if running
-                    if let Some(token) = server_shutdown_token.take() {
-                        info!("Stopping server."); // Keep info for stop
-                        println!("🔌 Shutting down server..."); // Added emoji
+                } else if command == "stop" {
+                    debug!("Processing :stop command directly in run_repl.");
+                    if let Some(token) = server_shutdown_token.take() { // Take token from local variable
+                        info!("Stopping server.");
+                        println!("🔌 Shutting down server...");
                         token.cancel();
-                        server_running = false; // Assume stop is successful for REPL state
+                        server_running = false; // Update local state
                         println!("✅ Server stop signal sent.");
                     } else {
                         warn!("Attempted to stop server, but none was running or token missing.");
                         println!("⚠️ No server currently running or already stopped.");
                     }
-                } else if input_trimmed.starts_with(":remote ") {
-                    let message = input_trimmed.trim_start_matches(":remote ").trim();
-                    debug!(message = %message, "Processing :remote command."); // Changed to debug
-                    if message.is_empty() {
-                        error!("No message provided for :remote command.");
-                        println!("❌ Error: No message provided. Use :remote MESSAGE");
-                        continue;
+                } else {
+                    // Handle other commands via the central handler
+                    match self.handle_repl_command(&command, args).await {
+                        Ok(response) => println!("{}", response),
+                        Err(e) => println!("❌ Error: {}", e),
                     }
-
-                    // Check if we're connected to a remote agent
-                    if self.client.is_none() {
-                        error!("Cannot send remote task: Not connected to a remote agent.");
-                        println!("❌ Error: Not connected to a remote agent. Use :connect URL first.");
-                        continue;
-                    }
-
-                    // Send task to remote agent
-                    info!(message = %message, "Sending task to remote agent."); // Keep info for sending
-                    println!("📤 Sending task to remote agent: '{}'", message);
-                    match self.send_task_to_remote(message).await { // send_task_to_remote logs internally now
-                        Ok(task) => {
-                            info!(task_id = %task.id, status = ?task.status.state, "Remote task sent successfully."); // Keep info for success
-                            println!("✅ Task sent successfully!");
-                            println!("   Task ID: {}", task.id); // Indented
-                            println!("   Initial state reported by remote: {:?}", task.status.state); // Indented
-
-                            // If we have a completed task with history, show the response
-                            if task.status.state == TaskState::Completed {
-                                let response = self.extract_text_from_task(&task); // Use helper
-                                if response != "No response text available." {
-                                     debug!(task_id = %task.id, "Displaying immediate response from completed remote task."); // Changed to debug
-                                     println!("\n📥 Response from remote agent:");
-                                     println!("{}", response);
-                                } else {
-                                     debug!(task_id = %task.id, "Remote task completed but no text response found in status/history."); // Changed to debug
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            error!(error = %e, "Error sending remote task.");
-                            println!("❌ Error sending task: {}", e);
-                        }
-                    }
-                } else if input_trimmed == ":session new" {
-                    let session_id = self.create_new_session(); // create_new_session logs internally now
-                    info!("Created new session: {}", session_id); // Keep info for new session
-                    println!("✅ Created new session: {}", session_id);
-                } else if input_trimmed == ":session show" {
-                    if let Some(session_id) = &self.current_session_id {
-                        debug!(session_id = %session_id, "Displaying current session ID."); // Changed to debug
-                        println!("🔍 Current session: {}", session_id);
-                    } else {
-                        info!("No active session.");
-                        println!("⚠️ No active session. Use :session new to create one.");
-                    }
-                } else if input_trimmed == ":history" {
-                    if let Some(session_id) = &self.current_session_id {
-                        debug!(session_id = %session_id, "Fetching history for current session."); // Changed to debug
-                        let tasks = self.get_current_session_tasks().await?; // get_current_session_tasks logs internally
-                        if tasks.is_empty() {
-                            info!(session_id = %session_id, "No tasks found in current session history."); // Keep info for empty history
-                            println!("📭 No messages in current session.");
-                        } else {
-                            info!(session_id = %session_id, task_count = %tasks.len(), "Displaying session history."); // Keep info for displaying history
-                            println!("\n📝 Session History ({} Tasks):", tasks.len()); // Added count
-                            for task in tasks.iter() {
-                                println!("--- Task ID: {} (Status: {:?}) ---", task.id, task.status.state);
-                                if let Some(history) = &task.history {
-                                    for message in history {
-                                        let role_icon = match message.role {
-                                            Role::User => "👤",
-                                            Role::Agent => "🤖",
-                                            // Role::System => "⚙️", // If you add System role
-                                            // Role::Tool => "🛠️", // If you add Tool role
-                                            _ => "➡️", // Fallback
-                                        };
-                                        let text = message.parts.iter()
-                                            .filter_map(|p| match p {
-                                                Part::TextPart(tp) => Some(tp.text.as_str()),
-                                                Part::FilePart(_) => Some("[File Part]"),
-                                                Part::DataPart(_) => Some("[Data Part]"),
-                                                // _ => None, // Handle potential future Part variants
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(" "); // Join parts with space
-
-                                        // Truncate long messages for display
-                                        let display_text = if text.len() > 100 {
-                                            format!("{}...", &text[..97])
-                                        } else {
-                                            text.to_string()
-                                        };
-                                        println!("  {} {}: {}", role_icon, message.role, display_text);
-                                    }
-                                } else {
-                                    println!("  (No message history available for this task)");
-                                }
-                                println!("--------------------------------------");
-                            }
-                        }
-                    } else {
-                        info!("Cannot show history: No active session.");
-                        println!("⚠️ No active session. Use :session new to create one.");
-                    }
-                } else if input_trimmed == ":tasks" {
-                     if let Some(session_id) = &self.current_session_id {
-                        debug!(session_id = %session_id, "Fetching task list for current session."); // Changed to debug
-                        // Use the DashMap directly for listing IDs, avoid fetching full tasks unless needed
-                        if let Some(task_ids) = self.session_tasks.get(session_id) {
-                            if task_ids.is_empty() {
-                                info!(session_id = %session_id, "No tasks found in current session map."); // Keep info for empty list
-                                println!("📭 No tasks recorded in current session.");
-                            } else {
-                                info!(session_id = %session_id, task_count = %task_ids.len(), "Displaying task list."); // Keep info for listing
-                                println!("\n📋 Tasks Recorded in Current Session ({}):", task_ids.len()); // Added count
-                                // Fetch status for each task to display
-                                for (i, task_id) in task_ids.iter().enumerate() {
-                                    let params = TaskQueryParams { id: task_id.clone(), history_length: Some(0), metadata: None };
-                                    let status_str = match self.task_service.get_task(params).await {
-                                        Ok(task) => format!("{:?}", task.status.state),
-                                        Err(_) => "Status Unknown".to_string(),
-                                    };
-                                    println!("  {}. {} - Status: {}", i + 1, task_id, status_str);
-                                }
-                            }
-                        } else {
-                             info!(session_id = %session_id, "Session ID not found in task map.");
-                             println!("📭 No tasks recorded for current session (session ID not found).");
-                        }
-                    } else {
-                        info!("Cannot list tasks: No active session.");
-                        println!("⚠️ No active session. Use :session new to create one.");
-                    }
-                } else if input_trimmed.starts_with(":task ") {
-                    let task_id = input_trimmed.trim_start_matches(":task ").trim();
-                    debug!(task_id = %task_id, "Processing :task command."); // Changed to debug
-                    if task_id.is_empty() {
-                        error!("No task ID provided for :task command.");
-                        println!("❌ Error: No task ID provided. Use :task TASK_ID");
-                    } else {
-                        info!(task_id = %task_id, "Fetching details for task."); // Keep info for fetching details
-                        // Get task details
-                        let params = TaskQueryParams {
-                            id: task_id.to_string(),
-                            history_length: None, // Get full history for details view
-                            metadata: None,
-                        };
-
-                        match self.task_service.get_task(params).await {
-                            Ok(task) => {
-                                debug!(task_id = %task.id, "Displaying details for task."); // Changed to debug
-                                println!("\n🔍 Task Details:");
-                                println!("  ID: {}", task.id);
-                                println!("  Status: {:?}", task.status.state);
-                                println!("  Session: {}", task.session_id.as_deref().unwrap_or("None"));
-                                println!("  Timestamp: {}", task.status.timestamp.map(|t| t.to_rfc3339()).as_deref().unwrap_or("None"));
-
-                                // Show artifacts count if any
-                                let artifact_count = task.artifacts.as_ref().map_or(0, |a| a.len());
-                                println!("  Artifacts: {} (use :artifacts {} to view)", artifact_count, task.id);
-
-                                // Show last status message if any
-                                if let Some(message) = &task.status.message {
-                                     let text = message.parts.iter()
-                                        .filter_map(|p| match p {
-                                            Part::TextPart(tp) => Some(tp.text.as_str()),
-                                            _ => None,
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n");
-                                    println!("\n  Status Message: {}", text);
-                                }
-
-                                // Show history preview
-                                if let Some(history) = &task.history {
-                                     println!("\n  History Preview ({} messages):", history.len());
-                                     for msg in history.iter().take(5) { // Show first 5 messages
-                                         let role_icon = match msg.role { Role::User => "👤", Role::Agent => "🤖", _ => "➡️" };
-                                         let text = msg.parts.iter().filter_map(|p| match p { Part::TextPart(tp) => Some(tp.text.as_str()), _ => None }).collect::<Vec<_>>().join(" ");
-                                         let display_text = if text.len() > 60 { format!("{}...", &text[..57]) } else { text.to_string() };
-                                         println!("    {} {}: {}", role_icon, msg.role, display_text);
-                                     }
-                                     if history.len() > 5 { println!("    ..."); }
-                                } else {
-                                     println!("\n  History: Not available or requested.");
-                                }
-
-
-                            },
-                            Err(e) => {
-                                error!(task_id = %task_id, error = %e, "Failed to get task details.");
-                                println!("❌ Error: Failed to get task: {}", e);
-                            }
-                        }
-                    }
-                } else if input_trimmed.starts_with(":artifacts ") {
-                    let task_id = input_trimmed.trim_start_matches(":artifacts ").trim();
-                    debug!(task_id = %task_id, "Processing :artifacts command."); // Changed to debug
-                    if task_id.is_empty() {
-                        error!("No task ID provided for :artifacts command.");
-                        println!("❌ Error: No task ID provided. Use :artifacts TASK_ID");
-                    } else {
-                        info!(task_id = %task_id, "Fetching artifacts for task."); // Keep info for fetching artifacts
-                        // Get task details with artifacts
-                        let params = TaskQueryParams {
-                            id: task_id.to_string(),
-                            history_length: Some(0), // Don't need history here
-                            metadata: None,
-                        };
-
-                        match self.task_service.get_task(params).await {
-                            Ok(task) => {
-                                if let Some(artifacts) = &task.artifacts {
-                                    if artifacts.is_empty() {
-                                        info!(task_id = %task.id, "No artifacts found for task."); // Keep info for no artifacts
-                                        println!("📦 No artifacts for task {}", task.id);
-                                    } else {
-                                        info!(task_id = %task.id, count = %artifacts.len(), "Displaying artifacts."); // Keep info for listing artifacts
-                                        println!("\n📦 Artifacts for Task {} ({}):", task.id, artifacts.len()); // Added count
-                                        for (i, artifact) in artifacts.iter().enumerate() {
-                                            println!("  {}. Name: '{}', Desc: '{}', Index: {}, Parts: {}",
-                                                     i + 1,
-                                                     artifact.name.as_deref().unwrap_or("N/A"),
-                                                     artifact.description.as_deref().unwrap_or("N/A"),
-                                                     artifact.index,
-                                                     artifact.parts.len());
-                                            // Optionally print part details
-                                            // for part in &artifact.parts { ... }
-                                        }
-                                    }
-                                } else {
-                                    info!(task_id = %task.id, "Task found, but has no artifacts field.");
-                                    println!("📦 No artifacts found for task {}", task.id);
-                                }
-                            },
-                            Err(e) => {
-                                error!(task_id = %task_id, error = %e, "Failed to get task for artifacts.");
-                                println!("❌ Error: Failed to get task: {}", e);
-                            }
-                        }
-                    }
-                } else if input_trimmed.starts_with(":cancelTask ") {
-                    let task_id = input_trimmed.trim_start_matches(":cancelTask ").trim();
-                    debug!(task_id = %task_id, "Processing :cancelTask command."); // Changed to debug
-                    if task_id.is_empty() {
-                        error!("No task ID provided for :cancelTask command.");
-                        println!("❌ Error: No task ID provided. Use :cancelTask TASK_ID");
-                    } else {
-                        info!(task_id = %task_id, "Attempting to cancel task."); // Keep info for cancellation attempt
-                        // Cancel the task
-                        let params = TaskIdParams {
-                            id: task_id.to_string(),
-                            metadata: None,
-                        };
-
-                        match self.task_service.cancel_task(params).await {
-                            Ok(task) => {
-                                info!(task_id = %task.id, status = ?task.status.state, "Successfully canceled task."); // Keep info for success
-                                println!("✅ Successfully canceled task {}", task.id);
-                                println!("   Current state: {:?}", task.status.state); // Indented
-                            },
-                            Err(e) => {
-                                error!(task_id = %task_id, error = %e, "Failed to cancel task.");
-                                println!("❌ Error: Failed to cancel task: {}", e);
-                            }
-                        }
-                    }
-                } else if command == "tool" {
-                    if parts.len() < 2 {
-                        error!("No tool name provided for :tool command.");
-                        println!("❌ Error: No tool name provided. Use :tool TOOL_NAME [JSON_PARAMS]");
-                        continue;
-                    }
-                    
-                    // Get everything after ":tool "
-                    let tool_args = parts.get(1).map(|s| s.trim()).unwrap_or(""); 
-                    
-                    // Split the arguments into tool name and parameters string
-                    let (tool_name, params_str) = match tool_args.split_once(' ') {
-                        Some((name, params)) => (name, params), // Found space, split name and params
-                        None => (tool_args, "{}"), // No space, assume only tool name, default params to {}
-                    };
-
-                    if tool_name.is_empty() {
-                        error!("No tool name provided for :tool command.");
-                        println!("❌ Error: No tool name provided. Use :tool TOOL_NAME [JSON_PARAMS]");
-                        continue;
-                    }
-
-                    debug!(tool_name = %tool_name, params_str = %params_str, "Processing :tool command."); // Changed to debug
-
-                    // Parse parameters as JSON
-                    let params_json: Value = match serde_json::from_str(params_str) {
-                        Ok(json) => json,
-                        Err(e) => {
-                            error!(error = %e, input_params = %params_str, "Failed to parse JSON parameters for :tool command.");
-                            println!("❌ Error: Invalid JSON parameters: {}", e);
-                            continue; // Skip processing this command
-                        }
-                    };
-
-                    // Get the ToolExecutor instance
-                    if let Some(executor) = &self.task_service.tool_executor { // Access executor via task_service
-                        // Execute the tool
-                        match executor.execute_tool(tool_name, params_json).await {
-                            Ok(result) => {
-                                info!(tool_name = %tool_name, "Tool executed successfully via REPL."); // Keep info for success
-                                // Pretty print the JSON result
-                                let result_pretty = serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
-                                println!("\n🛠️ Tool Result ({}):\n{}\n", tool_name, result_pretty);
-                            }
-                            Err(e) => {
-                                error!(tool_name = %tool_name, error = %e, "Error executing tool via REPL.");
-                                println!("❌ Error executing tool '{}': {}", tool_name, e);
-                            }
-                        }
-                    } else {
-                        error!("ToolExecutor not available in TaskService for :tool command.");
-                        println!("❌ Error: Tool execution is not configured for this agent.");
-                    }
-                } else { // Handle other commands or fall through to local processing
-                    // Check for other specific commands here if needed...
-                    
-                    // If it wasn't any known command starting with ':', treat as local message
-                    // OR if it was an unknown command like ':foo'
-                    if !input_trimmed.starts_with(":") {
-                         // Process the message locally using the agent's capabilities
-                         debug!(message = %input_trimmed, "Processing input as local message.");
-                         match self.process_message_locally(input_trimmed).await { // Renamed function logs internally
-                             Ok(response) => {
-                                 println!("\n🤖 Agent response:\n{}\n", response);
-                                 debug!(response_length = %response.len(), "Local processing successful, displayed response."); // Changed to debug
-                             },
-                             Err(e) => {
-                                 let error_msg = format!("Error processing message locally: {}", e);
-                                 error!(error = %e, "Error processing message locally.");
-                                 println!("❌ {}", error_msg);
-                             }
-                         }
-                    } else {
-                        // It started with ':' but wasn't a known command
-                        warn!("Unknown REPL command entered.");
-                        println!("❌ Unknown command: '{}'. Type :help for available commands.", input_trimmed);
-                    }
-                } // End of the main 'if input_trimmed.starts_with(":")' block's else branch
+                }
             } else { // Input does not start with ':'
-                // Process the message locally using the agent's capabilities
-                debug!(message = %input_trimmed, "Processing input as local message.");
-                match self.process_message_locally(input_trimmed).await { // Renamed function logs internally
+                // Process as local message (which now also checks for command keywords)
+                debug!(message = %input_trimmed, "Processing input as local message/command.");
+                match self.process_message_locally(input_trimmed).await {
                     Ok(response) => {
                         println!("\n🤖 Agent response:\n{}\n", response);
-                        debug!(response_length = %response.len(), "Local processing successful, displayed response."); // Changed to debug
+                        debug!(response_length = %response.len(), "Local processing successful, displayed response.");
                     },
                     Err(e) => {
-                        let error_msg = format!("Error processing message locally: {}", e);
+                        let error_msg = format!("Error processing message: {}", e);
                         error!(error = %e, "Error processing message locally.");
                         println!("❌ {}", error_msg);
                     }
                 }
             }
+            // --- End Updated REPL Command Handling ---
         }
 
         info!("Exiting REPL mode.");
@@ -2344,8 +1827,543 @@ impl BidirectionalAgent {
         };
         trace!(?card, "Agent card created.");
         card
-    } // Added missing closing brace for impl BidirectionalAgent
+    }
+
+    /// Handles the ':connect' REPL command logic.
+    #[instrument(skip(self, target), fields(agent_id = %self.agent_id))]
+    async fn handle_connect(&mut self, target: &str) -> Result<String> {
+        debug!(target = %target, "Handling connect command.");
+
+        // Check if it's a number (referring to a server in the list)
+        if let Ok(server_idx) = target.parse::<usize>() {
+            // Read from shared known_servers map
+            let mut server_list: Vec<(String, String)> = self.known_servers.iter()
+                .map(|entry| (entry.value().clone(), entry.key().clone())) // (Name, URL)
+                .collect();
+            server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name to match display order
+
+            if server_idx > 0 && server_idx <= server_list.len() {
+                let (name, url) = &server_list[server_idx - 1];
+                let url_clone = url.clone(); // Clone for async block
+
+                // Create a new client with the selected URL
+                self.client = Some(A2aClient::new(&url_clone));
+                info!(server_name = %name, server_url = %url_clone, "Connecting to known server by number.");
+                let connect_msg = format!("🔗 Connecting to {}: {}", name, url_clone);
+
+                // Attempt to get card after connecting (spawn to avoid blocking REPL)
+                let mut agent_client = self.client.as_mut().unwrap().clone(); // Clone client for task
+                let agent_registry_clone = self.agent_registry.clone(); // Clone registry for update
+                let known_servers_clone = self.known_servers.clone(); // Clone known_servers
+                let agent_id_clone = self.agent_id.clone(); // For tracing span
+
+                tokio::spawn(async move {
+                    let span = tracing::info_span!("connect_get_card", agent_id = %agent_id_clone, remote_url = %url_clone);
+                    let _enter = span.enter();
+                    match agent_client.get_agent_card().await {
+                        Ok(card) => {
+                            let remote_agent_name = card.name.clone();
+                            debug!(%remote_agent_name, "Successfully got card after connecting.");
+                            // Update known servers
+                            known_servers_clone.insert(url_clone.clone(), remote_agent_name.clone());
+                            // Update canonical registry using discover
+                            match agent_registry_clone.discover(&url_clone).await {
+                                Ok(discovered_agent_id) => {
+                                    debug!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by number.");
+                                    if discovered_agent_id != remote_agent_name {
+                                        debug!(url = %url_clone, old_name = %remote_agent_name, new_id = %discovered_agent_id, "Updating known_servers with discovered ID.");
+                                        known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by number.");
+                                }
+                            }
+                            println!("📇 Remote agent verified: {}", remote_agent_name); // Still print verification
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "Connected, but failed to get card.");
+                            println!("⚠️ Could not retrieve agent card after connecting: {}", e); // Still print warning
+                        }
+                    }
+                });
+                Ok(connect_msg) // Return the initial connection message
+            } else {
+                error!(index = %server_idx, "Invalid server number provided.");
+                Err(anyhow!("Invalid server number. Use :servers to see available servers."))
+            }
+        } else {
+            // Treat as URL
+            let target_url = target.to_string();
+            if target_url.is_empty() {
+                error!("No URL provided for :connect command.");
+                return Err(anyhow!("No URL provided. Use :connect URL"));
+            }
+
+            debug!(url = %target_url, "Attempting connection to URL.");
+            let mut client = A2aClient::new(&target_url);
+
+            match client.get_agent_card().await {
+                Ok(card) => {
+                    let remote_agent_name = card.name.clone();
+                    info!(remote_agent_name = %remote_agent_name, url = %target_url, "Successfully connected to agent.");
+                    let success_msg = format!("✅ Successfully connected to agent: {}", remote_agent_name);
+
+                    self.known_servers.insert(target_url.clone(), remote_agent_name.clone());
+                    self.client = Some(client);
+
+                    // Update registry in background
+                    let registry_clone = self.agent_registry.clone();
+                    let url_clone = target_url.clone();
+                    let known_servers_clone = self.known_servers.clone();
+                    let remote_agent_name_clone = remote_agent_name.clone();
+                    tokio::spawn(async move {
+                        match registry_clone.discover(&url_clone).await {
+                            Ok(discovered_agent_id) => {
+                                debug!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by URL.");
+                                if discovered_agent_id != remote_agent_name_clone {
+                                    debug!(url = %url_clone, old_name = %remote_agent_name_clone, new_id = %discovered_agent_id, "Updating known_servers with discovered ID.");
+                                    known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
+                                }
+                            }
+                            Err(e) => {
+                                warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by URL.");
+                            }
+                        }
+                    });
+                    Ok(success_msg)
+                },
+                Err(e) => {
+                    error!(url = %target_url, error = %e, "Failed to connect to agent via URL.");
+                    // Don't ask y/n here, just return error
+                    if !self.known_servers.contains_key(&target_url) {
+                         let unknown_name = "Unknown Agent".to_string();
+                         self.known_servers.insert(target_url.clone(), unknown_name.clone());
+                         info!(url = %target_url, "Added URL to known servers as 'Unknown Agent' after failed connection attempt.");
+                    }
+                    Err(anyhow!("Failed to connect to agent at {}: {}. Please check the server is running and the URL is correct. URL added to known servers as 'Unknown Agent'.", target_url, e))
+                }
+            }
+        }
+    }
+
+    /// Handles the ':disconnect' REPL command logic.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    fn handle_disconnect(&mut self) -> Result<String> {
+        debug!("Handling disconnect command.");
+        if self.client.is_some() {
+            let url = self.client_url().unwrap_or_else(|| "unknown".to_string());
+            self.client = None;
+            info!(disconnected_from = %url, "Disconnected from remote agent.");
+            Ok(format!("🔌 Disconnected from {}", url))
+        } else {
+            debug!("Attempted disconnect but not connected.");
+            Ok("⚠️ Not connected to any server".to_string()) // Return as Ok string
+        }
+    }
+
+    /// Handles the ':servers' REPL command logic.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    fn handle_list_servers(&self) -> Result<String> {
+        debug!("Handling list_servers command.");
+        if self.known_servers.is_empty() {
+            info!("No known servers found.");
+            Ok("📡 No known servers. Connect to a server or wait for background connection attempt.".to_string())
+        } else {
+            info!(count = %self.known_servers.len(), "Formatting known servers list.");
+            let mut output = String::from("\n📡 Known Servers:\n");
+            let mut server_list: Vec<(String, String)> = self.known_servers.iter()
+                .map(|entry| (entry.value().clone(), entry.key().clone())) // (Name, URL)
+                .collect();
+            server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name
+
+            for (i, (name, url)) in server_list.iter().enumerate() {
+                let marker = if Some(url) == self.client_url().as_ref() { "*" } else { " " };
+                output.push_str(&format!("  {}{}: {} - {}\n", marker, i + 1, name, url));
+            }
+            output.push_str("\nUse :connect N to connect to a server by number\n");
+            Ok(output)
+        }
+    }
+
+     /// Handles the ':remote' REPL command logic.
+    #[instrument(skip(self, message), fields(agent_id = %self.agent_id))]
+    async fn handle_remote_message(&mut self, message: &str) -> Result<String> {
+        debug!(message = %message, "Handling remote message command.");
+        if message.is_empty() {
+            error!("No message provided for :remote command.");
+            return Err(anyhow!("No message provided. Use :remote MESSAGE"));
+        }
+        if self.client.is_none() {
+            error!("Cannot send remote task: Not connected to a remote agent.");
+            return Err(anyhow!("Not connected to a remote agent. Use :connect URL first."));
+        }
+
+        info!(message = %message, "Sending task to remote agent.");
+        let task = self.send_task_to_remote(message).await?; // send_task_to_remote logs internally now
+        info!(task_id = %task.id, status = ?task.status.state, "Remote task sent successfully.");
+
+        let mut response = format!("✅ Task sent successfully!\n   Task ID: {}\n   Initial state reported by remote: {:?}",
+                                   task.id, task.status.state);
+
+        if task.status.state == TaskState::Completed {
+            let task_response = self.extract_text_from_task(&task);
+            if task_response != "No response text available." {
+                 debug!(task_id = %task.id, "Appending immediate response from completed remote task.");
+                 response.push_str("\n\n📥 Response from remote agent:\n");
+                 response.push_str(&task_response);
+            }
+        }
+        Ok(response)
+    }
+
+    /// Handles the ':session new' REPL command logic.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    fn handle_new_session(&mut self) -> Result<String> {
+        let session_id = self.create_new_session(); // create_new_session logs internally now
+        info!("Created new session: {}", session_id);
+        Ok(format!("✅ Created new session: {}", session_id))
+    }
+
+    /// Handles the ':session show' REPL command logic.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    fn handle_show_session(&self) -> Result<String> {
+        if let Some(session_id) = &self.current_session_id {
+            debug!(session_id = %session_id, "Displaying current session ID.");
+            Ok(format!("🔍 Current session: {}", session_id))
+        } else {
+            info!("No active session.");
+            Ok("⚠️ No active session. Use :session new to create one.".to_string())
+        }
+    }
+
+    /// Handles the ':history' REPL command logic.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    async fn handle_history(&self) -> Result<String> {
+        if let Some(session_id) = &self.current_session_id {
+            debug!(session_id = %session_id, "Fetching history for current session.");
+            let tasks = self.get_current_session_tasks().await?; // get_current_session_tasks logs internally
+            if tasks.is_empty() {
+                info!(session_id = %session_id, "No tasks found in current session history.");
+                Ok("📭 No messages in current session.".to_string())
+            } else {
+                info!(session_id = %session_id, task_count = %tasks.len(), "Formatting session history.");
+                let mut output = format!("\n📝 Session History ({} Tasks):\n", tasks.len());
+                for task in tasks.iter() {
+                    output.push_str(&format!("--- Task ID: {} (Status: {:?}) ---\n", task.id, task.status.state));
+                    if let Some(history) = &task.history {
+                        for message in history {
+                            let role_icon = match message.role { Role::User => "👤", Role::Agent => "🤖", _ => "➡️" };
+                            let text = message.parts.iter()
+                                .filter_map(|p| match p {
+                                    Part::TextPart(tp) => Some(tp.text.as_str()),
+                                    Part::FilePart(_) => Some("[File Part]"),
+                                    Part::DataPart(_) => Some("[Data Part]"),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            let display_text = if text.len() > 100 { format!("{}...", &text[..97]) } else { text.to_string() };
+                            output.push_str(&format!("  {} {}: {}\n", role_icon, message.role, display_text));
+                        }
+                    } else {
+                        output.push_str("  (No message history available for this task)\n");
+                    }
+                    output.push_str("--------------------------------------\n");
+                }
+                Ok(output)
+            }
+        } else {
+            info!("Cannot show history: No active session.");
+            Err(anyhow!("No active session. Use :session new to create one."))
+        }
+    }
+
+    /// Handles the ':tasks' REPL command logic.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    async fn handle_list_tasks(&self) -> Result<String> {
+         if let Some(session_id) = &self.current_session_id {
+            debug!(session_id = %session_id, "Fetching task list for current session.");
+            if let Some(task_ids) = self.session_tasks.get(session_id) {
+                if task_ids.is_empty() {
+                    info!(session_id = %session_id, "No tasks found in current session map.");
+                    Ok("📭 No tasks recorded in current session.".to_string())
+                } else {
+                    info!(session_id = %session_id, task_count = %task_ids.len(), "Formatting task list.");
+                    let mut output = format!("\n📋 Tasks Recorded in Current Session ({}):\n", task_ids.len());
+                    for (i, task_id) in task_ids.iter().enumerate() {
+                        let params = TaskQueryParams { id: task_id.clone(), history_length: Some(0), metadata: None };
+                        let status_str = match self.task_service.get_task(params).await {
+                            Ok(task) => format!("{:?}", task.status.state),
+                            Err(_) => "Status Unknown".to_string(),
+                        };
+                        output.push_str(&format!("  {}. {} - Status: {}\n", i + 1, task_id, status_str));
+                    }
+                    Ok(output)
+                }
+            } else {
+                 info!(session_id = %session_id, "Session ID not found in task map.");
+                 Ok("📭 No tasks recorded for current session (session ID not found).".to_string())
+            }
+        } else {
+            info!("Cannot list tasks: No active session.");
+            Err(anyhow!("No active session. Use :session new to create one."))
+        }
+    }
+
+    /// Handles the ':task ID' REPL command logic.
+    #[instrument(skip(self, task_id), fields(agent_id = %self.agent_id))]
+    async fn handle_show_task(&self, task_id: &str) -> Result<String> {
+        debug!(task_id = %task_id, "Handling show task command.");
+        if task_id.is_empty() {
+            error!("No task ID provided for :task command.");
+            return Err(anyhow!("No task ID provided. Use :task TASK_ID"));
+        }
+
+        info!(task_id = %task_id, "Fetching details for task.");
+        let params = TaskQueryParams { id: task_id.to_string(), history_length: None, metadata: None };
+        match self.task_service.get_task(params).await {
+            Ok(task) => {
+                debug!(task_id = %task.id, "Formatting details for task.");
+                let mut output = String::from("\n🔍 Task Details:\n");
+                output.push_str(&format!("  ID: {}\n", task.id));
+                output.push_str(&format!("  Status: {:?}\n", task.status.state));
+                output.push_str(&format!("  Session: {}\n", task.session_id.as_deref().unwrap_or("None")));
+                output.push_str(&format!("  Timestamp: {}\n", task.status.timestamp.map(|t| t.to_rfc3339()).as_deref().unwrap_or("None")));
+                let artifact_count = task.artifacts.as_ref().map_or(0, |a| a.len());
+                output.push_str(&format!("  Artifacts: {} (use :artifacts {} to view)\n", artifact_count, task.id));
+
+                if let Some(message) = &task.status.message {
+                     let text = message.parts.iter().filter_map(|p| match p { Part::TextPart(tp) => Some(tp.text.as_str()), _ => None }).collect::<Vec<_>>().join("\n");
+                    output.push_str(&format!("\n  Status Message: {}\n", text));
+                }
+                if let Some(history) = &task.history {
+                     output.push_str(&format!("\n  History Preview ({} messages):\n", history.len()));
+                     for msg in history.iter().take(5) {
+                         let role_icon = match msg.role { Role::User => "👤", Role::Agent => "🤖", _ => "➡️" };
+                         let text = msg.parts.iter().filter_map(|p| match p { Part::TextPart(tp) => Some(tp.text.as_str()), _ => None }).collect::<Vec<_>>().join(" ");
+                         let display_text = if text.len() > 60 { format!("{}...", &text[..57]) } else { text.to_string() };
+                         output.push_str(&format!("    {} {}: {}\n", role_icon, msg.role, display_text));
+                     }
+                     if history.len() > 5 { output.push_str("    ...\n"); }
+                } else {
+                     output.push_str("\n  History: Not available or requested.\n");
+                }
+                Ok(output)
+            },
+            Err(e) => {
+                error!(task_id = %task_id, error = %e, "Failed to get task details.");
+                Err(anyhow!("Failed to get task: {}", e))
+            }
+        }
+    }
+
+     /// Handles the ':artifacts ID' REPL command logic.
+    #[instrument(skip(self, task_id), fields(agent_id = %self.agent_id))]
+    async fn handle_show_artifacts(&self, task_id: &str) -> Result<String> {
+        debug!(task_id = %task_id, "Handling show artifacts command.");
+        if task_id.is_empty() {
+            error!("No task ID provided for :artifacts command.");
+            return Err(anyhow!("No task ID provided. Use :artifacts TASK_ID"));
+        }
+
+        info!(task_id = %task_id, "Fetching artifacts for task.");
+        let params = TaskQueryParams { id: task_id.to_string(), history_length: Some(0), metadata: None };
+        match self.task_service.get_task(params).await {
+            Ok(task) => {
+                if let Some(artifacts) = &task.artifacts {
+                    if artifacts.is_empty() {
+                        info!(task_id = %task.id, "No artifacts found for task.");
+                        Ok(format!("📦 No artifacts for task {}", task.id))
+                    } else {
+                        info!(task_id = %task.id, count = %artifacts.len(), "Formatting artifacts.");
+                        let mut output = format!("\n📦 Artifacts for Task {} ({}):\n", task.id, artifacts.len());
+                        for (i, artifact) in artifacts.iter().enumerate() {
+                            output.push_str(&format!("  {}. Name: '{}', Desc: '{}', Index: {}, Parts: {}\n",
+                                                     i + 1,
+                                                     artifact.name.as_deref().unwrap_or("N/A"),
+                                                     artifact.description.as_deref().unwrap_or("N/A"),
+                                                     artifact.index,
+                                                     artifact.parts.len()));
+                        }
+                        Ok(output)
+                    }
+                } else {
+                    info!(task_id = %task.id, "Task found, but has no artifacts field.");
+                    Ok(format!("📦 No artifacts found for task {}", task.id))
+                }
+            },
+            Err(e) => {
+                error!(task_id = %task_id, error = %e, "Failed to get task for artifacts.");
+                Err(anyhow!("Failed to get task: {}", e))
+            }
+        }
+    }
+
+    /// Handles the ':cancelTask ID' REPL command logic.
+    #[instrument(skip(self, task_id), fields(agent_id = %self.agent_id))]
+    async fn handle_cancel_task(&self, task_id: &str) -> Result<String> {
+        debug!(task_id = %task_id, "Handling cancel task command.");
+        if task_id.is_empty() {
+            error!("No task ID provided for :cancelTask command.");
+            return Err(anyhow!("No task ID provided. Use :cancelTask TASK_ID"));
+        }
+
+        info!(task_id = %task_id, "Attempting to cancel task.");
+        let params = TaskIdParams { id: task_id.to_string(), metadata: None };
+        match self.task_service.cancel_task(params).await {
+            Ok(task) => {
+                info!(task_id = %task.id, status = ?task.status.state, "Successfully canceled task.");
+                Ok(format!("✅ Successfully canceled task {}\n   Current state: {:?}", task.id, task.status.state))
+            },
+            Err(e) => {
+                error!(task_id = %task_id, error = %e, "Failed to cancel task.");
+                Err(anyhow!("Failed to cancel task: {}", e))
+            }
+        }
+    }
+
+    /// Handles the ':tool NAME [PARAMS]' REPL command logic.
+    #[instrument(skip(self, tool_name, params_str), fields(agent_id = %self.agent_id))]
+    async fn handle_tool_command(&self, tool_name: &str, params_str: &str) -> Result<String> {
+        debug!(tool_name = %tool_name, params_str = %params_str, "Handling tool command.");
+        if tool_name.is_empty() {
+            error!("No tool name provided for :tool command.");
+            return Err(anyhow!("No tool name provided. Use :tool TOOL_NAME [JSON_PARAMS]"));
+        }
+
+        let params_json: Value = match serde_json::from_str(params_str) {
+            Ok(json) => json,
+            Err(e) => {
+                error!(error = %e, input_params = %params_str, "Failed to parse JSON parameters for :tool command.");
+                return Err(anyhow!("Invalid JSON parameters: {}", e));
+            }
+        };
+
+        if let Some(executor) = &self.task_service.tool_executor {
+            match executor.execute_tool(tool_name, params_json).await {
+                Ok(result) => {
+                    info!(tool_name = %tool_name, "Tool executed successfully via REPL.");
+                    let result_pretty = serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
+                    Ok(format!("\n🛠️ Tool Result ({}):\n{}\n", tool_name, result_pretty))
+                }
+                Err(e) => {
+                    error!(tool_name = %tool_name, error = %e, "Error executing tool via REPL.");
+                    Err(anyhow!("Error executing tool '{}': {}", tool_name, e))
+                }
+            }
+        } else {
+            error!("ToolExecutor not available in TaskService for :tool command.");
+            Err(anyhow!("Tool execution is not configured for this agent."))
+        }
+    }
+
+    // Add handle_listen and handle_stop, needing access to server_running and server_shutdown_token
+    // These cannot be easily refactored without passing the state, which we are avoiding.
+    // They will remain directly in run_repl for now.
+
+    /// Handles the ':card' REPL command logic.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    fn handle_show_card(&self) -> Result<String> {
+        debug!("Handling show card command.");
+        let card = self.create_agent_card(); // Logs internally
+        info!(agent_name = %card.name, "Formatting agent card.");
+        let mut output = String::from("\n📇 Agent Card:\n");
+        output.push_str(&format!("  Name: {}\n", card.name));
+        output.push_str(&format!("  Description: {}\n", card.description.as_deref().unwrap_or("None")));
+        output.push_str(&format!("  URL: {}\n", card.url));
+        output.push_str(&format!("  Version: {}\n", card.version));
+        output.push_str("  Capabilities:\n");
+        output.push_str(&format!("    - Streaming: {}\n", card.capabilities.streaming));
+        output.push_str(&format!("    - Push Notifications: {}\n", card.capabilities.push_notifications));
+        output.push_str(&format!("    - State Transition History: {}\n", card.capabilities.state_transition_history));
+        output.push_str(&format!("  Input Modes: {}\n", card.default_input_modes.join(", ")));
+        output.push_str(&format!("  Output Modes: {}\n", card.default_output_modes.join(", ")));
+        output.push_str("\n");
+        Ok(output)
+    }
+
+    /// Handles the ':help' REPL command logic.
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    fn handle_help(&self) -> Result<String> {
+        debug!("Handling help command.");
+        // Reuse the print_repl_help logic, but capture output to string
+        // This is a bit tricky, maybe just return a static help string?
+        Ok(String::from(
+            "\n========================================\n\
+             ⚡ Bidirectional A2A Agent REPL Commands ⚡\n\
+             ========================================\n\
+               :help            - Show this help message\n\
+               :card            - Show agent card\n\
+               :servers         - List known remote servers\n\
+               :connect URL     - Connect to a remote agent at URL\n\
+               :connect HOST:PORT - Connect to a remote agent by host and port\n\
+               :connect N       - Connect to Nth server in the server list\n\
+               :disconnect      - Disconnect from current remote agent\n\
+               :remote MSG      - Send message as task to connected agent\n\
+               :listen PORT     - Start listening server on specified port\n\
+               :stop            - Stop the currently running server\n\
+               :session new     - Create a new conversation session\n\
+               :session show    - Show the current session ID\n\
+               :history         - Show message history for current session\n\
+               :tasks           - List all tasks in the current session\n\
+               :task ID         - Show details for a specific task\n\
+               :artifacts ID    - Show artifacts for a specific task\n\
+               :cancelTask ID   - Cancel a running task\n\
+               :file PATH MSG   - Send message with a file attachment (Not Implemented)\n\
+               :data JSON MSG   - Send message with JSON data (Not Implemented)\n\
+               :tool NAME [PARAMS] - Execute local tool with optional JSON parameters\n\
+               :quit            - Exit the REPL\n\
+             ========================================\n\
+             You can also type many commands without the ':' prefix (e.g., 'connect URL', 'list servers').\n"
+        ))
+    }
+
+    /// Central handler for REPL commands (called by run_repl and process_message_locally)
+    /// Needs mutable access to self for state changes.
+    /// server_running and server_shutdown_token need to be passed in/out or managed differently.
+    /// For now, :listen and :stop are omitted from this refactoring.
+    #[instrument(skip(self, command, args), fields(agent_id = %self.agent_id))]
+    async fn handle_repl_command(&mut self, command: &str, args: &str) -> Result<String> {
+        debug!(%command, %args, "Handling REPL command via central handler.");
+        match command {
+            "help" => self.handle_help(),
+            "card" => self.handle_show_card(),
+            "servers" => self.handle_list_servers(),
+            "connect" => self.handle_connect(args).await,
+            "disconnect" => self.handle_disconnect(),
+            "remote" => self.handle_remote_message(args).await,
+            "session" => {
+                match args {
+                    "new" => self.handle_new_session(),
+                    "show" => self.handle_show_session(),
+                    _ => Err(anyhow!("Unknown session command. Use ':session new' or ':session show'"))
+                }
+            }
+            "history" => self.handle_history().await,
+            "tasks" => self.handle_list_tasks().await,
+            "task" => self.handle_show_task(args).await,
+            "artifacts" => self.handle_show_artifacts(args).await,
+            "cancelTask" => self.handle_cancel_task(args).await,
+            "tool" => {
+                let (tool_name, params_str) = match args.split_once(' ') {
+                    Some((name, params)) => (name, params),
+                    None => (args, "{}"), // Assume only tool name if no space
+                };
+                self.handle_tool_command(tool_name, params_str).await
+            }
+            // :listen and :stop are NOT handled here due to state access issues
+            "listen" | "stop" => {
+                 warn!(":listen and :stop commands must be handled directly in run_repl due to server state management.");
+                 Err(anyhow!("Command '{}' cannot be handled by this central handler.", command))
+            }
+            _ => {
+                warn!(%command, "Attempted to handle unknown command centrally.");
+                Err(anyhow!("Unknown command: '{}'", command))
+            }
+        }
+    }
 }
+
 #[derive(Clone, Debug, Deserialize)]
 
 pub struct ServerConfig {
