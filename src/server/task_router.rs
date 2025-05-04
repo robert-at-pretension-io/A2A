@@ -49,7 +49,8 @@ impl SubtaskDefinition {
         Self {
             id: format!("subtask-{}", Uuid::new_v4()),
             input_message,
-            metadata: Some(serde_json::Map::new()),
+            metadata: Some(HashMap::new()), // Use HashMap instead of serde_json::Map
+            routing_decision: None, // Initialize the missing field
         }
     }
 }

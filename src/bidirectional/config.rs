@@ -102,9 +102,27 @@ pub struct ModeConfig {
     // Optional file to append REPL interactions (input/output)
     #[serde(default)]
     pub repl_log_file: Option<String>,
+
+    // --- Experimental Flags ---
+    /// Enable proactive ambiguity resolution (NP1)
+    #[serde(default)]
+    pub experimental_clarification: bool,
+
+    /// Enable task decomposition planning (NP2)
+    #[serde(default)]
+    pub experimental_decomposition: bool,
+
+    /// Confidence threshold (0.0-1.0) below which proactive confirmation (NP5) is triggered.
+    /// Set to > 1.0 to disable. Default is 1.1 (disabled).
+    #[serde(default = "default_proactive_confirmation_threshold")]
+    pub proactive_confirmation_threshold: f64,
 }
 
 // --- Default Functions ---
+
+fn default_proactive_confirmation_threshold() -> f64 {
+    1.1 // Disabled by default
+}
 
 fn default_port() -> u16 {
     DEFAULT_PORT
