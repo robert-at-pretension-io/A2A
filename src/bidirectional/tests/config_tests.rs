@@ -1,4 +1,5 @@
-use crate::bidirectional::bidirectional_agent::{
+// Update the use path to point to the new config module
+use crate::bidirectional::config::{
     BidirectionalAgentConfig, ServerConfig, ClientConfig, LlmConfig, ModeConfig
 };
 use std::fs;

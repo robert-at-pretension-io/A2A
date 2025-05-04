@@ -80,9 +80,6 @@
 //! If no configuration file is provided, the agent starts with sensible defaults
 //! and automatically enters REPL mode for interactive use.
 
-// Declare modules within the bidirectional module
-mod config;
-
 // Import from other modules in the crate
 use crate::client::{
     A2aClient,
