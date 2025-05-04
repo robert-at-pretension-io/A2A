@@ -94,7 +94,68 @@ The bidirectional agent consists of several key components:
 - **ClaudeLlmClient**: Integrates with Claude API for processing tasks
 - **AgentDirectory**: Maintains information about known remote agents with persistent storage
 - **ListAgentsTool**: Tool for discovering and sharing agent information
-- **ToolExecutor**: Executes local tools including echo, llm, summarize, and list_agents
+- **ToolExecutor**: Executes local tools including echo, llm, summarize, list_agents, remember_agent, and execute_command.
+
+## Detailed User Flow & LLM Decision Points
+
+The agent processes user input (from REPL or A2A requests) through a series of steps, with several key decision points handled by an LLM:
+
+1.  **Input Reception:** User input is received via the REPL or an incoming A2A `tasks/send` request.
+
+2.  **REPL Input Handling:**
+    *   **Commands (`:`):** Specific commands like `:listen`, `:stop`, `:quit` are handled directly. Other commands (`:connect`, `:remote`, `:tool`, etc.) bypass the main LLM routing and execute predefined actions or directly call the `ToolExecutor`. **No LLM routing decision here.**
+    *   **Text Input:** If the input doesn't start with `:`:
+        *   It's checked against command keywords (e.g., "connect", "list servers"). If it matches, it's treated like a command. **No LLM routing decision here.**
+        *   If it doesn't match keywords, it's treated as a message for processing and proceeds to the `TaskService`.
+
+3.  **Task Service Processing (`TaskService::process_task`):**
+    *   Determines if the task ID already exists.
+    *   **New Task:** Creates a new task object, saves it, and calls `task_router.route_task`. -> **Go to Step 5 (Routing)**.
+    *   **Existing Task (Follow-up):** Retrieves the task, adds the new message to history, saves the intermediate state, and calls `task_router.process_follow_up`. -> **Go to Step 4 (Follow-up Routing)**.
+
+4.  **Router - Follow-up Message (`BidirectionalTaskRouter::process_follow_up`):**
+    *   Checks if the task is in `InputRequired` state *and* returning from a remote agent (based on metadata).
+        *   **If YES (Returning InputRequired):**
+            *   **LLM Decision Point 1: Handle Directly or Request Human Input?**
+                *   **Input:** Task history, reason for input requirement, new follow-up message.
+                *   **Prompt:** Asks LLM if it can now proceed (`HANDLE_DIRECTLY`) or if human input is still needed (`NEED_HUMAN_INPUT`).
+                *   **Output:**
+                    *   `HANDLE_DIRECTLY`: Routes to local `llm` tool. -> **Go to Step 6 (Execution)**.
+                    *   `NEED_HUMAN_INPUT` / Unclear: Routes to special local `human_input` tool. -> **Go to Step 6 (Execution)**.
+        *   **If NO (Normal Follow-up):**
+            *   Defaults to local processing using the `llm` tool with the follow-up text. -> **Go to Step 6 (Execution)**.
+
+5.  **Router - New Task Routing (`BidirectionalTaskRouter::route_task` -> `decide_execution_mode`):**
+    *   **LLM Decision Point 2: Local vs. Remote vs. Reject?**
+        *   **Input:** Local tool descriptions, remote agent descriptions (from `AgentRegistry`), full conversation history.
+        *   **Prompt:** Asks LLM to choose `LOCAL`, `REMOTE: [agent-id]`, or `REJECT: [reason]`. (Crucially, internal commands like `connect` should be `LOCAL`).
+        *   **Output:**
+            *   `REMOTE: agent-id`: Verifies agent exists in registry. If yes, returns `RoutingDecision::Remote`. -> **Go to Step 6 (Execution)**. If no, falls back to `LOCAL` (LLM tool). -> **Go to Step 6 (Execution)**.
+            *   `REJECT: reason`: Returns `RoutingDecision::Reject`. -> **Go to Step 6 (Execution)**.
+            *   `LOCAL`: -> **Proceed to LLM Decision Point 3**.
+            *   Unclear / Fallback: Returns `RoutingDecision::Local` (LLM tool). -> **Go to Step 6 (Execution)**.
+    *   **LLM Decision Point 3: Choose Local Tool & Parameters (if Decision 2 was `LOCAL`)**
+        *   **Input:** Conversation history, local tool list with parameter hints.
+        *   **Prompt:** Asks LLM to choose the single best tool and return JSON `{"tool_name": "...", "params": {...}}`. (Crucially, internal commands must use `execute_command` tool).
+        *   **Output:**
+            *   Valid Tool/Params JSON: Returns `RoutingDecision::Local { tool_name, params }`. -> **Go to Step 6 (Execution)**.
+            *   Invalid/Fallback: Returns `RoutingDecision::Local` (LLM tool). -> **Go to Step 6 (Execution)**.
+
+6.  **Task Service - Execution:**
+    *   Receives the `RoutingDecision`.
+    *   Updates task state to `Working`.
+    *   **Local Execution:** Calls `tool_executor.execute_tool`.
+        *   **`LlmTool`:** **LLM Usage Point 4 (Task Fulfillment)** - Calls the LLM again to generate the actual response to the user's query.
+        *   **`ExecuteCommandTool`:** Calls the appropriate non-LLM REPL command handler.
+        *   **`human_input` Tool:** Sets task state back to `InputRequired` to re-prompt the original user.
+        *   Other tools execute their specific logic.
+    *   **Remote Execution:** Calls `client_manager.delegate_task` which uses `A2aClient` to send the task to the remote agent.
+    *   **Reject Execution:** Sets task state to `Failed` with the rejection reason.
+    *   Updates and saves the final task state in the `TaskRepository`.
+
+7.  **Response Generation:**
+    *   **REPL:** Extracts text from the final task (artifacts, status, history) and prints it. Appends an indicator if the task ended in `InputRequired`.
+    *   **A2A Server:** Formats the final task object (or error) into a JSON-RPC response and sends it back to the requesting client.
 
 ## Usage
 
