@@ -349,26 +349,47 @@ impl BidirectionalTaskRouter {
             .join("\n\n");
         trace!(agent_descriptions = %agent_descriptions, "Formatted agent descriptions for prompt.");
 
+        // --- Add Local Tool Descriptions to Prompt ---
+        debug!("Fetching descriptions of locally enabled tools for routing prompt.");
+        let local_tool_descriptions = self.enabled_tools.iter()
+            .map(|tool_name| {
+                let description = match tool_name.as_str() {
+                    "llm" => "General purpose LLM request. Good for questions, generation, analysis if no specific tool fits.",
+                    "summarize" => "Summarizes the input text.",
+                    "list_agents" => "Lists known agents registered with this agent.",
+                    "remember_agent" => "Stores information about another agent given its URL.",
+                    "echo" => "Simple echo tool for testing.",
+                    _ => "A custom tool.",
+                };
+                format!("- {}: {}", tool_name, description)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        trace!(local_tool_descriptions = %local_tool_descriptions, "Formatted local tool descriptions for routing prompt.");
+        // --- End Add Local Tool Descriptions ---
+
+
         // Build a prompt for the LLM to decide routing
         debug!("Building routing prompt for LLM.");
         let routing_prompt = format!(r#"
-You need to decide whether to handle a task locally, delegate it to another agent, or reject it entirely.
+You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
 
-AVAILABLE AGENTS:
+YOUR LOCAL TOOLS:
+{}
+
+AVAILABLE REMOTE AGENTS:
 {}
 
 TASK:
 {}
 
-Please analyze the task and decide whether to:
-1. Handle it locally (respond with "LOCAL")
-2. Delegate to a specific agent (respond with "REMOTE: [agent-id]")
-3. Reject the task (respond with "REJECT: [reason]")
-   - Reject tasks that are inappropriate, harmful, impossible, or outside your capabilities
-   - Provide a brief explanation for why you're rejecting the task
+Based on the TASK, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action:
+1. Handle it locally if one of YOUR LOCAL TOOLS is suitable (respond with "LOCAL").
+2. Delegate to a specific remote agent if it's more appropriate (respond with "REMOTE: [agent-id]"). Choose the most relevant agent if multiple are available.
+3. Reject the task if it's inappropriate, harmful, impossible, or outside both your local capabilities and the capabilities of available remote agents (respond with "REJECT: [reason]"). Provide a brief explanation.
 
-Your response should be exactly one of those formats, with no additional text.
-"#, agent_descriptions, task_text);
+Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text.
+"#, local_tool_descriptions, agent_descriptions, task_text); // Added local_tool_descriptions
         trace!(routing_prompt = %routing_prompt, "Constructed routing prompt.");
 
         info!("Requesting routing decision from LLM.");
