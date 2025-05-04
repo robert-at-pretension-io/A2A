@@ -108,7 +108,7 @@ repl_log_file = "remember_agent_demo.log"
 
 [tools]
 # Enable remember_agent and list_agents
-enabled = ["echo", "list_agents", "remember_agent", "llm"] 
+enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command"] # <-- Add execute_command
 # REMOVED agent_directory_path
 EOF
 
@@ -132,7 +132,7 @@ repl = true # Keep REPL for observation if needed
 repl_log_file = "remember_agent_demo.log"
 
 [tools]
-enabled = ["echo", "llm"] # Only basic tools needed
+enabled = ["echo", "llm", "execute_command"] # Only basic tools needed # <-- Add execute_command
 # REMOVED agent_directory_path
 EOF
 

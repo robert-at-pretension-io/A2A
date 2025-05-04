@@ -427,6 +427,7 @@ Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, o
                         "summarize" => "Summarizes the input text. Expects {\"text\": \"...\"}",
                         "list_agents" => "Lists known agents. Use only if the task is explicitly about listing agents. Expects {} or {\"format\": \"simple\" | \"detailed\"}",
                         "remember_agent" => "Stores information about another agent given its URL. Expects {\"agent_base_url\": \"http://...\"}",
+                        "execute_command" => "Executes internal agent commands (like connect, disconnect, servers, session new, card). Use for requests matching these commands. Expects {\"command\": \"command_name\", \"args\": \"arguments_string\"}", // <-- Add description
                         "echo" => "Simple echo tool for testing. Use only if the task is explicitly to echo. Expects {\"text\": \"...\"}",
                         _ => "A custom tool with potentially unknown parameters.",
                     };
@@ -455,6 +456,9 @@ Examples:
 - For a task like "remember agent at http://foo.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://foo.com"}}}}
 - For a task like "list known agents simply": {{"tool_name": "list_agents", "params": {{"format": "simple"}}}}
 - For a task like "echo hello": {{"tool_name": "echo", "params": {{"text": "hello"}}}}
+- For a task like "connect to http://bar.com": {{"tool_name": "execute_command", "params": {{"command": "connect", "args": "http://bar.com"}}}} // <-- Add example
+- For a task like "list servers": {{"tool_name": "execute_command", "params": {{"command": "servers", "args": ""}}}} // <-- Add example
+- For a task like "start a new session": {{"tool_name": "execute_command", "params": {{"command": "session", "args": "new"}}}} // <-- Add example
 - For a general question: {{"tool_name": "llm", "params": {{"text": "original question text..."}}}}
 - If no specific parameters are needed for the chosen tool (like list_agents with default format): {{"tool_name": "list_agents", "params": {{}}}}
 
@@ -720,13 +724,24 @@ impl BidirectionalAgent {
         debug!("Initializing ToolExecutor.");
         // Create new known_servers map to pass to ToolExecutor
         let known_servers = Arc::new(DashMap::new());
-        
+
+        // Get agent's own info needed for ExecuteCommandTool
+        let agent_id_for_tool = config.server.agent_id.clone();
+        let agent_name_for_tool = config.server.agent_name.clone().unwrap_or_else(|| agent_id_for_tool.clone());
+        let bind_address_for_tool = config.server.bind_address.clone();
+        let port_for_tool = config.server.port;
+
         let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
             &config.tools.enabled,            // Pass slice of enabled tool names
             Some(llm.clone()),                // Pass LLM client (as Option)
-            // REMOVED agent_directory argument
             Some(agent_registry.clone()),     // Pass canonical AgentRegistry (as Option)
             Some(known_servers.clone()),      // Pass known_servers map for synchronization
+            // Pass agent's own info
+            &agent_id_for_tool,
+            &agent_name_for_tool,
+            &bind_address_for_tool,
+            port_for_tool,
+            // None, // Omit TaskService for now
         ));
         trace!("ToolExecutor created.");
 
