@@ -3,13 +3,15 @@
 use crate::server::error::ServerError;
 use crate::bidirectional::bidirectional_agent::LlmClient; // Import LlmClient (AgentDirectory removed)
 use crate::types::{
-    Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact, AgentCard
+    Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact, AgentCard, AgentCapabilities // <-- Import AgentCapabilities
 };
+use crate::client::A2aClient; // <-- Import A2aClient
 use anyhow; // Import anyhow for error handling in new tools
 use dashmap::DashMap; // For known_servers sync
+use uuid::Uuid; // <-- Import Uuid
 
 use serde_json::{json, Value};
-use tracing::{instrument, debug, info};
+use tracing::{instrument, debug, info, warn}; // <-- Import warn macro
 use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::Utc;
@@ -35,6 +37,9 @@ pub enum ToolError {
 
     #[error("Tool execution failed due to external error: {0}")]
     ExternalError(String), // For wrapping anyhow::Error
+
+    #[error("Operation '{1}' is not supported by tool '{0}'")] // <-- Add new variant
+    UnsupportedOperation(String, String),
 }
 
 // Implement conversion from std::io::Error
@@ -74,8 +79,10 @@ impl From<ToolError> for ServerError {
                 ServerError::ConfigError(format!("Tool '{}' configuration error: {}", tool, msg)),
             ToolError::IoError(msg) =>
                 ServerError::ServerTaskExecutionFailed(format!("I/O error during tool execution: {}", msg)),
-            ToolError::ExternalError(msg) => // Handle new error variant
+            ToolError::ExternalError(msg) =>
                 ServerError::ServerTaskExecutionFailed(format!("External error during tool execution: {}", msg)),
+            ToolError::UnsupportedOperation(tool, op) => // <-- Handle new variant
+                ServerError::UnsupportedOperation(format!("Operation '{}' not supported by tool '{}'", op, tool)),
         }
     }
 }
@@ -326,6 +333,7 @@ pub struct ExecuteCommandTool {
     // We need the agent's own ID and potentially name/port for some commands like 'card'
     agent_id: String,
     agent_name: String,
+    agent_version: String, // <-- Add agent_version field
     bind_address: String,
     port: u16,
     // We need the LLM for the 'remote' command simulation
@@ -342,6 +350,7 @@ impl ExecuteCommandTool {
         known_servers: Arc<DashMap<String, String>>,
         agent_id: String,
         agent_name: String,
+        agent_version: String, // <-- Add agent_version parameter
         bind_address: String,
         port: u16,
         llm: Option<Arc<dyn LlmClient>>,
@@ -352,6 +361,7 @@ impl ExecuteCommandTool {
             known_servers,
             agent_id,
             agent_name,
+            agent_version, // <-- Store agent_version
             bind_address,
             port,
             llm,
@@ -444,7 +454,7 @@ impl ExecuteCommandTool {
         let card = AgentCard {
             name: self.agent_name.clone(),
             description: Some("A bidirectional A2A agent.".to_string()),
-            version: AGENT_VERSION.to_string(),
+            version: self.agent_version.clone(), // <-- Use stored version
             url: format!("http://{}:{}", self.bind_address, self.port),
             capabilities,
             authentication: None, default_input_modes: vec!["text".to_string()], default_output_modes: vec!["text".to_string()],
@@ -566,6 +576,7 @@ impl ToolExecutor {
         // Need agent's own info for ExecuteCommandTool
         agent_id: &str,
         agent_name: &str,
+        agent_version: &str, // <-- Add agent_version parameter
         bind_address: &str,
         port: u16,
         // task_service: Option<Arc<crate::server::services::task_service::TaskService>>, // Omit for now
@@ -632,6 +643,7 @@ impl ToolExecutor {
                                     ks,
                                     agent_id.to_string(),
                                     agent_name.to_string(),
+                                    agent_version.to_string(), // <-- Pass agent_version
                                     bind_address.to_string(),
                                     port,
                                     llm.clone(), // Pass LLM if available

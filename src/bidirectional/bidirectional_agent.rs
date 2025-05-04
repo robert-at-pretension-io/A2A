@@ -728,6 +728,7 @@ impl BidirectionalAgent {
         // Get agent's own info needed for ExecuteCommandTool
         let agent_id_for_tool = config.server.agent_id.clone();
         let agent_name_for_tool = config.server.agent_name.clone().unwrap_or_else(|| agent_id_for_tool.clone());
+        let agent_version_for_tool = AGENT_VERSION; // <-- Get agent version from constant
         let bind_address_for_tool = config.server.bind_address.clone();
         let port_for_tool = config.server.port;
 
@@ -739,6 +740,7 @@ impl BidirectionalAgent {
             // Pass agent's own info
             &agent_id_for_tool,
             &agent_name_for_tool,
+            agent_version_for_tool, // <-- Pass agent_version
             &bind_address_for_tool,
             port_for_tool,
             // None, // Omit TaskService for now
