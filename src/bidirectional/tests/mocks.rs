@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use crate::bidirectional::bidirectional_agent::LlmClient;
+use crate::bidirectional::llm_client::LlmClient;
 use crate::client::{A2aClient, errors::ClientError};
 use crate::types::{Task, AgentCard, AgentCapabilities, TaskStatus, TaskState, TaskSendParams, Message};
 use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};

@@ -10,5 +10,5 @@ pub mod tests;
 // Re-export key components
 pub use self::config::BidirectionalAgentConfig;
 pub use self::llm_client::{LlmClient, ClaudeLlmClient};
-pub use self::task_router::BidirectionalTaskRouter; // <-- Add this line
+pub use self::task_router::{BidirectionalTaskRouter, ExecutionMode};
 pub use self::bidirectional_agent::BidirectionalAgent;

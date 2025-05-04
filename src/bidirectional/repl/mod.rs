@@ -10,7 +10,7 @@ use super::{agent_helpers, bidirectional_agent::BidirectionalAgent}; // Add agen
 use crate::server::run_server;
 
 // Import command handlers from the sibling module
-mod commands;
+pub mod commands;
 use commands::*;
 
 /// Run an interactive REPL (Read-Eval-Print Loop)

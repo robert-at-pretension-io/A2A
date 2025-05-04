@@ -149,7 +149,7 @@ async fn test_router_prompt_formatting() {
     
     // Check the first prompt (routing)
     let routing_prompt = &calls[0];
-    assert!(routing_prompt.contains("You need to decide whether to handle a task locally or delegate it to another agent"));
+    assert!(routing_prompt.contains("You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely"));
     assert!(routing_prompt.contains("Please route this task appropriately"));
     assert!(routing_prompt.contains("test-agent-1"));
     assert!(routing_prompt.contains("test-agent-2"));
@@ -158,9 +158,9 @@ async fn test_router_prompt_formatting() {
 
     // Check the second prompt (tool choice)
     let tool_choice_prompt = &calls[1];
-    assert!(tool_choice_prompt.contains("You have the following local tools available"));
-    assert!(tool_choice_prompt.contains("echo, llm")); // Check enabled tools list
-    assert!(tool_choice_prompt.contains("choose the single best tool"));
+    assert!(tool_choice_prompt.contains("You have decided to handle the latest request in the following CONVERSATION HISTORY locally"));
+    assert!(tool_choice_prompt.contains("AVAILABLE LOCAL TOOLS:"));
+    assert!(tool_choice_prompt.contains("choose the SINGLE most appropriate tool"));
     // Removed assertions using the old 'prompt' variable
 }
 

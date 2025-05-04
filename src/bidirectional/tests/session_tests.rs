@@ -1,4 +1,5 @@
-use crate::bidirectional::bidirectional_agent::{BidirectionalAgent, BidirectionalAgentConfig, ServerConfig, ClientConfig, LlmConfig, ModeConfig};
+use crate::bidirectional::BidirectionalAgent;
+use crate::bidirectional::config::{BidirectionalAgentConfig, ServerConfig, ClientConfig, LlmConfig, ModeConfig};
 use crate::bidirectional::tests::mocks::MockLlmClient;
 use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role};
 use std::sync::Arc;

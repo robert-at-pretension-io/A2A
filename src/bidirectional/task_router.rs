@@ -10,9 +10,19 @@ use crate::types::{Message, Part, Role, Task, TaskSendParams, TaskState, TaskSta
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument, trace, warn};
+
+/// Task execution mode
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ExecutionMode {
+    /// Process the task locally with the agent
+    Local,
+    /// Delegate to a remote agent
+    Remote { agent_id: String },
+}
 
 // Define a struct that implements the server's TaskRouterTrait
 #[derive(Clone)]

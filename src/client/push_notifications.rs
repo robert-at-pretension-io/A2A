@@ -1,4 +1,4 @@
-// use std::error::Error; // Unused
+use std::error::Error;
 use serde_json::{/* json, */ Value}; // Removed json
 
 use crate::client::A2aClient;
@@ -162,6 +162,7 @@ impl A2aClient {
 mod tests {
     use super::*;
     use mockito::Server;
+    use serde_json::json;
     use tokio::test;
     
     #[test]

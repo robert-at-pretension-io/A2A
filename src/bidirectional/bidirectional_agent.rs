@@ -87,6 +87,7 @@ use crate::client::{
     streaming::{/* StreamingResponse, StreamingResponseStream */}, // Unused
 };
 
+use crate::server::{
     repositories::task_repository::{TaskRepository, InMemoryTaskRepository},
     services::{
         task_service::TaskService,
@@ -139,29 +140,21 @@ use tracing_subscriber::{fmt::{self, format::FmtSpan}, layer::SubscriberExt, uti
 use uuid::Uuid;
 
 // Use items from the new config module (relative to parent mod.rs)
-use super::agent_helpers; // <-- Add this line
+use super::agent_helpers;
 use super::config::*;
 use super::llm_client::{LlmClient, ClaudeLlmClient};
+use super::task_router::ExecutionMode;
 // Import the router struct
 use crate::bidirectional::BidirectionalTaskRouter;
 
 // REMOVED AgentLogContext struct and impl block
 
 // Constants
-const AGENT_NAME: &str = "Bidirectional A2A Agent";
-const AGENT_VERSION: &str = "1.0.0";
+pub const AGENT_NAME: &str = "Bidirectional A2A Agent";
+pub const AGENT_VERSION: &str = "1.0.0";
 // Defaults moved to config.rs
 
-// Helper Types (Keep ExecutionMode for now, might move later)
-
-/// Task execution mode
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ExecutionMode {
-    /// Process the task locally with the agent
-    Local,
-    /// Delegate to a remote agent
-    Remote { agent_id: String },
-}
+// ExecutionMode enum moved to task_router.rs
 
 // REMOVED AgentDirectoryEntry struct definition
 // REMOVED AgentDirectory struct definition and impl block
@@ -397,18 +390,7 @@ impl BidirectionalAgent {
         Ok(agent)
     }
 
-    /// Create a session on demand so remote tasks can be grouped
-    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
-    async fn ensure_session(&mut self) {
-        trace!("Ensuring session exists.");
-        if agent.current_session_id.is_none() {
-            debug!("No current session ID found. Creating one.");
-            let session_id = agent_helpers::create_new_session(agent); // Call helper
-            debug!(session_id = %session_id, "Created new session on demand."); // Changed to debug
-        } else {
-            trace!(session_id = %agent.current_session_id.as_deref().unwrap_or("None"), "Session already exists.");
-        }
-    }
+    // ensure_session moved to agent_helpers.rs
 
 
     /// Process a message locally (e.g., from REPL input that isn't a command)
@@ -449,7 +431,7 @@ impl BidirectionalAgent {
 
         // Ensure we have an active session before processing
         debug!("Ensuring session exists before processing message.");
-        agent_helpers::ensure_session(self).await; // Call helper
+        agent_helpers::ensure_session(self).await; // Call helper function
 
         // Check if we're continuing an existing task that is in InputRequired state
         debug!("Checking if continuing an InputRequired task.");
@@ -585,232 +567,28 @@ impl BidirectionalAgent {
     /// Run the agent server
     #[instrument(skip(self), fields(agent_id = %self.agent_id, port = %self.port, bind_address = %self.bind_address))]
     pub async fn run(&self) -> Result<()> {
-        info!("Starting agent server run sequence."); // Keep info for server start sequence
-        // Create a cancellation token for graceful shutdown
-        debug!("Creating server shutdown token.");
-        let shutdown_token = CancellationToken::new();
-        let shutdown_token_clone = shutdown_token.clone();
-
-        // Set up signal handlers for graceful shutdown
-        debug!("Setting up signal handlers (Ctrl+C).");
-        let agent_id_clone = self.agent_id.clone(); // Clone for the signal handler task
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.expect("Failed to install CTRL+C handler");
-            // Use tracing within the signal handler task
-            let span = tracing::info_span!("signal_handler", agent_id = %agent_id_clone);
-            let _enter = span.enter();
-            info!("Received Ctrl+C shutdown signal."); // Keep info for signal
-            println!("\n🛑 Received shutdown signal, stopping server..."); // Added emoji
-            shutdown_token_clone.cancel();
-            debug!("Cancellation token cancelled by signal handler.");
-        });
-
-        // Create the agent card for this server
-        debug!("Creating agent card for server endpoint.");
-        let agent_card = self.create_agent_card(); // Logs internally
-        debug!(agent_name = %agent_card.name, "Generated agent card for server."); // Changed to debug
-
-        // Convert to JSON value for the server
-        trace!("Serializing agent card to JSON for server.");
-        let agent_card_json = match serde_json::to_value(&agent_card) {
-             Ok(json) => {
-                 trace!(?json, "Agent card serialized successfully.");
-                 json
-             }
-             Err(e) => {
-                 error!(error = %e, "Failed to serialize agent card to JSON. Using empty object.");
-                 serde_json::json!({})
-             }
-        };
-
-        info!(bind_address = %self.bind_address, port = %self.port, "Attempting to start server via run_server.");
-        // Start the server - handle the Box<dyn Error> specially
-        let server_handle = match run_server(
-            self.port,
-            &self.bind_address,
-            self.task_service.clone(),
-            self.streaming_service.clone(),
-            self.notification_service.clone(),
-            shutdown_token.clone(),
-            Some(agent_card_json), // Pass our custom agent card
-        ).await {
-            Ok(handle) => {
-                info!(bind_address = %self.bind_address, port = %self.port, "Server started successfully."); // Keep info for server start success
-                handle
-            },
-            Err(e) => {
-                error!(bind_address = %self.bind_address, port = %self.port, error = %e, "Failed to start server.");
-                // Return an error that can be handled by the caller (e.g., main)
-                return Err(anyhow!("Failed to start server: {}", e));
-            }
-        };
-
-        println!("🔌 Server running on http://{}:{}", self.bind_address, self.port); // Added emoji
-
-        // Wait for the server to complete or be cancelled
-        debug!("Waiting for server task to complete or be cancelled."); // Changed to debug
-        match server_handle.await {
-            Ok(()) => {
-                info!("Server shut down gracefully."); // Keep info for graceful shutdown
-                Ok(())
-            }
-            Err(join_err) => {
-                error!(error = %join_err, "Server join error.");
-                Err(anyhow!("Server join error: {}", join_err))
-            }
-        }
+        // Use the run_server function from agent_helpers.rs
+        agent_helpers::run_server(self).await
     }
 
     /// Send a task to a remote agent using the A2A client, ensuring session consistency.
     #[instrument(skip(self, message), fields(agent_id = %self.agent_id, message_len = message.len()))]
     // Make pub so REPL module can access it
     pub async fn send_task_to_remote(&mut self, message: &str) -> Result<Task> {
-        debug!("Attempting to send task to remote agent."); // Changed to debug
-        trace!(message = %message, "Message content for remote task.");
-        // ① Ensure a session exists locally
-        debug!("Ensuring local session exists.");
-        self.ensure_session().await; // Logs internally if new session created
-        let session_id = self.current_session_id.clone(); // Clone session_id for sending
-        trace!(?session_id, "Using session ID for remote task.");
-
-        let remote_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
-        info!(remote_url = %remote_url, session_id = ?session_id, "Attempting to send task to remote agent."); // Keep info for sending attempt
-
-        // Get mutable reference to the client
-        debug!("Getting A2A client instance.");
-        let client = match self.client.as_mut() {
-             Some(c) => c,
-             None => {
-                 error!("No remote client configured. Use :connect first.");
-                 return Err(anyhow!("No remote client configured. Use :connect first."));
-             }
-        };
-        trace!("A2A client obtained.");
-
-        // ② Send the task with the current session ID
-        debug!("Calling client.send_task.");
-        let task_result = client.send_task(message, session_id.clone()).await; // Pass cloned session_id
-        trace!(?task_result, "Result from client.send_task.");
-
-        let task = match task_result {
-            Ok(t) => {
-                info!(remote_url = %remote_url, task_id = %t.id, status = ?t.status.state, "Successfully sent task and received response."); // Keep info for success
-                trace!(?t, "Received task object from remote.");
-                t
-            }
-            Err(e) => {
-                error!(remote_url = %remote_url, error = %e, "Error sending task to remote agent.");
-                return Err(anyhow!("Error sending task to {}: {}", remote_url, e));
-            }
-        };
-
-        // ③ Mirror the returned task locally (read-only copy)
-        let task_id_clone = task.id.clone(); // Clone ID for logging messages
-        debug!(task_id = %task_id_clone, "Importing remote task locally for tracking.");
-        match self.task_service.import_task(task.clone()).await {
-            Ok(()) => {
-                debug!(task_id = %task_id_clone, "Cached remote task locally."); // Changed to debug
-            }
-            Err(e) => {
-                // Log warning if caching fails, but don't fail the whole operation
-                warn!(task_id = %task_id_clone, error = %e, "Could not cache remote task locally.");
-            }
-        }
-
-        // ④ Add the task (local mirror) to the current session history
-        debug!(task_id = %task.id, "Saving imported remote task to session history.");
-        agent_helpers::save_task_to_history(self, task.clone()).await?; // Call helper
-
-        debug!(task_id = %task.id, session_id = ?session_id, "Remote task processing initiated and linked to session."); // Changed to debug
-        Ok(task) // Return the original task received from the remote agent
+        agent_helpers::send_task_to_remote(self, message).await
     }
 
     /// Get capabilities of a remote agent (using A2A client)
     #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     // Make pub so REPL module can access it
     pub async fn get_remote_agent_card(&mut self) -> Result<AgentCard> {
-        let remote_url = self.client_url().unwrap_or_else(|| "unknown".to_string());
-        info!(remote_url = %remote_url, "Attempting to get remote agent card."); // Keep info for attempt
-
-        // Check if we have a client configured
-        debug!("Checking for A2A client configuration.");
-        if let Some(client) = &mut self.client {
-            trace!("A2A client found, calling get_agent_card.");
-            match client.get_agent_card().await {
-                 Ok(agent_card) => {
-                    info!(remote_agent_name = %agent_card.name, remote_url = %remote_url, "Retrieved remote agent card successfully."); // Keep info for success
-                    trace!(?agent_card, "Retrieved agent card details.");
-                    Ok(agent_card)
-                 }
-                 Err(e) => {
-                    error!(remote_url = %remote_url, error = %e, "Error retrieving remote agent card.");
-                    Err(anyhow!("Error retrieving agent card from {}: {}", remote_url, e))
-                 }
-            }
-        } else {
-            error!("Cannot get remote agent card: No A2A client configured.");
-            Err(anyhow!("No A2A client configured. Use --target-url or :connect first."))
-        }
+        agent_helpers::get_remote_agent_card(self).await
     }
 
     /// Create an agent card for this agent instance.
     // No instrument macro needed here as it's synchronous and called from instrumented contexts.
     pub fn create_agent_card(&self) -> AgentCard {
-        debug!(agent_id = %self.agent_id, "Creating agent card for this instance.");
-        // Construct AgentCapabilities based on actual capabilities
-        // TODO: Make these capabilities configurable or dynamically determined
-        trace!("Determining agent capabilities.");
-        let capabilities = AgentCapabilities {
-            push_notifications: true, // Example: Assuming supported
-            state_transition_history: true, // Example: Assuming supported
-            streaming: true, // Example: Assuming supported by default bidirectional agent server? Check run_server.
-            // Add other fields from AgentCapabilities if they exist
-        };
-        trace!(?capabilities, "Agent capabilities determined.");
-
-        // Convert tools to agent skills
-        let mut skills = Vec::new();
-        
-        // Get tools from the task service's tool executor if available
-        // self.task_service is an Arc<TaskService>, not an Option
-        let task_service = &self.task_service;
-        if let Some(tool_executor) = &task_service.tool_executor {
-            for (tool_name, tool) in tool_executor.tools.iter() {
-                // Create an AgentSkill for each tool
-                let skill = crate::types::AgentSkill {
-                    id: tool_name.clone(),
-                    name: tool_name.clone(),
-                    description: Some(tool.description().to_string()),
-                    examples: None,
-                    input_modes: Some(vec!["text".to_string()]),
-                    output_modes: Some(vec!["text".to_string()]),
-                    tags: Some(tool.capabilities().iter().map(|&s| s.to_string()).collect()),
-                };
-                skills.push(skill);
-            }
-        } else {
-            debug!("No tool executor found in task service, skills list will be empty");
-        }
-        
-        trace!(skills_count = skills.len(), "Skills for agent card");
-
-        let card = AgentCard {
-            // id field does not exist on AgentCard in types.rs
-            name: self.agent_name.clone(), // Use the configured agent name (falls back to agent_id if None)
-            description: Some("A bidirectional A2A agent that can process tasks and delegate to other agents".to_string()),
-            version: AGENT_VERSION.to_string(), // version is String
-            url: format!("http://{}:{}", self.bind_address, self.port), // url is String
-            capabilities, // Use the capabilities struct
-            authentication: None, // Set authentication if needed, otherwise None
-            default_input_modes: vec!["text".to_string()], // Example
-            default_output_modes: vec!["text".to_string()], // Example
-            documentation_url: None,
-            provider: None,
-            skills, // Use the skills we collected from tools
-            // Add other fields from AgentCard if they exist
-        };
-        trace!(?card, "Agent card created.");
-        card // Return the created card
+        agent_helpers::create_agent_card(self)
     }
 }
 

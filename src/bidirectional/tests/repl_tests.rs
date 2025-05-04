@@ -2,7 +2,7 @@
 // These tests focus on the command parsing logic that could be extracted
 // from the REPL implementation for better testability
 
-use crate::bidirectional::bidirectional_agent::{
+use crate::bidirectional::config::{
     BidirectionalAgentConfig, ServerConfig, ClientConfig, LlmConfig, ModeConfig
 };
 use std::sync::Arc;

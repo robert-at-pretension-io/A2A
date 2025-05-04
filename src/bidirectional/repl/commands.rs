@@ -721,7 +721,7 @@ pub(super) fn handle_help(agent: &BidirectionalAgent) -> Result<String> {
 /// server_running and server_shutdown_token need to be passed in/out or managed differently.
 /// For now, :listen and :stop are omitted from this refactoring.
 #[instrument(skip(agent, command, args), fields(agent_id = %agent.agent_id))]
-pub(super) async fn handle_repl_command(
+pub async fn handle_repl_command(
     agent: &mut BidirectionalAgent,
     command: &str,
     args: &str,
