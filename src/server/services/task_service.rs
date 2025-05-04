@@ -7,8 +7,8 @@ use chrono::Utc;
 use tracing::{debug, error, info, trace, warn, instrument}; // Import tracing macros
 use uuid::Uuid;
 
-// Import the LlmClient trait from the bidirectional module (or move it to a shared location if preferred)
-use crate::bidirectional::bidirectional_agent::LlmClient;
+// Import the LlmClient trait from the new llm_client module
+use crate::bidirectional::llm_client::LlmClient; // <-- Update import path
 // Import from local server components instead of bidirectional_agent
 use crate::server::{
     task_router::{RoutingDecision, LlmTaskRouterTrait}, // Removed unused TaskRouter import

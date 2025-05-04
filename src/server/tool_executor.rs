@@ -1,7 +1,7 @@
 //! Executes local tools with standard A2A protocol-compliant types and artifacts.
 
 use crate::server::error::ServerError;
-use crate::bidirectional::bidirectional_agent::LlmClient; // Import LlmClient (AgentDirectory removed)
+use crate::bidirectional::llm_client::LlmClient; // <-- Update import path
 use crate::types::{
     Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact, AgentCard, AgentCapabilities // <-- Import AgentCapabilities
 };

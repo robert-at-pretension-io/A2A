@@ -12,7 +12,7 @@ use dashmap::DashMap;
 struct MockLlmClient;
 
 #[async_trait::async_trait]
-impl crate::bidirectional::bidirectional_agent::LlmClient for MockLlmClient {
+impl crate::bidirectional::llm_client::LlmClient for MockLlmClient { // <-- Update trait path
     async fn complete(&self, _prompt: &str) -> anyhow::Result<String> {
         Ok("mock response".to_string())
     }
