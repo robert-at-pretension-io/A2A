@@ -1,17 +1,17 @@
 //! REPL command handlers for the Bidirectional Agent.
 
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
-use std::io; // Import io for print_repl_help
-use tracing::{debug, error, info, instrument, trace, warn};
-use uuid::Uuid;
+use serde_json::{/* json, */ Value}; // Removed json
+// use std::io; // Unused
+use tracing::{debug, error, info, instrument, /* trace, */ warn}; // Removed trace
+// use uuid::Uuid; // Unused
 
 use crate::{
     bidirectional::bidirectional_agent::BidirectionalAgent,
     client::A2aClient,
     types::{
-        AgentCard, AgentCapabilities, Part, Role, Task, TaskIdParams, TaskQueryParams, TaskState,
-        TextPart,
+        /* AgentCard, AgentCapabilities, */ Part, Role, /* Task, */ TaskIdParams, TaskQueryParams, TaskState, // Removed unused
+        /* TextPart, */ // Unused
     },
 };
 

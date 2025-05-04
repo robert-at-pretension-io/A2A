@@ -38,7 +38,7 @@ Always think step-by-step about the best way to handle each request.
 [tools]
 # List the tools you want to enable. Available: "llm", "summarize", "echo", "list_agents", "remember_agent", "execute_command"
 # If empty or missing, only "echo" will be available.
-enabled = ["llm", "echo", "summarize", "list_agents", "remember_agent", "execute_command"] # <-- Add execute_command
+enabled = ["llm", "echo", "summarize", "list_agents", "remember_agent", "execute_command"]
 # REMOVED agent_directory_path
 
 # Mode configuration - uncomment the mode you want to use

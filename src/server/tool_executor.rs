@@ -436,7 +436,7 @@ impl ExecuteCommandTool {
         }
         let url = target_url.unwrap();
 
-        let mut client = A2aClient::new(&url);
+        let client = A2aClient::new(&url); // Remove mut
         match client.get_agent_card().await {
             Ok(card) => {
                 let name = card.name.clone();

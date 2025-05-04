@@ -1,7 +1,7 @@
 //! Configuration structures and loading logic for the Bidirectional Agent.
 
 use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize}; // Removed Serialize
 use std::fs;
 use std::path::Path;
 use toml;

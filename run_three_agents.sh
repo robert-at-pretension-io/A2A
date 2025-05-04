@@ -115,7 +115,7 @@ get_agent_card = false
 repl_log_file = "shared_agent_interactions.log"
 
 [tools]
-enabled = ["echo", "llm", "list_agents", "execute_command"] # <-- Add execute_command
+enabled = ["echo", "llm", "list_agents", "execute_command"]
 # REMOVED agent_directory_path
 EOF
 
@@ -139,7 +139,7 @@ get_agent_card = false
 repl_log_file = "shared_agent_interactions.log"
 
 [tools]
-enabled = ["echo", "llm", "list_agents", "execute_command"] # <-- Add execute_command
+enabled = ["echo", "llm", "list_agents", "execute_command"]
 # REMOVED agent_directory_path
 EOF
 
@@ -163,7 +163,7 @@ get_agent_card = false
 repl_log_file = "shared_agent_interactions.log"
 
 [tools]
-enabled = ["echo", "summarize", "list_agents", "remember_agent", "execute_command", "llm"] # <-- Add execute_command
+enabled = ["echo", "summarize", "list_agents", "remember_agent", "execute_command", "llm"]
 # REMOVED agent_directory_path
 EOF
 

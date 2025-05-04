@@ -83,8 +83,8 @@
 // Import from other modules in the crate
 use crate::client::{
     A2aClient,
-    errors::ClientError,
-    streaming::{StreamingResponse, StreamingResponseStream},
+    // errors::ClientError, // Unused
+    streaming::{/* StreamingResponse, StreamingResponseStream */}, // Unused
 };
 
 use crate::server::{
@@ -141,7 +141,9 @@ use uuid::Uuid;
 
 // Use items from the new config module (relative to parent mod.rs)
 use super::config::*;
-use super::llm_client::{LlmClient, ClaudeLlmClient}; // <-- Add this line
+use super::llm_client::{LlmClient, ClaudeLlmClient};
+// Import the router struct
+use crate::bidirectional::BidirectionalTaskRouter;
 
 // REMOVED AgentLogContext struct and impl block
 
@@ -188,39 +190,39 @@ pub enum ExecutionMode {
 /// Main bidirectional agent implementation
 pub struct BidirectionalAgent {
     // Core components (TaskService, StreamingService, NotificationService are needed for run_server)
-    task_service: Arc<TaskService>,
-    streaming_service: Arc<StreamingService>,
-    notification_service: Arc<NotificationService>,
+    pub task_service: Arc<TaskService>,
+    pub streaming_service: Arc<StreamingService>,
+    pub notification_service: Arc<NotificationService>,
 
     // Use canonical server components
-    agent_registry: Arc<AgentRegistry>, // From crate::server::agent_registry
-    client_manager: Arc<ClientManager>, // From crate::server::client_manager
+    pub agent_registry: Arc<AgentRegistry>, // From crate::server::agent_registry
+    pub client_manager: Arc<ClientManager>, // From crate::server::client_manager
 
     // Local components for specific logic
     // REMOVED agent_directory field
     // REMOVED agent_directory_path field
-    llm: Arc<dyn LlmClient>, // Local LLM client
+    pub llm: Arc<dyn LlmClient>, // Local LLM client
 
     // Server configuration
-    port: u16,
-    bind_address: String,
-    agent_id: String, // Keep agent_id for internal identification
-    agent_name: String, // Name used for the agent card
-    client_config: ClientConfig, // Store client config for URL access
+    pub port: u16,
+    pub bind_address: String,
+    pub agent_id: String, // Keep agent_id for internal identification
+    pub agent_name: String, // Name used for the agent card
+    pub client_config: ClientConfig, // Store client config for URL access
 
     // A2A client for making outbound requests to other agents
     // This is a simple client that can be expanded later
     pub client: Option<A2aClient>,
-    
+
     // Session management
-    current_session_id: Option<String>,
-    session_tasks: Arc<DashMap<String, Vec<String>>>, // Map session ID to task IDs
+    pub current_session_id: Option<String>,
+    pub session_tasks: Arc<DashMap<String, Vec<String>>>, // Map session ID to task IDs
 
     // REPL logging
-    repl_log_file: Option<std::path::PathBuf>,
+    pub repl_log_file: Option<std::path::PathBuf>,
 
     // Known servers discovered/connected to (URL -> Name) - Shared for background updates
-    known_servers: Arc<DashMap<String, String>>,
+    pub known_servers: Arc<DashMap<String, String>>,
 }
 
 impl BidirectionalAgent {
@@ -433,10 +435,11 @@ impl BidirectionalAgent {
 
         if is_command {
             info!(command = %command, args_len = args.len(), "Input matches command keyword. Handling directly.");
-            // Call the central command handler
+            // Call the central command handler from the repl module
             // We need to pass the *original* arguments string, not the potentially empty one
             let full_args = if command == trimmed_text.to_lowercase() { "" } else { trimmed_text.split_once(' ').map_or("", |(_, a)| a) };
-            return self.handle_repl_command(&command, full_args).await;
+            // Call the function directly, passing the mutable agent reference
+            return crate::bidirectional::repl::commands::handle_repl_command(self, &command, full_args).await;
         }
         // --- End Command Interception ---
 
@@ -567,6 +570,7 @@ impl BidirectionalAgent {
         }
 
         debug!(task_id = %task.id, "Local message processing complete. Returning response."); // Changed to debug
+        Ok(response) // Return the final response string
     }
     // Helper to extract text from task
     #[instrument(skip(self, task), fields(task_id = %task.id))]
@@ -688,6 +692,7 @@ impl BidirectionalAgent {
 
         // Fallback
         warn!("No response text found in artifacts, status message, or history.");
+        "No response text available.".to_string() // Add fallback return
     }
 
     /// Create a new session ID and store it.
@@ -768,15 +773,6 @@ impl BidirectionalAgent {
     #[instrument(skip(self), fields(agent_id = %self.agent_id))]
     // Make pub so REPL module can access it
     pub fn client_url(&self) -> Option<String> {
-        // Use the target_url stored in the agent's own configuration
-        let url = self.client_config.target_url.clone();
-        trace!(?url, "Retrieved client URL from config.");
-        url
-    }
-
-    /// Run the agent server
-    #[instrument(skip(self), fields(agent_id = %self.agent_id, port = %self.port, bind_address = %self.bind_address))]
-    fn client_url(&self) -> Option<String> {
         // Use the target_url stored in the agent's own configuration
         let url = self.client_config.target_url.clone();
         trace!(?url, "Retrieved client URL from config.");
@@ -1011,6 +1007,7 @@ impl BidirectionalAgent {
             // Add other fields from AgentCard if they exist
         };
         trace!(?card, "Agent card created.");
+        card // Return the created card
     }
 }
 

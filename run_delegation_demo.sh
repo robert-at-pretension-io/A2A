@@ -114,7 +114,7 @@ get_agent_card = false
 repl_log_file = "delegation_interactions.log"
 
 [tools]
-enabled = ["echo", "llm", "list_agents", "execute_command"] # <-- Add execute_command
+enabled = ["echo", "llm", "list_agents", "execute_command"]
 # REMOVED agent_directory_path
 EOF
 
@@ -138,7 +138,7 @@ get_agent_card = false
 repl_log_file = "delegation_interactions.log"
 
 [tools]
-enabled = ["echo", "llm", "list_agents", "execute_command"] # <-- Add execute_command
+enabled = ["echo", "llm", "list_agents", "execute_command"]
 # REMOVED agent_directory_path
 EOF
 
