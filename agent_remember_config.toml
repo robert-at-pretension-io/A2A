@@ -1,0 +1,21 @@
+[server]
+port = 4300
+bind_address = "0.0.0.0"
+agent_id = "bidirectional-agent-remember"
+agent_name = "Agent Remember"
+
+[client]
+# No initial target URL
+
+[llm]
+# API key set via environment variable
+system_prompt = "You are an AI agent that can remember other agents using the 'remember_agent' tool."
+
+[mode]
+repl = true
+repl_log_file = "remember_agent_demo.log"
+
+[tools]
+# Enable remember_agent and list_agents
+enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command"] # <-- Add execute_command
+# REMOVED agent_directory_path

@@ -44,6 +44,16 @@ fn test_parse_repl_command() {
     assert_eq!(cmd, "remote");
     assert_eq!(args, Some("Hello world"));
     
+    // Test tool command
+    let (cmd, args) = parse_repl_command(":tool list_agents");
+    assert_eq!(cmd, "tool");
+    assert_eq!(args, Some("list_agents"));
+    
+    // Test tool command with JSON params
+    let (cmd, args) = parse_repl_command(":tool list_agents {\"format\":\"simple\"}");
+    assert_eq!(cmd, "tool");
+    assert_eq!(args, Some("list_agents {\"format\":\"simple\"}"));
+    
     // Test direct message (not a command)
     let (cmd, args) = parse_repl_command("What is the capital of France?");
     assert_eq!(cmd, "message");

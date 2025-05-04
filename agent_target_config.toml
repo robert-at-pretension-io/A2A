@@ -1,0 +1,20 @@
+[server]
+port = 4301
+bind_address = "0.0.0.0"
+agent_id = "bidirectional-agent-target"
+agent_name = "Agent Target"
+
+[client]
+# No client needed for this agent
+
+[llm]
+# API key set via environment variable
+system_prompt = "You are a simple target agent."
+
+[mode]
+repl = true # Keep REPL for observation if needed
+repl_log_file = "remember_agent_demo.log"
+
+[tools]
+enabled = ["echo", "llm", "execute_command"] # Only basic tools needed # <-- Add execute_command
+# REMOVED agent_directory_path

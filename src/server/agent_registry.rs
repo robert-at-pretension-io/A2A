@@ -7,6 +7,7 @@ use crate::server::error::ServerError;
 use dashmap::DashMap;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
+use tracing::{instrument, debug, info};
 
 /// Information cached about a known agent.
 #[derive(Clone, Debug)]

@@ -1,4 +1,26 @@
 {
+  "Agent Three": {
+    "card": {
+      "capabilities": {
+        "pushNotifications": true,
+        "stateTransitionHistory": true,
+        "streaming": false
+      },
+      "defaultInputModes": [
+        "text"
+      ],
+      "defaultOutputModes": [
+        "text"
+      ],
+      "description": "A bidirectional A2A agent that can process tasks and delegate to other agents",
+      "name": "Agent Three",
+      "skills": [],
+      "url": "http://0.0.0.0:4202",
+      "version": "1.0.0"
+    },
+    "last_seen": 1746307816,
+    "active": true
+  },
   "Agent One": {
     "card": {
       "capabilities": {
@@ -18,7 +40,7 @@
       "url": "http://0.0.0.0:4200",
       "version": "1.0.0"
     },
-    "last_seen": 1746302176,
+    "last_seen": 1746308434,
     "active": true
   }
 }

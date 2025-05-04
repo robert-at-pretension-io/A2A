@@ -229,6 +229,25 @@ impl ReplCommandProcessor {
                     return "❌ Error: Invalid command format. Use :data JSON MESSAGE".to_string();
                 }
             },
+            "tool" => {
+                if let Some(tool_args) = args {
+                    self.commands_executed.entry("tool".to_string())
+                        .and_modify(|count| *count += 1)
+                        .or_insert(1);
+                    
+                    let parts: Vec<&str> = tool_args.splitn(2, ' ').collect();
+                    if parts.is_empty() {
+                        return "❌ Error: No tool name provided. Use :tool TOOL_NAME [JSON_PARAMS]".to_string();
+                    }
+                    
+                    let tool_name = parts[0];
+                    let params_str = if parts.len() > 1 { parts[1] } else { "{}" };
+                    
+                    return format!("Executing tool '{}' with params: {}", tool_name, params_str);
+                } else {
+                    return "❌ Error: No tool name provided. Use :tool TOOL_NAME [JSON_PARAMS]".to_string();
+                }
+            },
             "message" => {
                 self.commands_executed.entry("message".to_string())
                     .and_modify(|count| *count += 1)
@@ -314,4 +333,23 @@ fn test_repl_file_data_commands() {
     assert!(response.contains("Sending message with JSON data"));
     assert!(response.contains("name") && response.contains("test"));
     assert_eq!(processor.get_command_count("data"), 1);
+}
+
+#[test]
+fn test_repl_tool_command() {
+    // Create a REPL command processor
+    let mut processor = ReplCommandProcessor::new();
+    
+    // Test tool command with no parameters
+    let response = processor.process_command(":tool list_agents");
+    assert!(response.contains("Executing tool"));
+    assert!(response.contains("list_agents"));
+    assert_eq!(processor.get_command_count("tool"), 1);
+    
+    // Test tool command with parameters
+    let response = processor.process_command(":tool list_agents {\"format\":\"simple\"}");
+    assert!(response.contains("Executing tool"));
+    assert!(response.contains("list_agents"));
+    assert!(response.contains("simple"));
+    assert_eq!(processor.get_command_count("tool"), 2);
 }
