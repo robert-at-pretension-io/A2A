@@ -168,8 +168,16 @@ impl TaskService {
                 Ok(decision) => decision,
                 Err(e) => {
                     error!(error = %e, "Task routing decision failed.");
-                    task.status.state = TaskState::Failed;
-                    task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Task routing failed: {}", e), metadata: None })], metadata: None });
+                    task.status.state = TaskState::InputRequired; // <-- Change state
+                    task.status.message = Some(Message {
+                        role: Role::Agent,
+                        parts: vec![Part::TextPart(TextPart {
+                            type_: "text".to_string(),
+                            text: format!("Internal routing decision failed: {}. Please clarify your request or try again.", e), // <-- Update message
+                            metadata: None,
+                        })],
+                        metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
+                    });
                     task.status.timestamp = Some(Utc::now());
                     self.task_repository.save_task(&task).await?;
                     self.task_repository.save_state_history(&task.id, &task).await?;
@@ -318,13 +326,24 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                     }
                                     Err(e) => {
                                         error!(error = %e, "Polling remote task failed. Aborting monitoring.");
-                                        // Update local task to Failed due to monitoring error
-                                        task.status.state = TaskState::Failed;
-                                        task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Failed to monitor delegated task: {}", e), metadata: None })], metadata: None });
+                                        // Update local task to InputRequired due to monitoring error
+                                        task.status.state = TaskState::InputRequired; // <-- Change state
+                                        task.status.message = Some(Message {
+                                            role: Role::Agent,
+                                            parts: vec![Part::TextPart(TextPart {
+                                                type_: "text".to_string(),
+                                                text: format!(
+                                                    "Lost connection while monitoring delegated task '{}'. Error: {}. What should I do?",
+                                                    remote_task_id, e
+                                                ),
+                                                metadata: None,
+                                            })],
+                                            metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
+                                        });
                                         task.status.timestamp = Some(Utc::now());
                                         self.task_repository.save_task(&task).await?;
                                         self.task_repository.save_state_history(&task.id, &task).await?;
-                                        return Ok(task); // Return the failed local task
+                                        return Ok(task); // Return the local task (now InputRequired)
                                     }
                                 }
                                 // Wait before next poll
@@ -340,9 +359,20 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                 // Ensure timestamp is updated
                                 task.status.timestamp = Some(Utc::now());
                             } else {
-                                warn!(polling_attempts = max_polling_attempts, "Remote task did not reach final state after polling. Marking local task as Failed.");
-                                task.status.state = TaskState::Failed;
-                                task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: "Delegated task timed out.".to_string(), metadata: None })], metadata: None });
+                                warn!(polling_attempts = max_polling_attempts, "Remote task did not reach final state after polling. Marking local task as InputRequired.");
+                                task.status.state = TaskState::InputRequired; // <-- Change state
+                                task.status.message = Some(Message {
+                                    role: Role::Agent,
+                                    parts: vec![Part::TextPart(TextPart {
+                                        type_: "text".to_string(),
+                                        text: format!(
+                                            "The delegated task '{}' timed out without reaching a final state. How should I proceed?",
+                                            remote_task_id
+                                        ),
+                                        metadata: None,
+                                    })],
+                                    metadata: Some(serde_json::json!({ "error_context": "polling_timeout" }).as_object().unwrap().clone()),
+                                });
                                 task.status.timestamp = Some(Utc::now());
                             }
                             // Save the final mirrored state
@@ -352,9 +382,22 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                         }
                         Err(e) => {
                             error!(%remote_agent_id, error = %e, "Failed to initiate task delegation.");
-                            task.status.state = TaskState::Failed;
-                            task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Failed to delegate task: {}", e), metadata: None })], metadata: None });
+                            // --- CHANGE START ---
+                            task.status.state = TaskState::InputRequired; // <-- Change state
+                            task.status.message = Some(Message {
+                                role: Role::Agent,
+                                parts: vec![Part::TextPart(TextPart {
+                                    type_: "text".to_string(),
+                                    text: format!(
+                                        "Failed to send the task to agent '{}'. Error: {}. Should I retry or handle it locally?",
+                                        remote_agent_id, e
+                                    ),
+                                    metadata: None,
+                                })],
+                                metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
+                            });
                             task.status.timestamp = Some(Utc::now());
+                            // --- CHANGE END ---
                             self.task_repository.save_task(&task).await?;
                             self.task_repository.save_state_history(&task.id, &task).await?;
                         }

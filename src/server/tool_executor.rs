@@ -566,26 +566,32 @@ impl ToolExecutor {
                 Ok(())
             }
             Err(tool_error) => {
-                tracing::error!(error = %tool_error, "Tool execution failed."); // Add tracing
-                // Update Task Status to Failed
+                tracing::error!(error = %tool_error, "Tool execution failed.");
+
+                // Update Task Status to InputRequired
                 task.status = TaskStatus {
-                    state: TaskState::Failed,
+                    state: TaskState::InputRequired, // <-- Set state
                     timestamp: Some(Utc::now()),
-                    // Provide an error message from the agent
                     message: Some(Message {
                         role: Role::Agent,
                         parts: vec![Part::TextPart(TextPart {
                             type_: "text".to_string(),
-                            text: format!("Tool execution failed: {}", tool_error),
+                            text: format!(
+                                "Tool execution failed: {}. How should I proceed? (e.g., 'retry', 'cancel', or provide different parameters)",
+                                tool_error
+                            ),
                             metadata: None,
                         })],
-                        metadata: None,
+                        // Optional: Add metadata indicating this InputRequired is due to an error
+                        metadata: Some(serde_json::json!({ "error_context": tool_error.to_string() }).as_object().unwrap().clone()),
                     }),
                 };
-                info!("Updated task status to Failed due to tool error."); // Keep info for state change
-                tracing::trace!(?task.status, "Final task status."); // Add tracing
-                // Convert ToolError to ServerError before returning
-                Err(tool_error.into())
+                info!("Updated task status to InputRequired due to tool error.");
+                tracing::trace!(?task.status, "Final task status after tool error.");
+
+                // Return Ok because the task flow continues, waiting for input.
+                // The error is captured in the task status.
+                Ok(()) // <-- Change return
             }
         }
     }
