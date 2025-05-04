@@ -314,97 +314,20 @@ Produce a JSON array where each element is:
     }
 
 
-    // DP2/DP3: Original routing logic (Local/Remote/Reject + Tool Choice)
-    // Renamed from decide_execution_mode to reflect its place after NP1/NP2
-    // Now returns RoutingDecision directly
-    #[instrument(skip(self, task), fields(task_id = %task.id))]
-    pub async fn decide_execution_mode(&self, task: &Task) -> Result<RoutingDecision, ServerError> {
-        debug!("Deciding execution mode for task.");
-        trace!(?task, "Task details for routing decision.");
+    async fn decide_simple_routing(&self, task: &Task) -> Result<RoutingDecision, ServerError> {
+        debug!("DP2/DP3: Performing simple routing decision (Local/Remote/Reject + Tool Choice).");
+        let history_text = self.format_history(task.history.as_ref());
 
-        // --- Extract Full Conversation History ---
-        trace!("Extracting full conversation history for LLM prompt.");
-        let conversation_history_text = task.history.as_ref()
-            .map(|history| {
-                history.iter().map(|message| {
-                    let role_str = match message.role {
-                        Role::User => "User",
-                        Role::Agent => "Agent",
-                        // Handle other roles if they exist
-                    };
-                    let content = message.parts.iter()
-                        .filter_map(|part| match part {
-                            Part::TextPart(tp) => Some(tp.text.as_str()),
-                            // Optionally represent other part types
-                            Part::FilePart(_) => Some("[File Content]"),
-                            Part::DataPart(_) => Some("[Structured Data]"),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" "); // Join parts with space
-                    format!("{}: {}", role_str, content)
-                }).collect::<Vec<_>>().join("\n") // Join messages with newline
-            })
-            .unwrap_or_else(|| {
-                warn!("Task history is empty or None. Cannot extract conversation.");
-                "".to_string() // Return empty string if no history
-            });
-        trace!(conversation_history = %conversation_history_text, "Extracted conversation history text.");
-
-        if conversation_history_text.is_empty() {
+        if history_text.is_empty() {
             warn!("Extracted conversation history is empty. Falling back to local 'echo'.");
             return Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) });
         }
-        // --- End History Extraction ---
 
-        // Get the list of available agents from the canonical registry
-        debug!("Fetching available agents from AgentRegistry for routing prompt.");
-        let available_agents = self.agent_registry.list_all_agents(); // Returns Vec<(String, AgentCard)>
-        trace!(count = available_agents.len(), "Found available agents in registry.");
-        let agent_descriptions = available_agents.iter()
-            .map(|(agent_id, card)| { // Use agent_id and card directly from registry list
-                trace!(%agent_id, agent_name = %card.name, "Formatting agent description for prompt.");
-                // Construct capabilities string manually
-                let mut caps = Vec::new();
-                if card.capabilities.push_notifications { caps.push("pushNotifications"); }
-                if card.capabilities.state_transition_history { caps.push("stateTransitionHistory"); }
-                if card.capabilities.streaming { caps.push("streaming"); }
-                // Add other capabilities fields if they exist in AgentCapabilities struct
-
-                format!("ID: {}\nName: {}\nDescription: {}\nCapabilities: {}",
-                    agent_id, // Use the ID from the registry list
-                    card.name.as_str(),
-                    card.description.as_deref().unwrap_or(""), // Use deref for Option<String>
-                    caps.join(", "))
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        trace!(agent_descriptions = %agent_descriptions, "Formatted agent descriptions for prompt.");
-
-        // --- Add Local Tool Descriptions to Prompt ---
-        debug!("Fetching descriptions of locally enabled tools for routing prompt.");
-        let local_tool_descriptions = self.enabled_tools.iter()
-            .map(|tool_name| {
-                let description = match tool_name.as_str() {
-                    "llm" => "General purpose LLM request. Good for questions, generation, analysis if no specific tool fits.",
-                    "summarize" => "Summarizes the input text.",
-                    "list_agents" => "Lists known agents registered with this agent.",
-                    "remember_agent" => "Stores information about another agent given its URL.",
-                    "execute_command" => "Executes internal agent commands (like connect, disconnect, servers, session new, card). Use for requests matching these commands. Expects {\"command\": \"command_name\", \"args\": \"arguments_string\"}",
-                    "echo" => "Simple echo tool for testing.",
-                    _ => "A custom tool.",
-                };
-                format!("- {}: {}", tool_name, description)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        trace!(local_tool_descriptions = %local_tool_descriptions, "Formatted local tool descriptions for routing prompt.");
-        // --- End Add Local Tool Descriptions ---
-
-
-        // Build a prompt for the LLM to decide routing
-        debug!("Building routing prompt for LLM.");
-        let routing_prompt = format!(r#"
-You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
+        // --- DP2: Local vs Remote vs Reject ---
+        let local_tools_desc = self.format_tools(false);
+        let remote_agents_desc = self.format_agents();
+        let routing_prompt = format!(
+r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
 
 YOUR LOCAL TOOLS:
 {}
@@ -421,55 +344,27 @@ Based on the full CONVERSATION HISTORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE A
 2. Delegate to a specific remote agent if it's more appropriate (respond with "REMOTE: [agent-id]"). Choose the most relevant agent if multiple are available.
 3. Reject the task ONLY if it's inappropriate, harmful, impossible, OR if it's an internal command that cannot be handled by the 'execute_command' tool (e.g., ':listen', ':stop', ':quit'). Provide a brief explanation for rejection.
 
-Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text.
-"#, local_tool_descriptions, agent_descriptions, conversation_history_text); // Use full history
-        trace!(routing_prompt = %routing_prompt, "Constructed routing prompt.");
+Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text."#,
+            local_tools_desc, remote_agents_desc, history_text
+        );
+        trace!(prompt = %routing_prompt, "DP2: Routing prompt.");
 
-        info!("Requesting routing decision from LLM.");
-        // Get the routing decision from the LLM
+        info!("DP2: Requesting routing decision from LLM.");
         let decision_result = self.llm.complete(&routing_prompt).await;
-        trace!(?decision_result, "LLM routing decision result received.");
-
-        // Map anyhow::Error from LLM to ServerError::Internal
         let decision = match decision_result {
-            Ok(d) => {
-                let trimmed_decision = d.trim().to_string();
-                info!(llm_response = %trimmed_decision, "LLM routing decision response received.");
-                trimmed_decision
-            }
+            Ok(d) => d.trim().to_string(),
             Err(e) => {
-                error!(error = %e, "LLM routing decision failed. Falling back to local 'echo'.");
-                // Fallback to local echo on LLM error
-                // Use tool_name and add default params
-                return Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) });
+                error!(error = %e, "DP2: LLM routing decision failed. Falling back to local 'llm'.");
+                return Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) });
             }
         };
-        trace!(decision = %decision, "Raw LLM decision text.");
+        info!(llm_response = %decision, "DP2: LLM routing decision response received.");
 
-        // Parse the decision more robustly - check prefixes
+        // --- Parse DP2 Decision ---
         if decision.starts_with("LOCAL") {
-            info!("LLM decided LOCAL execution. Proceeding to tool selection and parameter extraction.");
-
-            // --- Combined LLM Tool Selection & Parameter Extraction ---
-            debug!("Fetching descriptions of locally enabled tools for combined prompt.");
-            let local_tool_descriptions = self.enabled_tools.iter()
-                .map(|tool_name| {
-                    // Provide descriptions and expected parameters for better LLM guidance
-                    let description = match tool_name.as_str() {
-                        "llm" => "General purpose LLM request. Good for questions, generation, analysis if no specific tool fits. Expects {\"text\": \"...\"}",
-                        "summarize" => "Summarizes the input text. Expects {\"text\": \"...\"}",
-                        "list_agents" => "Lists known agents. Use only if the task is explicitly about listing agents. Expects {} or {\"format\": \"simple\" | \"detailed\"}",
-                        "remember_agent" => "Stores information about another agent given its URL. Expects {\"agent_base_url\": \"http://...\"}",
-                        "execute_command" => "Executes internal agent commands (like connect, disconnect, servers, session new, card). Use for requests matching these commands. Expects {\"command\": \"command_name\", \"args\": \"arguments_string\"}", // <-- Add description
-                        "echo" => "Simple echo tool for testing. Use only if the task is explicitly to echo. Expects {\"text\": \"...\"}",
-                        _ => "A custom tool with potentially unknown parameters.",
-                    };
-                    format!("- {}: {}", tool_name, description)
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            trace!(local_tool_descriptions = %local_tool_descriptions, "Formatted local tool descriptions for combined prompt.");
-
+            // --- DP3: Choose Local Tool & Parameters ---
+            info!("DP2 decided LOCAL. Proceeding to DP3 (Tool Selection).");
+            let local_tools_with_params_desc = self.format_tools(true); // Include param hints
             let tool_param_prompt = format!(
 r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
 {}
@@ -491,83 +386,72 @@ Examples:
 - For a task like "remember agent at http://foo.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://foo.com"}}}}
 - For a task like "list known agents simply": {{"tool_name": "list_agents", "params": {{"format": "simple"}}}}
 - For a task like "echo hello": {{"tool_name": "echo", "params": {{"text": "hello"}}}}
-- For a task like "connect to http://bar.com": {{"tool_name": "execute_command", "params": {{"command": "connect", "args": "http://bar.com"}}}} // <-- Add example
-- For a task like "list servers": {{"tool_name": "execute_command", "params": {{"command": "servers", "args": ""}}}} // <-- Add example
-- For a task like "start a new session": {{"tool_name": "execute_command", "params": {{"command": "session", "args": "new"}}}} // <-- Add example
+- For a task like "connect to http://bar.com": {{"tool_name": "execute_command", "params": {{"command": "connect", "args": "http://bar.com"}}}}
+- For a task like "list servers": {{"tool_name": "execute_command", "params": {{"command": "servers", "args": ""}}}}
+- For a task like "start a new session": {{"tool_name": "execute_command", "params": {{"command": "session", "args": "new"}}}}
 - For a general question: {{"tool_name": "llm", "params": {{"text": "original question text..."}}}}
 - If no specific parameters are needed for the chosen tool (like list_agents with default format): {{"tool_name": "list_agents", "params": {{}}}}
 
 Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
-                conversation_history_text, // Use full history
-                local_tool_descriptions
+                history_text, local_tools_with_params_desc
             );
-            trace!(tool_param_prompt = %tool_param_prompt, "Constructed combined tool/param extraction prompt.");
+            trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
 
-            info!("Asking LLM to choose tool and extract parameters.");
+            info!("DP3: Asking LLM to choose tool and extract parameters.");
             let tool_param_result = self.llm.complete(&tool_param_prompt).await;
 
             match tool_param_result {
                 Ok(json_str_raw) => {
                     let json_str = json_str_raw.trim();
-                    trace!(raw_json = %json_str_raw, trimmed_json = %json_str, "Received tool/param JSON string from LLM.");
-                    // Attempt to parse the JSON response
+                    trace!(raw_json = %json_str_raw, trimmed_json = %json_str, "DP3: Received tool/param JSON string from LLM.");
                     match serde_json::from_str::<Value>(json_str) {
                         Ok(json_value) => {
                             if let (Some(tool_name), Some(params)) = (
                                 json_value.get("tool_name").and_then(Value::as_str),
-                                json_value.get("params").cloned() // Clone the params Value
+                                json_value.get("params").cloned()
                             ) {
-                                // Validate the chosen tool name
                                 if self.enabled_tools.contains(&tool_name.to_string()) {
-                                    info!(tool_name = %tool_name, ?params, "Successfully parsed tool and params from LLM response.");
+                                    info!(tool_name = %tool_name, ?params, "DP3: Successfully parsed tool and params.");
                                     Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params })
                                 } else {
-                                    warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool in JSON response. Falling back to 'llm' tool with full history.");
-                                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
+                                    warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm'.");
+                                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                                 }
                             } else {
-                                warn!(json_response = %json_str, "LLM returned valid JSON but missing 'tool_name' or 'params'. Falling back to 'llm' tool with full history.");
-                                Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
+                                warn!(json_response = %json_str, "DP3: LLM JSON missing 'tool_name' or 'params'. Falling back to 'llm'.");
+                                Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                             }
                         },
                         Err(e) => {
-                            warn!(error = %e, json_response = %json_str, "LLM returned invalid JSON for tool/params. Falling back to 'llm' tool with full history.");
-                            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
+                            warn!(error = %e, json_response = %json_str, "DP3: LLM returned invalid JSON for tool/params. Falling back to 'llm'.");
+                            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                         }
                     }
                 },
                 Err(e) => {
-                    warn!(error = %e, "LLM failed to choose tool/extract params. Falling back to 'llm' tool with full history.");
-                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
+                    warn!(error = %e, "DP3: LLM failed to choose tool/extract params. Falling back to 'llm'.");
+                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                 }
             }
-            // --- End Combined LLM Tool Selection & Parameter Extraction ---
-
         } else if decision.starts_with("REMOTE: ") {
             let agent_id = decision.strip_prefix("REMOTE: ").unwrap().trim().to_string();
-            info!(remote_agent_id = %agent_id, "LLM decided REMOTE execution.");
-
-            // Verify the agent exists in the canonical registry
-            trace!(remote_agent_id = %agent_id, "Verifying remote agent existence in AgentRegistry.");
-            if self.agent_registry.get(&agent_id).is_none() { // Check canonical registry
-                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent (not in registry), falling back to local execution with 'llm' tool and full history.");
-                 // Fall back to local if agent not found, using llm tool with full history
-                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
+            info!(remote_agent_id = %agent_id, "DP2 decided REMOTE execution.");
+            if self.agent_registry.get(&agent_id).is_none() {
+                 warn!(remote_agent_id = %agent_id, "DP2: LLM delegated to unknown agent. Falling back to local 'llm'.");
+                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
             } else {
-                 info!(remote_agent_id = %agent_id, "Routing decision: Remote delegation confirmed.");
+                 info!(remote_agent_id = %agent_id, "DP2: Remote delegation confirmed.");
                  Ok(RoutingDecision::Remote { agent_id })
             }
         } else if decision.starts_with("REJECT: ") {
             let reason = decision.strip_prefix("REJECT: ").unwrap().trim().to_string();
-            info!(reason = %reason, "LLM decided to REJECT the task.");
+            info!(reason = %reason, "DP2 decided REJECT.");
             Ok(RoutingDecision::Reject { reason })
         } else {
-            warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'llm' tool and full history.");
-            // Default to local llm tool if the decision isn't clear, using full history
-            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
+            warn!(llm_decision = %decision, "DP2: LLM routing decision unclear. Falling back to local 'llm'.");
+            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
         }
     }
-}
 
 // --- LlmTaskRouterTrait Implementation ---
 

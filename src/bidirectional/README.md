@@ -110,51 +110,66 @@ The agent processes user input (from REPL or A2A requests) through a series of s
 
 3.  **Task Service Processing (`TaskService::process_task`):**
     *   Determines if the task ID already exists.
-    *   **New Task:** Creates a new task object, saves it, and calls `task_router.route_task`. -> **Go to Step 5 (Routing)**.
+    *   **New Task:** Creates a new task object, saves it, and calls `task_router.decide`. -> **Go to Step 5 (Routing Pipeline)**.
     *   **Existing Task (Follow-up):** Retrieves the task, adds the new message to history, saves the intermediate state, and calls `task_router.process_follow_up`. -> **Go to Step 4 (Follow-up Routing)**.
 
 4.  **Router - Follow-up Message (`BidirectionalTaskRouter::process_follow_up`):**
     *   Checks if the task is in `InputRequired` state *and* returning from a remote agent (based on metadata).
         *   **If YES (Returning InputRequired):**
-            *   **LLM Decision Point 1: Handle Directly or Request Human Input?**
+            *   **LLM Decision Point 1 (DP1): Handle Directly or Request Human Input?**
                 *   **Input:** Task history, reason for input requirement, new follow-up message.
                 *   **Prompt:** Asks LLM if it can now proceed (`HANDLE_DIRECTLY`) or if human input is still needed (`NEED_HUMAN_INPUT`).
                 *   **Output:**
-                    *   `HANDLE_DIRECTLY`: Routes to local `llm` tool. -> **Go to Step 6 (Execution)**.
-                    *   `NEED_HUMAN_INPUT` / Unclear: Routes to special local `human_input` tool. -> **Go to Step 6 (Execution)**.
+                    *   `HANDLE_DIRECTLY`: Returns `RoutingDecision::Local` (llm tool). -> **Go to Step 6 (Execution)**.
+                    *   `NEED_HUMAN_INPUT` / Unclear: Returns `RoutingDecision::Local` (human_input tool). -> **Go to Step 6 (Execution)**.
         *   **If NO (Normal Follow-up):**
-            *   Defaults to local processing using the `llm` tool with the follow-up text. -> **Go to Step 6 (Execution)**.
+            *   Defaults to `RoutingDecision::Local` (llm tool). -> **Go to Step 6 (Execution)**.
 
-5.  **Router - New Task Routing (`BidirectionalTaskRouter::route_task` -> `decide_execution_mode`):**
-    *   **LLM Decision Point 2: Local vs. Remote vs. Reject?**
-        *   **Input:** Local tool descriptions, remote agent descriptions (from `AgentRegistry`), full conversation history.
-        *   **Prompt:** Asks LLM to choose `LOCAL`, `REMOTE: [agent-id]`, or `REJECT: [reason]`. (Crucially, internal commands like `connect` should be `LOCAL`).
+5.  **Router - New Task Routing Pipeline (`BidirectionalTaskRouter::route_task` called by `decide`):**
+    *   **(Experimental) LLM Decision Point NP1: Clarification Check?** (If `experimental_clarification` is true)
+        *   **Input:** Conversation history, latest request.
+        *   **Prompt:** Asks LLM if the request is `CLEAR` or `NEEDS_CLARIFY`.
         *   **Output:**
-            *   `REMOTE: agent-id`: Verifies agent exists in registry. If yes, returns `RoutingDecision::Remote`. -> **Go to Step 6 (Execution)**. If no, falls back to `LOCAL` (LLM tool). -> **Go to Step 6 (Execution)**.
+            *   `CLEAR`: Proceed to NP2.
+            *   `NEEDS_CLARIFY`: Returns `RoutingDecision::NeedsClarification { question }`. -> **Go to Step 6 (Execution)**.
+            *   Unclear / Fallback: Proceed to NP2.
+    *   **(Experimental) LLM Decision Point NP2: Decomposition Check?** (If NP1 passed/disabled and `experimental_decomposition` is true)
+        *   **NP2.A (Should Decompose?):**
+            *   **Input:** Goal, local tools, remote agents.
+            *   **Prompt:** Asks LLM `SHOULD_DECOMPOSE: YES|NO`.
+            *   **Output:** `YES` -> Proceed to NP2.B. `NO` / Unclear / Fallback -> Proceed to DP2.
+        *   **NP2.B (Generate Plan):** (If NP2.A was YES)
+            *   **Input:** Goal.
+            *   **Prompt:** Asks LLM for JSON array of `SubtaskDefinition`s.
+            *   **Output:** Parsed plan -> Returns `RoutingDecision::Decompose { subtasks }`. -> **Go to Step 6 (Execution)**. Failed parse / Unclear / Fallback -> Proceed to DP2.
+    *   **LLM Decision Point 2 (DP2): Local vs. Remote vs. Reject?** (If NP1/NP2 passed/disabled)
+        *   **Input:** Local tool descriptions, remote agent descriptions, full conversation history.
+        *   **Prompt:** Asks LLM to choose `LOCAL`, `REMOTE: [agent-id]`, or `REJECT: [reason]`.
+        *   **Output:**
+            *   `REMOTE: agent-id`: Verifies agent. If yes, returns `RoutingDecision::Remote`. -> **Go to Step 6 (Execution)**. If no, falls back to `LOCAL` (LLM tool). -> **Go to Step 6 (Execution)**.
             *   `REJECT: reason`: Returns `RoutingDecision::Reject`. -> **Go to Step 6 (Execution)**.
-            *   `LOCAL`: -> **Proceed to LLM Decision Point 3**.
+            *   `LOCAL`: -> **Proceed to LLM Decision Point 3 (DP3)**.
             *   Unclear / Fallback: Returns `RoutingDecision::Local` (LLM tool). -> **Go to Step 6 (Execution)**.
-    *   **LLM Decision Point 3: Choose Local Tool & Parameters (if Decision 2 was `LOCAL`)**
+    *   **LLM Decision Point 3 (DP3): Choose Local Tool & Parameters?** (If DP2 was `LOCAL`)
         *   **Input:** Conversation history, local tool list with parameter hints.
-        *   **Prompt:** Asks LLM to choose the single best tool and return JSON `{"tool_name": "...", "params": {...}}`. (Crucially, internal commands must use `execute_command` tool).
+        *   **Prompt:** Asks LLM for JSON `{"tool_name": "...", "params": {...}}`.
         *   **Output:**
             *   Valid Tool/Params JSON: Returns `RoutingDecision::Local { tool_name, params }`. -> **Go to Step 6 (Execution)**.
             *   Invalid/Fallback: Returns `RoutingDecision::Local` (LLM tool). -> **Go to Step 6 (Execution)**.
 
 6.  **Task Service - Execution:**
     *   Receives the `RoutingDecision`.
-    *   Updates task state to `Working`.
-    *   **Local Execution:** Calls `tool_executor.execute_tool`.
-        *   **`LlmTool`:** **LLM Usage Point 4 (Task Fulfillment)** - Calls the LLM again to generate the actual response to the user's query.
-        *   **`ExecuteCommandTool`:** Calls the appropriate non-LLM REPL command handler.
-        *   **`human_input` Tool:** Sets task state back to `InputRequired` to re-prompt the original user.
-        *   Other tools execute their specific logic.
-    *   **Remote Execution:** Calls `client_manager.delegate_task` which uses `A2aClient` to send the task to the remote agent.
+    *   **NeedsClarification:** Updates task state to `InputRequired` with the clarification question. -> **Go to Step 7 (Response)**.
+    *   **Decompose:** *[Requires TaskService implementation]* Creates child tasks based on the plan, manages dependencies, and eventually synthesizes results (NP4). For now, likely marks task as `Failed` or handles as `Local` fallback.
+    *   **Local Execution:** Updates task state to `Working`. Calls `tool_executor.execute_tool`.
+        *   **`LlmTool`:** **LLM Usage Point 4 (DP4 - Task Fulfillment)** - Calls the LLM again to generate the actual response.
+        *   Other tools execute their logic.
+    *   **Remote Execution:** Updates task state to `Working`. Calls `client_manager.delegate_task`.
     *   **Reject Execution:** Sets task state to `Failed` with the rejection reason.
     *   Updates and saves the final task state in the `TaskRepository`.
 
 7.  **Response Generation:**
-    *   **REPL:** Extracts text from the final task (artifacts, status, history) and prints it. Appends an indicator if the task ended in `InputRequired`.
+    *   **REPL:** Extracts text from the final task (artifacts, status, history) and prints it. Appends an indicator if the task ended in `InputRequired` (either from DP1 or NP1).
     *   **A2A Server:** Formats the final task object (or error) into a JSON-RPC response and sends it back to the requesting client.
 
 ## Usage
