@@ -513,10 +513,10 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
         // Process artifacts if this is a file or data task (for fixing file/data artifact tests)
         debug!("Processing potential artifacts from message.");
-        self.process_task_artifacts(task, &message).await?; // Logs internally
+        self.process_task_artifacts(task, &message).await?; // Logs internally now
 
         if require_input {
-            info!("Task requires input. Updating status to InputRequired.");
+            info!("Task requires input. Updating status to InputRequired."); // Keep info for state change
             // Update task status to request input
             task.status = TaskStatus {
                 state: TaskState::InputRequired,
@@ -715,7 +715,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                 warn!("Task not found in repository.");
                 ServerError::TaskNotFound(params.id.clone())
             })?;
-        info!(state = ?task.status.state, "Task found in repository.");
+        debug!(state = ?task.status.state, "Task found in repository."); // Changed to debug
         trace!(?task, "Fetched task details.");
 
         // Apply history_length filter if specified
@@ -768,7 +768,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                 )));
             }
             _ => {
-                info!("Task is in a cancelable state ({:?}). Proceeding with cancellation.", task.status.state);
+                debug!("Task is in a cancelable state ({:?}). Proceeding with cancellation.", task.status.state); // Changed to debug
             }
         }
 

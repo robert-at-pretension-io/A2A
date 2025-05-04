@@ -462,7 +462,7 @@ impl ToolExecutor {
     /// Updates the task state and artifacts based on the tool execution result.
     #[instrument(skip(self, task, params), fields(task_id = %task.id, tool_name))] // Add tracing span
     pub async fn execute_task_locally(&self, task: &mut Task, tool_name: &str, params: Value) -> Result<(), ServerError> {
-        tracing::info!("Executing task locally with pre-extracted parameters."); // Add tracing
+        debug!("Executing task locally with pre-extracted parameters."); // Changed to debug
         tracing::trace!(?params, "Parameters received for tool execution."); // Add tracing
 
         // Check if the requested tool exists and is registered
