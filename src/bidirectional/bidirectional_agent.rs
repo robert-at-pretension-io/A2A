@@ -567,6 +567,7 @@ impl BidirectionalAgent {
         }
 
         debug!(task_id = %task.id, "Local message processing complete. Returning response."); // Changed to debug
+    }
     // Helper to extract text from task
     #[instrument(skip(self, task), fields(task_id = %task.id))]
     pub fn extract_text_from_task(&self, task: &Task) -> String { // Make pub if needed by repl module
@@ -1012,6 +1013,7 @@ impl BidirectionalAgent {
         trace!(?card, "Agent card created.");
     }
 }
+
 
 // REMOVED Config Structs (ServerConfig, ClientConfig, LlmConfig, ToolsConfig, ModeConfig, BidirectionalAgentConfig)
 // REMOVED Default implementations for Config Structs
