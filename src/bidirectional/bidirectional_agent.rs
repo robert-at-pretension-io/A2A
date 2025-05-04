@@ -863,6 +863,7 @@ impl BidirectionalAgent {
 
     /// Send a task to a remote agent using the A2A client, ensuring session consistency.
     #[instrument(skip(self, message), fields(agent_id = %self.agent_id, message_len = message.len()))]
+    // Make pub so REPL module can access it
     pub async fn send_task_to_remote(&mut self, message: &str) -> Result<Task> {
         debug!("Attempting to send task to remote agent."); // Changed to debug
         trace!(message = %message, "Message content for remote task.");
