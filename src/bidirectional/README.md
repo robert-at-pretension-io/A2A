@@ -96,9 +96,9 @@ The bidirectional agent consists of several key components:
 - **ListAgentsTool**: Tool for discovering and sharing agent information
 - **ToolExecutor**: Executes local tools including echo, llm, summarize, list_agents, remember_agent, and execute_command.
 
-## Detailed User Flow & LLM Decision Points
+## Detailed User Flow & LLM Decision Points (Including Experimental Features)
 
-The agent processes user input (from REPL or A2A requests) through a series of steps, with several key decision points handled by an LLM:
+The agent processes user input (from REPL or A2A requests) through a series of steps, with several key decision points handled by an LLM. Note that NP1 and NP2 are experimental and controlled by configuration flags (`experimental_clarification`, `experimental_decomposition`).
 
 1.  **Input Reception:** User input is received via the REPL or an incoming A2A `tasks/send` request.
 

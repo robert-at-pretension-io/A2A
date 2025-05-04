@@ -434,6 +434,8 @@ For secure push notifications:
 6. **Clean Task Management**: Implement retention policies for completed tasks
 7. **Streaming Efficiently**: Use chunked responses efficiently
 8. **Push Notification Verification**: Always verify push notification endpoints
+9. **(Advanced) Task Decomposition**: For complex tasks, consider implementing internal planning logic to break down the request into smaller sub-tasks that can be executed sequentially or in parallel, potentially involving multiple tools or remote agents. Synthesize the results before responding to the original client.
+10. **(Advanced) Intent Clarification**: Before committing to complex execution plans, consider adding a step where the agent verifies its understanding of an ambiguous request by asking the client for clarification (e.g., using the `input-required` state).
 
 ## Implementation Examples
 

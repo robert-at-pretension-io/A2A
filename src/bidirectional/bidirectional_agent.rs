@@ -301,11 +301,12 @@ impl BidirectionalAgent {
         let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> =
             Arc::new(BidirectionalTaskRouter::new(
                 llm.clone(),
-                agent_registry.clone(), // Pass registry instead of directory
+                agent_registry.clone(),
                 enabled_tools.clone(),
-                Some(task_repository.clone()), // Pass task repository
+                Some(task_repository.clone()),
+                &config, // Pass the full config reference
             ));
-        trace!("BidirectionalTaskRouter created.");
+        trace!("BidirectionalTaskRouter created with config flags.");
 
         // Create the task service using the canonical components and our trait implementations
         debug!("Initializing TaskService.");

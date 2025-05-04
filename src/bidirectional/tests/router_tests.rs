@@ -1,11 +1,12 @@
 // Import RoutingDecision from the correct path
 use crate::server::task_router::RoutingDecision;
 use crate::bidirectional::task_router::BidirectionalTaskRouter; // <-- Update path
-use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; // Import canonical registry
-// MockLlmClient is defined locally in this test file, no change needed here
+use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::bidirectional::tests::mocks::MockLlmClient;
+use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
 use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities, AgentSkill};
 use std::sync::Arc;
+use serde_json::json; // Import json macro
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -18,9 +19,10 @@ async fn test_router_local_decision() {
     let registry = Arc::new(AgentRegistry::new());
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+    let mut config = BidirectionalAgentConfig::default(); // Use default config
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
 
     // Create a test task
     let task = create_test_task("What is the capital of France?");
@@ -49,9 +51,10 @@ async fn test_router_remote_decision() {
     });
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
+    let mut config = BidirectionalAgentConfig::default(); // Use default config
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
 
     // Create a test task
     let task = create_test_task("Please forward this to test-agent");
@@ -72,9 +75,10 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
     let registry = Arc::new(AgentRegistry::new());
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
+    let mut config = BidirectionalAgentConfig::default(); // Use default config
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
 
     // Create a test task
     let task = create_test_task("Please forward this to unknown-agent");
@@ -96,9 +100,10 @@ async fn test_router_fallback_to_local_for_unclear_decision() {
     let registry = Arc::new(AgentRegistry::new());
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
+    let mut config = BidirectionalAgentConfig::default(); // Use default config
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
 
     // Create a test task
     let task = create_test_task("What should I do with this?");
@@ -132,9 +137,10 @@ async fn test_router_prompt_formatting() {
     });
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+    let mut config = BidirectionalAgentConfig::default(); // Use default config
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools, None);
+    let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools, None, &config);
 
     // Create a test task
     let task = create_test_task("Please route this task appropriately");
@@ -162,7 +168,60 @@ async fn test_router_prompt_formatting() {
     assert!(tool_choice_prompt.contains("AVAILABLE LOCAL TOOLS:"));
     assert!(tool_choice_prompt.contains("choose the SINGLE most appropriate tool"));
     // Removed assertions using the old 'prompt' variable
+
+    // Check the third prompt (tool choice) - assuming DP2 decided LOCAL
+    if calls.len() > 2 { // Check if the third call exists
+        let tool_choice_prompt = &calls[2]; // Index 2 for the third call
+        assert!(tool_choice_prompt.contains("You have decided to handle the latest request in the following CONVERSATION HISTORY locally"));
+        assert!(tool_choice_prompt.contains("AVAILABLE LOCAL TOOLS:"));
+        assert!(tool_choice_prompt.contains("choose the SINGLE most appropriate tool"));
+    } else {
+        // This might happen if DP2 decided REMOTE or REJECT, so DP3 wasn't called.
+        // Or if clarification/decomposition happened.
+        // For this specific test setup, we expect LOCAL, so DP3 should run.
+        // If decomposition/clarification were enabled, this assertion might need adjustment.
+        // Let's assume for this test, clarification/decomposition are off.
+        assert!(calls.len() > 2, "Expected tool choice prompt (DP3) but only found {} calls", calls.len());
+    }
 }
+
+
+#[tokio::test]
+async fn test_router_needs_clarification() {
+    // Mock LLM responses: First for clarification check, second is irrelevant as it shouldn't be called
+    let llm = Arc::new(MockLlmClient::new()
+        .with_response("CLARITY: NEEDS_CLARIFY", "CLARITY: NEEDS_CLARIFY\nQUESTION: \"What specific topic are you asking about?\"")
+        .with_default_response("CLARITY: CLEAR") // Default if no specific match
+    );
+
+    let registry = Arc::new(AgentRegistry::new());
+    let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+    let mut config = BidirectionalAgentConfig::default();
+    config.mode.experimental_clarification = true; // Enable clarification
+
+    let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools, None, &config);
+
+    // Create a vague test task
+    let task = create_test_task("Tell me about it.");
+
+    // Test the routing decision (should call route_task which calls decide)
+    let decision = router.decide(&task.into_send_params()).await.unwrap(); // Use decide
+
+    // Verify that the decision is NeedsClarification
+    match decision {
+        RoutingDecision::NeedsClarification { question } => {
+            assert_eq!(question, "What specific topic are you asking about?");
+        }
+        other => panic!("Expected NeedsClarification decision, got {:?}", other),
+    }
+
+    // Verify the correct prompt was sent for clarification check
+    let calls = llm.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "Expected only one LLM call for clarification check");
+    assert!(calls[0].contains("judge whether the request is specific and complete"));
+    assert!(calls[0].contains("Tell me about it."));
+}
+
 
 // Helper function to create a test task
 fn create_test_task(message_text: &str) -> Task {
@@ -190,6 +249,23 @@ fn create_test_task(message_text: &str) -> Task {
         session_id: None,
     }
 }
+
+// Add helper to convert Task to TaskSendParams for router input
+impl Task {
+    fn into_send_params(self) -> TaskSendParams {
+        TaskSendParams {
+            id: self.id,
+            message: self.history.unwrap_or_default().last().cloned().unwrap_or_else(|| Message {
+                role: Role::User, parts: vec![Part::TextPart(TextPart{ type_: "text".to_string(), text: "".to_string(), metadata: None })], metadata: None
+            }), // Use last history message or empty
+            session_id: self.session_id,
+            metadata: self.metadata,
+            history_length: None, // Not relevant for sending
+            push_notification: None, // Not relevant for sending
+        }
+    }
+}
+
 
 // Helper function to create a test agent card
 fn create_test_agent_card(url: &str) -> AgentCard {

@@ -11,21 +11,39 @@ use uuid::Uuid;
 
 use crate::server::error::ServerError;
 use crate::types::{Message, TaskSendParams};
+use serde::{Deserialize, Serialize}; // Add Serialize, Deserialize
+use std::collections::HashMap; // Add HashMap for metadata
 
 /// Subtask definition for task decomposition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)] // Add Serialize, Deserialize
 pub struct SubtaskDefinition {
-    /// Unique ID for the subtask
+    /// Unique ID for the subtask (e.g., kebab-case identifier)
     pub id: String,
     
-    /// Input message for the subtask
+    /// Input message/prompt for the subtask
     pub input_message: String,
-    
-    /// Optional metadata for the subtask
-    pub metadata: Option<serde_json::Map<String, Value>>,
+
+    /// Optional metadata, including dependencies
+    /// Example: { "depends_on": ["previous-step-id"] }
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, Value>>, // Use HashMap for easier construction
+
+    // Add a field to store the routing decision for this specific subtask
+    // This will be populated *after* the initial decomposition plan is generated.
+    #[serde(skip)] // Don't serialize/deserialize this part initially
+    pub routing_decision: Option<RoutingDecision>,
 }
 
 impl SubtaskDefinition {
+    /// Create a new subtask definition with a specific ID
+    pub fn new_with_id(id: String, input_message: String) -> Self {
+        Self {
+            id, // Use provided ID
+            input_message,
+            metadata: Some(HashMap::new()), // Initialize metadata map
+            routing_decision: None,
+        }
+    }
     /// Create a new subtask definition
     pub fn new(input_message: String) -> Self {
         Self {
@@ -58,14 +76,22 @@ pub enum RoutingDecision {
         /// Subtasks to decompose the task into
         subtasks: Vec<SubtaskDefinition>,
     },
-    
+
     /// Reject the task
     Reject {
         /// Reason for rejection
         reason: String,
     },
+
+    // --- New Decisions ---
+
+    /// Task requires clarification before proceeding
+    NeedsClarification {
+        /// The question to ask the user for clarification
+        question: String,
+    },
 }
- 
+
 /// Trait for task routers that use LLM capabilities
 #[async_trait] // <-- Add this attribute here
 pub trait LlmTaskRouterTrait: Send + Sync {
