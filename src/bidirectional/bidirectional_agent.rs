@@ -1376,8 +1376,8 @@ impl BidirectionalAgent {
                 if command == "help" || input_trimmed == ":help" {
                     self.print_repl_help(); // Logs internally
                 } else if command == "quit" || input_trimmed == ":quit" {
-                    info!("User initiated :quit command.");
-                    println!("Exiting REPL. Goodbye!");
+                    info!("User initiated :quit command."); // Keep info for quit
+                    println!("👋 Exiting REPL. Goodbye!"); // Added emoji
 
                     // REMOVED agent directory saving on exit
 
