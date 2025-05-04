@@ -1934,28 +1934,40 @@ impl BidirectionalAgent {
                 Err(anyhow!("Invalid server number. Use :servers to see available servers."))
             }
         } else {
-            // Treat as URL
-            let target_url = target.to_string();
-            if target_url.is_empty() {
-                error!("No URL provided for :connect command.");
-                return Err(anyhow!("No URL provided. Use :connect URL"));
+            // Treat as URL - Extract URL from potentially noisy args string
+            debug!(args = %target, "Attempting to extract URL from connect arguments.");
+            // Find the first word that looks like a URL
+            let extracted_url = target.split_whitespace()
+                .find(|s| s.starts_with("http://") || s.starts_with("https://"))
+                .map(|s| s.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '/').to_string()); // Basic cleanup
+
+            if extracted_url.is_none() {
+                error!("Could not extract a valid URL from connect arguments: '{}'", target);
+                return Err(anyhow!("No valid URL found in arguments. Use 'connect URL' or 'connect N'."));
             }
 
-            debug!(url = %target_url, "Attempting connection to URL.");
-            let mut client = A2aClient::new(&target_url);
+            let url_to_connect = extracted_url.unwrap();
+            if url_to_connect.is_empty() {
+                 error!("Extracted URL is empty from arguments: '{}'", target);
+                 return Err(anyhow!("Extracted URL is empty. Use 'connect URL' or 'connect N'."));
+            }
+            debug!(url = %url_to_connect, "Extracted URL. Attempting connection.");
+
+
+            let mut client = A2aClient::new(&url_to_connect); // Use the extracted URL
 
             match client.get_agent_card().await {
                 Ok(card) => {
                     let remote_agent_name = card.name.clone();
-                    info!(remote_agent_name = %remote_agent_name, url = %target_url, "Successfully connected to agent.");
+                    info!(remote_agent_name = %remote_agent_name, url = %url_to_connect, "Successfully connected to agent.");
                     let success_msg = format!("✅ Successfully connected to agent: {}", remote_agent_name);
 
-                    self.known_servers.insert(target_url.clone(), remote_agent_name.clone());
+                    self.known_servers.insert(url_to_connect.clone(), remote_agent_name.clone());
                     self.client = Some(client);
 
                     // Update registry in background
                     let registry_clone = self.agent_registry.clone();
-                    let url_clone = target_url.clone();
+                    let url_clone = url_to_connect.clone(); // Use url_to_connect
                     let known_servers_clone = self.known_servers.clone();
                     let remote_agent_name_clone = remote_agent_name.clone();
                     tokio::spawn(async move {
@@ -1975,14 +1987,14 @@ impl BidirectionalAgent {
                     Ok(success_msg)
                 },
                 Err(e) => {
-                    error!(url = %target_url, error = %e, "Failed to connect to agent via URL.");
+                    error!(url = %url_to_connect, error = %e, "Failed to connect to agent via URL.");
                     // Don't ask y/n here, just return error
-                    if !self.known_servers.contains_key(&target_url) {
+                    if !self.known_servers.contains_key(&url_to_connect) {
                          let unknown_name = "Unknown Agent".to_string();
-                         self.known_servers.insert(target_url.clone(), unknown_name.clone());
-                         info!(url = %target_url, "Added URL to known servers as 'Unknown Agent' after failed connection attempt.");
+                         self.known_servers.insert(url_to_connect.clone(), unknown_name.clone());
+                         info!(url = %url_to_connect, "Added URL to known servers as 'Unknown Agent' after failed connection attempt.");
                     }
-                    Err(anyhow!("Failed to connect to agent at {}: {}. Please check the server is running and the URL is correct. URL added to known servers as 'Unknown Agent'.", target_url, e))
+                    Err(anyhow!("Failed to connect to agent at {}: {}. Please check the server is running and the URL is correct. URL added to known servers as 'Unknown Agent'.", url_to_connect, e))
                 }
             }
         }
