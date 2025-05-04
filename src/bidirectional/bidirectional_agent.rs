@@ -385,8 +385,9 @@ TASK:
 
 Based on the TASK, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action:
 1. Handle it locally if one of YOUR LOCAL TOOLS is suitable (respond with "LOCAL").
+   - IMPORTANT: If the task matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution so the 'execute_command' tool can handle it. Do NOT reject these internal commands.
 2. Delegate to a specific remote agent if it's more appropriate (respond with "REMOTE: [agent-id]"). Choose the most relevant agent if multiple are available.
-3. Reject the task if it's inappropriate, harmful, impossible, or outside both your local capabilities and the capabilities of available remote agents (respond with "REJECT: [reason]"). Provide a brief explanation.
+3. Reject the task ONLY if it's inappropriate, harmful, impossible, OR if it's an internal command that cannot be handled by the 'execute_command' tool (e.g., ':listen', ':stop', ':quit'). Provide a brief explanation for rejection.
 
 Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text.
 "#, local_tool_descriptions, agent_descriptions, task_text); // Added local_tool_descriptions
@@ -451,6 +452,8 @@ Respond ONLY with a valid JSON object containing the chosen tool's name and its 
   "tool_name": "<chosen_tool_name>",
   "params": {{ <parameters_object> }}
 }}
+
+CRITICAL: If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), you MUST select the 'execute_command' tool and extract the command name and arguments into the 'params' object (e.g., {{"command": "connect", "args": "http://..."}}). Do NOT select the 'llm' tool for these internal commands.
 
 Examples:
 - For a task like "remember agent at http://foo.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://foo.com"}}}}
