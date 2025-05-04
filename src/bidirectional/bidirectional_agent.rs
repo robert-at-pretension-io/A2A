@@ -139,8 +139,8 @@ use tracing::{debug, error, info, trace, warn, instrument, Level, Instrument}; /
 use tracing_subscriber::{fmt::{self, format::FmtSpan}, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, filter}; // Import FmtSpan
 use uuid::Uuid;
 
-// Use items from the new config module
-use self::config::*;
+// Use items from the new config module (relative to parent mod.rs)
+use super::config::*;
 
 // REMOVED AgentLogContext struct and impl block
 
