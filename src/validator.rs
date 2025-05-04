@@ -1,4 +1,4 @@
-use jsonschema::{JSONSchema, ValidationError};
+use jsonschema::{JSONSchema, /* ValidationError */}; // Removed unused
 use once_cell::sync::Lazy; // Use once_cell::sync::Lazy
 use serde_json::Value;
 use std::fs;

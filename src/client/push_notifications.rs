@@ -1,10 +1,10 @@
-use std::error::Error;
-use serde_json::{json, Value};
+// use std::error::Error; // Unused
+use serde_json::{/* json, */ Value}; // Removed json
 
 use crate::client::A2aClient;
 use crate::client::errors::ClientError;
-use crate::client::error_handling::ErrorCompatibility;
-use crate::types::{PushNotificationConfig, AuthenticationInfo, TaskPushNotificationConfig, TaskIdParams};
+// use crate::client::error_handling::ErrorCompatibility; // Unused
+use crate::types::{PushNotificationConfig, AuthenticationInfo, /* TaskPushNotificationConfig, */ TaskIdParams}; // Removed unused
 
 impl A2aClient {
     /// Set a push notification webhook for a task (typed error version)

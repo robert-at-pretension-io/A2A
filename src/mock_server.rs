@@ -325,7 +325,7 @@ async fn handle_a2a_request_with_auth(task_storage: TaskStorage, mut req: Reques
     let agent_card = create_agent_card_with_auth(require_auth);
     
     // Handle JSON-RPC requests - extract the body first but keep the headers
-    let uri = req.uri().clone();
+    let _uri = req.uri().clone(); // Prefix unused uri
     let headers = req.headers().clone();
     let body_bytes = hyper::body::to_bytes(req.body_mut()).await.unwrap();
     
@@ -879,7 +879,7 @@ async fn handle_a2a_request_with_auth(task_storage: TaskStorage, mut req: Reques
                     sleep(Duration::from_millis(chunk_delay)).await;
                     
                     // Keep track of the total artifacts generated
-                    let mut artifact_count = 0;
+                    let mut artifact_count = 0; // Keep this counter as it's used for indexing later artifacts
                     
                     // Generate text chunks if configured
                     if task_types.contains(&"text".to_string()) {

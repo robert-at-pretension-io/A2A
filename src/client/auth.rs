@@ -1,9 +1,9 @@
-use std::error::Error;
-use serde_json::{json, Value};
-use mockito::Server;
+// use std::error::Error; // Unused
+use serde_json::{json, Value}; // Keep json and Value for tests
+use mockito::Server; // Keep for tests
 
-use crate::client::A2aClient;
-use crate::client::errors::ClientError;
+use crate::client::A2aClient; // Keep for tests
+use crate::client::errors::ClientError; // Keep for tests
 // Removed commented out ErrorCompatibility import
 
 // Extend A2aClient with auth-related helper methods if needed

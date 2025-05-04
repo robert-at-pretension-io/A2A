@@ -71,7 +71,7 @@ pub async fn run_integration_tests(config: TestRunnerConfig) -> Result<(), Box<d
         let get_card_closure = || {
             let client_clone = Arc::clone(&client_arc);
             async move {
-                let mut client_guard = client_clone.lock().await; // Use async lock
+                let client_guard = client_clone.lock().await; // Remove mut
                 client_guard.get_agent_card().await // Await directly
             }
         };

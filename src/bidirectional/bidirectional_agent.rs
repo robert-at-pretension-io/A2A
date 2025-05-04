@@ -87,7 +87,6 @@ use crate::client::{
     streaming::{/* StreamingResponse, StreamingResponseStream */}, // Unused
 };
 
-use crate::server::{
     repositories::task_repository::{TaskRepository, InMemoryTaskRepository},
     services::{
         task_service::TaskService,
@@ -95,48 +94,48 @@ use crate::server::{
         notification_service::NotificationService,
     },
     // Use the canonical TaskRouter and ToolExecutor from the server module
-    task_router::{LlmTaskRouterTrait, RoutingDecision}, // Import LlmTaskRouterTrait and RoutingDecision
+    task_router::{LlmTaskRouterTrait, /* RoutingDecision */}, // Import LlmTaskRouterTrait // Removed unused RoutingDecision
     tool_executor::ToolExecutor, // Import ToolExecutor
     // Use the canonical AgentRegistry and ClientManager
     agent_registry::AgentRegistry,
     client_manager::ClientManager,
     run_server,
-    error::ServerError, // Import ServerError for error mapping
+    // error::ServerError, // Unused
 };
 
 use crate::types::{
     Task, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities,
-    TaskSendParams, TaskQueryParams, TaskIdParams, PushNotificationConfig,
-    DataPart, FilePart, TaskStatus, // Import TaskStatus
+    TaskSendParams, TaskQueryParams, /* TaskIdParams, PushNotificationConfig, */ // Unused
+    /* DataPart, FilePart, TaskStatus, */ // Unused
 };
 
 
-use anyhow::{anyhow, Context, Result};
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use anyhow::{anyhow, /* Context, */ Result}; // Removed unused Context
+// use async_trait::async_trait; // Unused
+use chrono::{/* DateTime, */ Utc}; // Removed unused DateTime
 use dashmap::DashMap;
-use futures_util::{StreamExt, TryStreamExt};
-use reqwest;
+use futures_util::{StreamExt, /* TryStreamExt */}; // Removed unused TryStreamExt
+// use reqwest; // Unused
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value, Map}; // Import Map
+use serde_json::{/* json, Value, Map */}; // Unused imports
 use std::{
-    sync::Arc, 
-    error::Error as StdError, 
-    fs, 
+    sync::Arc,
+    // error::Error as StdError, // Unused
+    // fs, // Unused
     path::Path,
-    io::{self, Write, BufRead},
+    io::{self, /* Write, BufRead */}, // Removed unused Write, BufRead
     path::PathBuf, // Import PathBuf
-    collections::HashMap, // Import HashMap
+    // collections::HashMap, // Unused
 }; // Import StdError for error mapping and IO
 use tokio::{
-    fs::OpenOptions, // Import OpenOptions for async file I/O
-    io::AsyncWriteExt, // Import AsyncWriteExt for write_all
-    time::sleep,
+    // fs::OpenOptions, // Unused
+    // io::AsyncWriteExt, // Unused
+    // time::sleep, // Unused
 };
 use tokio_util::sync::CancellationToken;
-use toml;
-use tracing::{debug, error, info, trace, warn, instrument, Level, Instrument}; // Import trace, Instrument trait
-use tracing_subscriber::{fmt::{self, format::FmtSpan}, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, filter}; // Import FmtSpan
+// use toml; // Unused
+use tracing::{debug, error, info, trace, warn, instrument, /* Level, */ Instrument}; // Removed unused Level
+use tracing_subscriber::{fmt::{self, format::FmtSpan}, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, /* filter */}; // Removed unused filter
 use uuid::Uuid;
 
 // Use items from the new config module (relative to parent mod.rs)
@@ -761,8 +760,11 @@ impl BidirectionalAgent {
             } else {
                  warn!(session_id = %session_id, "Session ID not found in task map while fetching tasks.");
             }
+            Ok(tasks) // Return the collected tasks
         } else {
              warn!("Cannot get session tasks: No active session.");
+             // Return empty vec if no session
+             Ok(Vec::new())
         }
     }
 

@@ -82,7 +82,7 @@ pub async fn jsonrpc_handler(
             let params = json_value.get("params").cloned().unwrap_or(json!({}));
             
             // Check for streaming requests based on method or headers
-            let wants_streaming = accepts_sse || method == "tasks/sendSubscribe" || method == "tasks/resubscribe";
+            let _wants_streaming = accepts_sse || method == "tasks/sendSubscribe" || method == "tasks/resubscribe"; // Prefix unused variable
             
             // Dispatch to appropriate handler based on method
             match method {

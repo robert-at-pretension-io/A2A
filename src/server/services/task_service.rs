@@ -953,7 +953,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                         trace!(part_index = i, file_name = ?fp.file.name, "Found FilePart.");
                         has_file = true;
                     },
-                    Part::DataPart(dp) => {
+                    Part::DataPart(_dp) => { // Prefix dp with _
                         trace!(part_index = i, "Found DataPart.");
                         has_data = true;
                     },

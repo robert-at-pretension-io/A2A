@@ -143,7 +143,7 @@ impl ClientManager {
     /// Cancels a task on a remote agent.
     pub async fn cancel_task(&self, agent_id: &str, task_id: &str) -> Result<Task, ServerError> {
         // Get or create the client
-        let mut client = self.get_or_create_client(agent_id).await?;
+        let mut client = self.get_or_create_client(agent_id).await?; // Keep mut here, it's used later
         
         // Create the task ID params
         let params = TaskIdParams {

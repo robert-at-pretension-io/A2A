@@ -1,4 +1,4 @@
-use arbitrary::{Arbitrary, Unstructured};
+// use arbitrary::{Arbitrary, Unstructured}; // Unused
 use rand::{Rng, thread_rng};
 use std::time::{Duration, Instant};
 use crate::types::*;
