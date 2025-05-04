@@ -80,6 +80,9 @@
 //! If no configuration file is provided, the agent starts with sensible defaults
 //! and automatically enters REPL mode for interactive use.
 
+// Declare modules within the bidirectional module
+mod config;
+
 // Import from other modules in the crate
 use crate::client::{
     A2aClient,
@@ -139,23 +142,17 @@ use tracing::{debug, error, info, trace, warn, instrument, Level, Instrument}; /
 use tracing_subscriber::{fmt::{self, format::FmtSpan}, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, filter}; // Import FmtSpan
 use uuid::Uuid;
 
+// Use items from the new config module
+use self::config::*;
+
 // REMOVED AgentLogContext struct and impl block
 
 // Constants
 const AGENT_NAME: &str = "Bidirectional A2A Agent";
 const AGENT_VERSION: &str = "1.0.0";
-const DEFAULT_PORT: u16 = 8080;
-const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0";
-const SYSTEM_PROMPT: &str = r#"
-You are an AI agent assistant that helps with tasks. You can:
-1. Process tasks directly (for simple questions or tasks you can handle)
-2. Delegate tasks to other agents when appropriate
-3. Use tools when needed
+// Defaults moved to config.rs
 
-Always think step-by-step about the best way to handle each request.
-"#;
-
-// Helper Types (Keep ExecutionMode, AgentDirectoryEntry, AgentDirectory for local logic)
+// Helper Types (Keep ExecutionMode for now, might move later)
 
 /// Task execution mode
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
