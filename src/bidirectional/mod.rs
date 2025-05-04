@@ -1,7 +1,8 @@
 pub mod config;
 pub mod llm_client;
 pub mod task_router;
-pub mod repl; // <-- Add the new repl module
+pub mod repl;
+pub mod agent_helpers; // <-- Add the new helpers module
 pub mod bidirectional_agent;
 #[cfg(test)]
 pub mod tests;

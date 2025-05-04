@@ -7,7 +7,7 @@ use tracing::{debug, error, info, instrument, /* trace, */ warn}; // Removed tra
 // use uuid::Uuid; // Unused
 
 use crate::{
-    bidirectional::bidirectional_agent::BidirectionalAgent,
+    bidirectional::{agent_helpers, bidirectional_agent::BidirectionalAgent}, // Add agent_helpers
     client::A2aClient,
     types::{
         /* AgentCard, AgentCapabilities, */ Part, Role, /* Task, */ TaskIdParams, TaskQueryParams, TaskState, // Removed unused
@@ -68,6 +68,8 @@ pub(super) async fn handle_connect(agent: &mut BidirectionalAgent, target: &str)
 
             // Create a new client with the selected URL
             agent.client = Some(A2aClient::new(&url_clone));
+            // Update client_config's target_url as well
+            agent.client_config.target_url = Some(url_clone.clone());
             info!(server_name = %name, server_url = %url_clone, "Connecting to known server by number.");
             let connect_msg = format!("🔗 Connecting to {}: {}", name, url_clone);
 
@@ -208,8 +210,10 @@ pub(super) async fn handle_connect(agent: &mut BidirectionalAgent, target: &str)
 pub(super) fn handle_disconnect(agent: &mut BidirectionalAgent) -> Result<String> {
     debug!("Handling disconnect command.");
     if agent.client.is_some() {
-        let url = agent.client_url().unwrap_or_else(|| "unknown".to_string());
+        let url = agent_helpers::client_url(agent).unwrap_or_else(|| "unknown".to_string()); // Call helper
         agent.client = None;
+        // Also clear the target_url in config
+        agent.client_config.target_url = None;
         info!(disconnected_from = %url, "Disconnected from remote agent.");
         Ok(format!("🔌 Disconnected from {}", url))
     } else {
@@ -239,7 +243,7 @@ pub(super) fn handle_list_servers(agent: &BidirectionalAgent) -> Result<String> 
         server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name
 
         for (i, (name, url)) in server_list.iter().enumerate() {
-            let marker = if Some(url) == agent.client_url().as_ref() {
+            let marker = if Some(url) == agent_helpers::client_url(agent).as_ref() { // Call helper
                 "*"
             } else {
                 " "
@@ -279,7 +283,7 @@ pub(super) async fn handle_remote_message(
     );
 
     if task.status.state == TaskState::Completed {
-        let task_response = agent.extract_text_from_task(&task);
+        let task_response = agent_helpers::extract_text_from_task(agent, &task); // Call helper
         if task_response != "No response text available." {
             debug!(task_id = %task.id, "Appending immediate response from completed remote task.");
             response.push_str("\n\n📥 Response from remote agent:\n");
@@ -292,7 +296,7 @@ pub(super) async fn handle_remote_message(
 /// Handles the ':session new' REPL command logic.
 #[instrument(skip(agent), fields(agent_id = %agent.agent_id))]
 pub(super) fn handle_new_session(agent: &mut BidirectionalAgent) -> Result<String> {
-    let session_id = agent.create_new_session(); // create_new_session logs internally now
+    let session_id = agent_helpers::create_new_session(agent); // Call helper
     info!("Created new session: {}", session_id);
     Ok(format!("✅ Created new session: {}", session_id))
 }
@@ -314,7 +318,7 @@ pub(super) fn handle_show_session(agent: &BidirectionalAgent) -> Result<String> 
 pub(super) async fn handle_history(agent: &BidirectionalAgent) -> Result<String> {
     if let Some(session_id) = &agent.current_session_id {
         debug!(session_id = %session_id, "Fetching history for current session.");
-        let tasks = agent.get_current_session_tasks().await?; // get_current_session_tasks logs internally
+        let tasks = agent_helpers::get_current_session_tasks(agent).await?; // Call helper
         if tasks.is_empty() {
             info!(session_id = %session_id, "No tasks found in current session history.");
             Ok("📭 No messages in current session.".to_string())

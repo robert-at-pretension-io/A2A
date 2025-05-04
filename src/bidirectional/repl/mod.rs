@@ -6,7 +6,7 @@ use tokio::{self, /* sync::oneshot, time::sleep */}; // Removed unused
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, trace, warn};
 
-use super::bidirectional_agent::BidirectionalAgent;
+use super::{agent_helpers, bidirectional_agent::BidirectionalAgent}; // Add agent_helpers
 use crate::server::run_server;
 
 // Import command handlers from the sibling module
@@ -23,7 +23,7 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
 
     // --- Spawn Background Task for Initial Connection ---
     debug!("Checking if background connection task should be spawned.");
-    if let Some(initial_url) = agent.client_url() {
+    if let Some(initial_url) = agent_helpers::client_url(agent) { // Call helper
         debug!(url = %initial_url, "Spawning background task for initial connection attempt."); // Changed to debug
         println!(
             "⏳ Configured target URL: {}. Attempting connection in background...",
@@ -258,7 +258,7 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
 
     loop {
         // Display prompt (with connected agent information if available)
-        let prompt = if let Some(url) = agent.client_url() {
+        let prompt = if let Some(url) = agent_helpers::client_url(agent) { // Call helper
             format!("agent@{} > ", url)
         } else {
             "agent > ".to_string()
