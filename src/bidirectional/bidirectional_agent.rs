@@ -287,43 +287,40 @@ impl BidirectionalTaskRouter {
     pub async fn decide_execution_mode(&self, task: &Task) -> Result<RoutingDecision, ServerError> {
         debug!("Deciding execution mode for task.");
         trace!(?task, "Task details for routing decision.");
-        
-        // Extract the task content for analysis
-        // Use history if available, otherwise maybe the top-level message if applicable
-        trace!("Extracting task text from history/message.");
-        let task_text = task.history.as_ref().map(|history| {
-            history.iter()
-                .filter(|m| m.role == Role::User)
-                .flat_map(|m| m.parts.iter())
-                .filter_map(|p| match p {
-                    Part::TextPart(tp) => Some(tp.text.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }).unwrap_or_else(|| {
-             // If history is None or empty, try getting text from the initial message part if available
-             task.history.as_ref()
-                 .and_then(|h| h.first()) // Get the first message (assuming it's the initial one)
-                 .map(|m| m.parts.iter()
-                     .filter_map(|p| match p {
-                         Part::TextPart(tp) => Some(tp.text.clone()),
-                         _ => None,
-                     })
-                     .collect::<Vec<_>>()
-                     .join("\n")
-                 )
-                 .unwrap_or_default()
-        });
-        trace!(task_text = %task_text, "Extracted task text.");
 
+        // --- Extract Full Conversation History ---
+        trace!("Extracting full conversation history for LLM prompt.");
+        let conversation_history_text = task.history.as_ref()
+            .map(|history| {
+                history.iter().map(|message| {
+                    let role_str = match message.role {
+                        Role::User => "User",
+                        Role::Agent => "Agent",
+                        // Handle other roles if they exist
+                    };
+                    let content = message.parts.iter()
+                        .filter_map(|part| match part {
+                            Part::TextPart(tp) => Some(tp.text.as_str()),
+                            // Optionally represent other part types
+                            Part::FilePart(_) => Some("[File Content]"),
+                            Part::DataPart(_) => Some("[Structured Data]"),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" "); // Join parts with space
+                    format!("{}: {}", role_str, content)
+                }).collect::<Vec<_>>().join("\n") // Join messages with newline
+            })
+            .unwrap_or_else(|| {
+                warn!("Task history is empty or None. Cannot extract conversation.");
+                "".to_string() // Return empty string if no history
+            });
+        trace!(conversation_history = %conversation_history_text, "Extracted conversation history text.");
 
-        if task_text.is_empty() {
-            // If still empty after checking history and initial message
-            warn!("Task text is empty after checking history and message, defaulting to local execution with 'echo' tool.");
-            // Use tool_name and add default params
+        if conversation_history_text.is_empty() {
+            warn!("Extracted conversation history is empty. Falling back to local 'echo'.");
             return Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) });
         }
+        // --- End History Extraction ---
  
         // Get the list of available agents from the canonical registry
         debug!("Fetching available agents from AgentRegistry for routing prompt.");
@@ -380,17 +377,17 @@ YOUR LOCAL TOOLS:
 AVAILABLE REMOTE AGENTS:
 {}
 
-TASK:
+CONVERSATION HISTORY (User/Agent turns):
 {}
 
-Based on the TASK, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action:
+Based on the full CONVERSATION HISTORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request:
 1. Handle it locally if one of YOUR LOCAL TOOLS is suitable (respond with "LOCAL").
-   - IMPORTANT: If the task matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution so the 'execute_command' tool can handle it. Do NOT reject these internal commands.
+   - IMPORTANT: If the latest request matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution so the 'execute_command' tool can handle it. Do NOT reject these internal commands based on the history.
 2. Delegate to a specific remote agent if it's more appropriate (respond with "REMOTE: [agent-id]"). Choose the most relevant agent if multiple are available.
 3. Reject the task ONLY if it's inappropriate, harmful, impossible, OR if it's an internal command that cannot be handled by the 'execute_command' tool (e.g., ':listen', ':stop', ':quit'). Provide a brief explanation for rejection.
 
 Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text.
-"#, local_tool_descriptions, agent_descriptions, task_text); // Added local_tool_descriptions
+"#, local_tool_descriptions, agent_descriptions, conversation_history_text); // Use full history
         trace!(routing_prompt = %routing_prompt, "Constructed routing prompt.");
 
         info!("Requesting routing decision from LLM.");
@@ -439,10 +436,10 @@ Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, o
             trace!(local_tool_descriptions = %local_tool_descriptions, "Formatted local tool descriptions for combined prompt.");
 
             let tool_param_prompt = format!(
-r#"You have decided to handle the following TASK locally:
+r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
 {}
 
-Based on the TASK and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
+Based on the CONVERSATION HISTORY (especially the latest request) and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
 
 AVAILABLE LOCAL TOOLS:
 {}
@@ -466,7 +463,7 @@ Examples:
 - If no specific parameters are needed for the chosen tool (like list_agents with default format): {{"tool_name": "list_agents", "params": {{}}}}
 
 Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
-                task_text,
+                conversation_history_text, // Use full history
                 local_tool_descriptions
             );
             trace!(tool_param_prompt = %tool_param_prompt, "Constructed combined tool/param extraction prompt.");
@@ -490,23 +487,23 @@ Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
                                     info!(tool_name = %tool_name, ?params, "Successfully parsed tool and params from LLM response.");
                                     Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params })
                                 } else {
-                                    warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool in JSON response. Falling back to 'llm' tool.");
-                                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
+                                    warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool in JSON response. Falling back to 'llm' tool with full history.");
+                                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
                                 }
                             } else {
-                                warn!(json_response = %json_str, "LLM returned valid JSON but missing 'tool_name' or 'params'. Falling back to 'llm' tool.");
-                                Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
+                                warn!(json_response = %json_str, "LLM returned valid JSON but missing 'tool_name' or 'params'. Falling back to 'llm' tool with full history.");
+                                Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
                             }
                         },
                         Err(e) => {
-                            warn!(error = %e, json_response = %json_str, "LLM returned invalid JSON for tool/params. Falling back to 'llm' tool.");
-                            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
+                            warn!(error = %e, json_response = %json_str, "LLM returned invalid JSON for tool/params. Falling back to 'llm' tool with full history.");
+                            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
                         }
                     }
                 },
                 Err(e) => {
-                    warn!(error = %e, "LLM failed to choose tool/extract params. Falling back to 'llm' tool.");
-                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
+                    warn!(error = %e, "LLM failed to choose tool/extract params. Falling back to 'llm' tool with full history.");
+                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
                 }
             }
             // --- End Combined LLM Tool Selection & Parameter Extraction ---
@@ -518,9 +515,9 @@ Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
             // Verify the agent exists in the canonical registry
             trace!(remote_agent_id = %agent_id, "Verifying remote agent existence in AgentRegistry.");
             if self.agent_registry.get(&agent_id).is_none() { // Check canonical registry
-                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent (not in registry), falling back to local execution with 'llm' tool and original task text.");
-                 // Fall back to local if agent not found, using llm tool with original text
-                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
+                 warn!(remote_agent_id = %agent_id, "LLM decided to delegate to unknown agent (not in registry), falling back to local execution with 'llm' tool and full history.");
+                 // Fall back to local if agent not found, using llm tool with full history
+                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
             } else {
                  info!(remote_agent_id = %agent_id, "Routing decision: Remote delegation confirmed.");
                  Ok(RoutingDecision::Remote { agent_id })
@@ -530,9 +527,9 @@ Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
             info!(reason = %reason, "LLM decided to REJECT the task.");
             Ok(RoutingDecision::Reject { reason })
         } else {
-            warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'llm' tool and original task text.");
-            // Default to local llm tool if the decision isn't clear, using original text
-            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": task_text}) })
+            warn!(llm_decision = %decision, "LLM routing decision was unclear, falling back to local execution with 'llm' tool and full history.");
+            // Default to local llm tool if the decision isn't clear, using full history
+            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": conversation_history_text}) }) // Use history
         }
     }
 }
