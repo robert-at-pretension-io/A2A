@@ -167,7 +167,7 @@ enabled = ["echo", "summarize", "list_agents"]
 EOF
 
 # Start Agent 3 (expert)
-AGENT3_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 3 (Expert Data Analyst, port 4202)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent3_config.toml"
+AGENT3_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 3 (Expert Data Analyst, port 4202)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent3_config.toml" # Keep RUST_LOG=info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent 3 (Expert - Port 4202)" -- bash -c "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -188,7 +188,7 @@ else
 fi
 
 # Start Agent 2 (router)
-AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 2 (Router, port 4201)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent2_config.toml"
+AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 2 (Router, port 4201)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent2_config.toml" # Keep RUST_LOG=info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent 2 (Router - Port 4201)" -- bash -c "$AGENT2_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -209,7 +209,7 @@ else
 fi
 
 # Start Agent 1 (client)
-AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 1 (Client, port 4200)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent1_config.toml"
+AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 1 (Client, port 4200)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent1_config.toml" # Keep RUST_LOG=info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent 1 (Client - Port 4200)" -- bash -c "$AGENT1_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then

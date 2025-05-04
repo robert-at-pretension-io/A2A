@@ -32,7 +32,9 @@ impl AgentRegistry {
 
     /// Discovers an agent by its base URL and adds/updates it in the registry.
     /// Returns the agent's name/ID on success for tools to use.
+    #[instrument(skip(self), fields(%url))]
     pub async fn discover(&self, url: &str) -> Result<String, ServerError> {
+        debug!("Attempting to discover agent via URL.");
         // Use a temporary A2aClient just for fetching the card
         let temp_client = A2aClient::new(url);
 
@@ -47,6 +49,7 @@ impl AgentRegistry {
                 };
 
                 self.agents.insert(agent_id.clone(), cache_info);
+                info!(%agent_id, %url, "Successfully discovered and registered/updated agent."); // Keep info for success
                 Ok(agent_id) // Return the agent's name/ID
             },
             Err(e) => {

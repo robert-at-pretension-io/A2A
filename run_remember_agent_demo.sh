@@ -137,7 +137,7 @@ enabled = ["echo"] # Only basic tools needed
 EOF
 
 # Start Agent Target (listens on 4301)
-AGENT_TARGET_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent Target (listening on port 4301)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent_target_config.toml"
+AGENT_TARGET_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent Target (listening on port 4301)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent_target_config.toml" # Keep RUST_LOG=info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent Target (Port 4301)" -- bash -c "$AGENT_TARGET_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -158,7 +158,7 @@ else
 fi
 
 # Start Agent Remember (listens on 4300)
-AGENT_REMEMBER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent Remember (listening on port 4300)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent_remember_config.toml"
+AGENT_REMEMBER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent Remember (listening on port 4300)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent_remember_config.toml" # Keep RUST_LOG=info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent Remember (Port 4300)" -- bash -c "$AGENT_REMEMBER_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then

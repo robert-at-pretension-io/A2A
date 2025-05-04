@@ -143,7 +143,7 @@ repl_log_file = "repl_interactions.log" # Log REPL to the same file
 EOF
 
 # Start Agent 1 (listens on 4200, connects to 4201) - Run agent in foreground of terminal's shell
-AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 1 (PID \$$) listening on port 4200, connecting to 4201...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent1_config.toml --listen"
+AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 1 (PID \$$) listening on port 4200, connecting to 4201...\n' && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent1_config.toml --listen" # Added RUST_LOG=info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent 1 (Port 4200)" -- bash -c "$AGENT1_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -167,7 +167,7 @@ fi
 sleep 1
 
 # Start Agent 2 (listens on 4201, connects to 4200) - Run agent in foreground of terminal's shell
-AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 2 (PID \$$) listening on port 4201, connecting to 4200...\n' && CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent2_config.toml --listen"
+AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e 'Starting Agent 2 (PID \$$) listening on port 4201, connecting to 4200...\n' && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY ./target/debug/bidirectional-agent agent2_config.toml --listen" # Added RUST_LOG=info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent 2 (Port 4201)" -- bash -c "$AGENT2_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then

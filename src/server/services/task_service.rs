@@ -98,19 +98,19 @@ impl TaskService {
     /// Process a new task or a follow-up message
     #[instrument(skip(self, params), fields(task_id = %params.id, session_id = ?params.session_id))]
     pub async fn process_task(&self, params: TaskSendParams) -> Result<Task, ServerError> {
-        info!("Processing task request.");
+        info!("Processing task request."); // Keep info for start
         trace!(?params, "Full task parameters received.");
         let task_id = params.id.clone();
 
         // Check if task exists (for follow-up messages)
         debug!("Checking if task already exists in repository.");
         if let Some(existing_task) = self.task_repository.get_task(&task_id).await? {
-            info!("Task already exists. Processing as follow-up.");
+            debug!("Task already exists. Processing as follow-up."); // Changed to debug
             trace!(?existing_task, "Existing task details.");
             // Pass only the new message for follow-up processing
             return self.process_follow_up(existing_task, Some(params.message)).await;
         }
-        info!("Task does not exist. Processing as new task.");
+        debug!("Task does not exist. Processing as new task."); // Changed to debug
 
         // Clone the necessary parts to avoid partial moves
         let metadata_clone = params.metadata.clone();
@@ -161,7 +161,7 @@ impl TaskService {
         if let (Some(router), Some(executor), Some(cm), Some(_reg), Some(_agent_id)) =
             (&self.task_router, &self.tool_executor, &self.client_manager, &self.agent_registry, &self.agent_id)
         {
-            info!("Bidirectional components found. Proceeding with routing and execution.");
+            debug!("Bidirectional components found. Proceeding with routing and execution."); // Changed to debug
             // Make routing decision
             debug!("Calling task router decide method.");
             let decision_result = match router.decide(&params).await {
@@ -176,12 +176,12 @@ impl TaskService {
                     return Ok(task); // Return the failed task
                 }
             };
-            info!(?decision_result, "Routing decision received.");
+            debug!(?decision_result, "Routing decision received."); // Changed to debug
 
             // Process the decision
             match decision_result {
                 RoutingDecision::Local { tool_name, params } => {
-                    info!(%tool_name, ?params, "Executing task locally using tool and extracted parameters.");
+                    info!(%tool_name, ?params, "Executing task locally using tool and extracted parameters."); // Keep info for local execution start
                     // Execute locally and wait for completion, passing the extracted params
                     match executor.execute_task_locally(&mut task, &tool_name, params).await {
                         Ok(_) => {
@@ -200,7 +200,7 @@ impl TaskService {
                     self.task_repository.save_state_history(&task.id, &task).await?;
                 }
                 RoutingDecision::Remote { agent_id: remote_agent_id } => {
-                    info!(%remote_agent_id, "Delegating task to remote agent.");
+                    info!(%remote_agent_id, "Delegating task to remote agent."); // Keep info for delegation start
 
                     // --- LLM Rewrite Logic ---
                     let mut message_to_send = initial_message.clone(); // Start with original message
@@ -235,7 +235,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
                             match llm.complete(&rewrite_prompt).await {
                                 Ok(rewritten_text) => {
-                                    info!("Successfully rewrote message for delegation.");
+                                    debug!("Successfully rewrote message for delegation."); // Changed to debug
                                     trace!(rewritten_text = %rewritten_text, "Rewritten message content.");
                                     // Replace the message content with the rewritten text
                                     message_to_send = Message {
@@ -275,10 +275,10 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     let remote_task_id = delegation_params.id.clone(); // Store remote task ID
 
                     // Initiate delegation
-                    info!(remote_agent_id=%remote_agent_id, remote_task_id=%remote_task_id, "Sending task parameters to ClientManager.");
+                    debug!(remote_agent_id=%remote_agent_id, remote_task_id=%remote_task_id, "Sending task parameters to ClientManager."); // Changed to debug
                     match cm.send_task(&remote_agent_id, delegation_params).await {
                         Ok(initial_remote_task) => {
-                            info!(%remote_agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Delegation initiated successfully.");
+                            info!(%remote_agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Delegation initiated successfully."); // Keep info for delegation success
                             // Update local task to indicate delegation
                             task.status.state = TaskState::Working; // Keep local task Working
                             task.status.timestamp = Some(Utc::now());
@@ -298,7 +298,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                             self.task_repository.save_state_history(&task.id, &task).await?;
 
                             // --- Start Polling Remote Task ---
-                            info!(%remote_agent_id, %remote_task_id, "Starting to poll remote task status.");
+                            debug!(%remote_agent_id, %remote_task_id, "Starting to poll remote task status."); // Changed to debug
                             let max_polling_attempts = 30; // e.g., 30 attempts * 2 seconds = 1 minute timeout
                             let polling_interval = Duration::from_secs(2);
                             let mut final_remote_task: Option<Task> = None;
@@ -310,7 +310,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                         trace!(remote_state = ?remote_task_update.status.state, "Received remote task status update.");
                                         // Check if remote task reached a final state
                                         if matches!(remote_task_update.status.state, TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::InputRequired) {
-                                            info!(final_state = ?remote_task_update.status.state, "Remote task reached final state.");
+                                            info!(final_state = ?remote_task_update.status.state, "Remote task reached final state."); // Keep info for final state
                                             final_remote_task = Some(remote_task_update);
                                             break; // Exit polling loop
                                         }
@@ -333,7 +333,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
                             // --- Update Local Task with Final Remote State ---
                             if let Some(final_task) = final_remote_task {
-                                info!(final_state = ?final_task.status.state, "Updating local task with final remote state.");
+                                info!(final_state = ?final_task.status.state, "Updating local task with final remote state."); // Keep info for update
                                 // Mirror the final state, message, and artifacts
                                 task.status = final_task.status;
                                 task.artifacts = final_task.artifacts;
@@ -361,7 +361,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     }
                 }
                 RoutingDecision::Reject { reason } => {
-                    info!(%reason, "Task rejected based on routing decision.");
+                    info!(%reason, "Task rejected based on routing decision."); // Keep info for rejection
                     task.status.state = TaskState::Failed;
                     task.status.timestamp = Some(Utc::now());
                     task.status.message = Some(Message {
@@ -395,7 +395,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
             }
         } else {
             // Fallback to default processing (standalone mode)
-            info!("Router/Executor/ClientManager not available (standalone mode?). Using default task content processing.");
+            debug!("Router/Executor/ClientManager not available (standalone mode?). Using default task content processing."); // Changed to debug
             self.process_task_content(&mut task, Some(initial_message)).await?;
             // Save the final state after default processing
             self.task_repository.save_task(&task).await?;
@@ -403,14 +403,14 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         }
         // --- End Integrated Routing and Execution Logic ---
 
-        info!(final_state = ?task.status.state, "Finished processing task request. Returning final task state.");
+        info!(final_state = ?task.status.state, "Finished processing task request. Returning final task state."); // Keep info for end of processing
         Ok(task) // Return the final state of the task
     }
 
     /// Process follow-up message for an existing task
     #[instrument(skip(self, task, message), fields(task_id = %task.id, current_state = ?task.status.state))]
     async fn process_follow_up(&self, mut task: Task, message: Option<Message>) -> Result<Task, ServerError> {
-        info!("Processing follow-up message.");
+        info!("Processing follow-up message."); // Keep info for follow-up start
         trace!(?message, "Follow-up message details.");
 
         // Add the follow-up message to history *before* processing
@@ -426,7 +426,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         // Only process follow-up if task is in a state that allows it
         match task.status.state {
             TaskState::InputRequired => {
-                info!("Task is in InputRequired state. Processing follow-up.");
+                debug!("Task is in InputRequired state. Processing follow-up."); // Changed to debug
                 // Process the follow-up message using the configured router/executor if available
                 if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
                      debug!("Using bidirectional components for follow-up processing.");
@@ -447,7 +447,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                          }),
                      };
                 } else {
-                    info!("Standalone mode: Processing follow-up content directly.");
+                    debug!("Standalone mode: Processing follow-up content directly."); // Changed to debug
                     // Standalone: Process content directly (or use a simpler logic)
                     self.process_task_content(&mut task, message).await?; // process_task_content handles state transition
                 }
@@ -480,14 +480,14 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
              }
         }
 
-        info!(final_state = ?task.status.state, "Finished processing follow-up message.");
+        info!(final_state = ?task.status.state, "Finished processing follow-up message."); // Keep info for follow-up end
         Ok(task)
     }
 
     /// Process the content of a task (simplified implementation for reference server)
     #[instrument(skip(self, task, message), fields(task_id = %task.id))]
     async fn process_task_content(&self, task: &mut Task, message: Option<Message>) -> Result<(), ServerError> {
-        info!("Processing task content (standalone/fallback logic).");
+        debug!("Processing task content (standalone/fallback logic)."); // Changed to debug
         trace!(?message, "Message content being processed.");
         // Simplified implementation - in a real server, this would process the task asynchronously
         // and potentially update the task status multiple times
@@ -545,7 +545,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         trace!(%remain_working, "Remain working flag.");
 
         if remain_working {
-            info!("Task metadata indicates it should remain Working.");
+            debug!("Task metadata indicates it should remain Working."); // Changed to debug
             // Keep the task in working state (or update timestamp/message if needed)
             task.status.state = TaskState::Working; // Ensure it's Working
             task.status.timestamp = Some(Utc::now());
@@ -560,7 +560,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
             });
             trace!(?task.status, "Task status kept as Working.");
         } else {
-            info!("Task does not require input or remain working. Marking as Completed.");
+            info!("Task does not require input or remain working. Marking as Completed."); // Keep info for state change
             // Just mark as completed for this reference implementation
             task.status = TaskStatus {
                 state: TaskState::Completed,
@@ -707,7 +707,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
     /// Get a task by ID
     #[instrument(skip(self, params), fields(task_id = %params.id))]
     pub async fn get_task(&self, params: TaskQueryParams) -> Result<Task, ServerError> {
-        info!("Getting task details.");
+        debug!("Getting task details."); // Changed to debug
         trace!(?params, "Task query parameters.");
         debug!("Fetching task from repository.");
         let task = self.task_repository.get_task(&params.id).await?
@@ -747,7 +747,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
     /// Cancel a task
     #[instrument(skip(self, params), fields(task_id = %params.id))]
     pub async fn cancel_task(&self, params: TaskIdParams) -> Result<Task, ServerError> {
-        info!("Attempting to cancel task.");
+        info!("Attempting to cancel task."); // Keep info for cancellation attempt
         trace!(?params, "Cancel task parameters.");
         debug!("Fetching task to check current state.");
         let mut task = self.task_repository.get_task(&params.id).await?
@@ -755,7 +755,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                  warn!("Task not found for cancellation.");
                  ServerError::TaskNotFound(params.id.clone())
             })?;
-        info!(current_state = ?task.status.state, "Task found.");
+        debug!(current_state = ?task.status.state, "Task found."); // Changed to debug
         trace!(?task, "Task details before cancellation.");
 
         // Check if task can be canceled
@@ -797,14 +797,14 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         debug!("Saving canceled task state to history.");
         self.task_repository.save_state_history(&task.id, &task).await?;
 
-        info!("Task successfully canceled.");
+        info!("Task successfully canceled."); // Keep info for success
         Ok(task)
     }
 
     /// Get task state history
     #[instrument(skip(self), fields(task_id))]
     pub async fn get_task_state_history(&self, task_id: &str) -> Result<Vec<Task>, ServerError> {
-        info!("Getting task state history.");
+        debug!("Getting task state history."); // Changed to debug
         trace!(%task_id, "Task ID for history retrieval.");
         // First check if the task exists
         debug!("Checking if task exists before getting history.");
@@ -817,7 +817,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
         // Retrieve state history
         let history = self.task_repository.get_state_history(task_id).await?;
-        info!(history_len = history.len(), "Retrieved task state history.");
+        debug!(history_len = history.len(), "Retrieved task state history."); // Changed to debug
         trace!(?history, "Full state history details.");
         Ok(history)
     }
@@ -826,7 +826,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
     /// This allows tracking remote tasks within local sessions.
     #[instrument(skip(self, task), fields(task_id = %task.id, original_state = ?task.status.state))]
     pub async fn import_task(&self, task: Task) -> Result<(), ServerError> {
-        info!("Importing external task into repository.");
+        debug!("Importing external task into repository."); // Changed to debug
         trace!(?task, "Task details being imported.");
         // Save the task itself
         debug!("Saving imported task to main repository.");
@@ -834,7 +834,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         // Also save its initial state to history for consistency
         debug!("Saving imported task's initial state to history.");
         self.task_repository.save_state_history(&task.id, &task).await?;
-        info!("Task imported successfully.");
+        debug!("Task imported successfully."); // Changed to debug
         Ok(())
     }
     

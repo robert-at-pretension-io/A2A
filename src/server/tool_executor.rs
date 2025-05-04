@@ -269,7 +269,7 @@ impl Tool for RememberAgentTool {
 
     #[instrument(skip(self, params), name="tool_remember_agent")]
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
-        tracing::info!("Executing 'remember_agent' tool."); // Use tracing consistently
+        debug!("Executing 'remember_agent' tool."); // Changed to debug
         tracing::trace!(?params, "Tool parameters received.");
 
         // Extract the agent_base_url parameter
@@ -295,7 +295,7 @@ impl Tool for RememberAgentTool {
 
         // Use the registry's discover method. This verifies the agent is reachable
         // and fetches the latest card from the source URL before storing/updating.
-        tracing::info!(%agent_url, "Attempting to discover and register/update agent via AgentRegistry.");
+        debug!(%agent_url, "Attempting to discover and register/update agent via AgentRegistry."); // Changed to debug
         
         // Use ? to propagate ServerError, which will be converted to ToolError::ExternalError
         // The discover method now returns the agent name/ID on success
@@ -303,13 +303,13 @@ impl Tool for RememberAgentTool {
         
         // If we have known_servers, update it with the agent name returned by discover
         if let Some(known_servers) = &self.known_servers {
-            tracing::info!(%agent_url, %agent_name, "Updating known_servers map to keep in sync with agent registry.");
+            debug!(%agent_url, %agent_name, "Updating known_servers map to keep in sync with agent registry."); // Changed to debug
             known_servers.insert(agent_url.to_string(), agent_name);
         }
 
         // Return a success message using the URL.
         let response_text = format!("Successfully discovered and remembered agent from URL '{}'.", agent_url);
-        tracing::info!(%response_text);
+        info!(%response_text); // Keep info for successful remembering
         Ok(json!(response_text)) // Return simple text confirmation
     }
 
@@ -485,10 +485,10 @@ impl ToolExecutor {
         }
         
         // Execute the tool using the provided parameters
-        tracing::info!("Executing tool '{}'.", tool_name); // Use the validated tool_name
+        debug!("Executing tool '{}'.", tool_name); // Changed to debug
         match self.execute_tool(tool_name, params).await {
             Ok(result_value) => {
-                tracing::info!("Tool execution successful."); // Add tracing
+                info!("Tool execution successful."); // Keep info for success
                 tracing::trace!(result = %result_value, "Tool result value."); // Add tracing
 
                 // Create result parts (Text and potentially Data)
@@ -561,7 +561,7 @@ impl ToolExecutor {
                         metadata: None,
                     }),
                 };
-                tracing::info!("Updated task status to Completed."); // Add tracing
+                info!("Updated task status to Completed."); // Keep info for state change
                 tracing::trace!(?task.status, "Final task status."); // Add tracing
                 Ok(())
             }
@@ -582,7 +582,7 @@ impl ToolExecutor {
                         metadata: None,
                     }),
                 };
-                tracing::info!("Updated task status to Failed due to tool error."); // Add tracing
+                info!("Updated task status to Failed due to tool error."); // Keep info for state change
                 tracing::trace!(?task.status, "Final task status."); // Add tracing
                 // Convert ToolError to ServerError before returning
                 Err(tool_error.into())
@@ -594,7 +594,7 @@ impl ToolExecutor {
     /// This is a simplified approach; real follow-up might involve more complex logic or routing.
     #[instrument(skip(self, task, message), fields(task_id = %task.id))] // Add tracing span
     pub async fn process_follow_up(&self, task: &mut Task, message: Message) -> Result<(), ServerError> {
-        tracing::info!("Processing follow-up message for task."); // Add tracing
+        debug!("Processing follow-up message for task."); // Changed to debug
         // Default to echo tool for simple follow-up processing
         let tool_name = "echo";
         tracing::debug!(%tool_name, "Using default tool for follow-up."); // Add tracing
@@ -609,10 +609,10 @@ impl ToolExecutor {
         tracing::trace!(?params, "Parameters extracted for follow-up tool execution."); // Add tracing
  
         // Execute the tool
-        tracing::info!("Executing follow-up tool '{}'.", tool_name); // Add tracing
+        debug!("Executing follow-up tool '{}'.", tool_name); // Changed to debug
         match self.execute_tool(tool_name, params).await {
             Ok(result_value) => {
-                tracing::info!("Follow-up tool execution successful."); // Add tracing
+                info!("Follow-up tool execution successful."); // Keep info for success
                 tracing::trace!(result = %result_value, "Follow-up tool result value."); // Add tracing
 
                 // Create a text part for the result
@@ -657,7 +657,7 @@ impl ToolExecutor {
                         metadata: None,
                     }),
                 };
-                tracing::info!("Updated task status to Completed after follow-up."); // Add tracing
+                info!("Updated task status to Completed after follow-up."); // Keep info for state change
                 tracing::trace!(?task.status, "Final task status after follow-up."); // Add tracing
                 Ok(())
             }
@@ -677,7 +677,7 @@ impl ToolExecutor {
                         metadata: None,
                     }),
                 };
-                tracing::info!("Updated task status to Failed due to follow-up tool error."); // Add tracing
+                info!("Updated task status to Failed due to follow-up tool error."); // Keep info for state change
                 tracing::trace!(?task.status, "Final task status after follow-up."); // Add tracing
                 Err(tool_error.into())
             }
