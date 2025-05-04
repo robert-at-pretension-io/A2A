@@ -7,7 +7,6 @@ use crate::server::repositories::task_repository::TaskRepository;
 use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
 use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision, SubtaskDefinition};
 use crate::types::{Message, Part, Role, Task, TaskSendParams, TaskState, TaskStatus};
-use crate::bidirectional::agent_helpers::extract_text_from_task;
 
 use anyhow::{anyhow, Result}; // Add anyhow
 use async_trait::async_trait;
@@ -72,7 +71,7 @@ impl BidirectionalTaskRouter {
         }
         if !tools.contains(&"llm".to_string()) {
             debug!("Implicitly enabling 'llm' tool for fallback.");
-            tools.push("llm".to_string()); // Fixed: was pushing "echo" again
+            tools.push("echo".to_string());
         }
         Self {
             llm,
@@ -283,35 +282,6 @@ impl BidirectionalTaskRouter {
         
         tools_description
     }
-    
-    // Helper to extract rolling memory tasks from metadata and repository
-    // Extract rolling memory tasks from metadata and repository
-    // Only tasks that were successfully retrieved are included in the result
-    async fn extract_rolling_memory(&self, task: &Task) -> Vec<Task> {
-        let mut memory_tasks = Vec::new();
-        
-        if let Some(metadata) = &task.metadata {
-            if let Some(memory_ids_value) = metadata.get("_rolling_memory") {
-                debug!("Found rolling memory task IDs in metadata");
-                if let Some(memory_ids) = memory_ids_value.as_array() {
-                    if let Some(repo) = &self.task_repository {
-                        debug!("Retrieving tasks from repository using rolling memory IDs");
-                        for id_value in memory_ids {
-                            if let Some(id_str) = id_value.as_str() {
-                                match repo.get_task(id_str).await {
-                                    Ok(Some(found_task)) => memory_tasks.push(found_task),
-                                    Ok(None) => warn!(task_id = %id_str, "Memory task not found in repository"),
-                                    Err(e) => warn!(task_id = %id_str, error = %e, "Failed to retrieve memory task from repository"),
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        memory_tasks
-    }
 
 
     // NP1: Check if the request needs clarification
@@ -336,25 +306,16 @@ impl BidirectionalTaskRouter {
             return Ok(None); // Cannot proceed without text
         }
 
-        // Get memory context
-        let memory_tasks = self.extract_rolling_memory(task).await;
-        let memory_text = if !memory_tasks.is_empty() {
-            format!("\nAGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:\n{}\n", 
-                    self.format_rolling_memory(&memory_tasks, Some(3)))
-        } else {
-            String::new()
-        };
-
         let prompt = format!(
 r#"SYSTEM:
 You are an autonomous AI agent preparing to process a user request.
-Your first task is to judge whether the request is specific and complete.{}
+Your first task is to judge whether the request is specific and complete.
 
 CONVERSATION_HISTORY:
 {}
 
 LATEST_REQUEST:
-"{}"
+“{}”
 
 TASK:
 1. If the request is sufficiently specific, respond exactly:
@@ -366,7 +327,7 @@ TASK:
 Rules:
 • Do not add anything else.
 • If you choose NEEDS_CLARIFY your question MUST be answerable in ≤ 1 sentence."#,
-            memory_text, history_text, latest_request
+            history_text, latest_request
         );
 
         trace!(prompt = %prompt, "NP1: Clarity check prompt.");
@@ -420,15 +381,6 @@ Rules:
             return Ok(None);
         }
 
-        // Get memory context
-        let memory_tasks = self.extract_rolling_memory(task).await;
-        let memory_text = if !memory_tasks.is_empty() {
-            format!("\nAGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:\n{}\n", 
-                    self.format_rolling_memory(&memory_tasks, Some(3)))
-        } else {
-            String::new()
-        };
-
         // --- NP2.A: Should Decompose? ---
         let tool_table = self.format_tools(false); // Don't need params hint here
         let agent_table = self.format_agents();
@@ -437,7 +389,7 @@ r#"SYSTEM:
 You are an expert AI planner.
 
 REQUEST_GOAL:
-"{}"{}
+“{}”
 
 AVAILABLE_LOCAL_TOOLS:
 {}
@@ -451,7 +403,7 @@ CRITERIA:
 RESPONSE_FORMAT:
 SHOULD_DECOMPOSE: YES|NO
 REASON: "<one line>""#,
-            latest_request, memory_text, tool_table, agent_table
+            latest_request, tool_table, agent_table
         );
 
         trace!(prompt = %should_decompose_prompt, "NP2.A: Should-decompose prompt.");
@@ -474,7 +426,7 @@ r#"SYSTEM:
 You chose to decompose.
 
 GOAL:
-"{}"{}
+“{}”
 
 Produce a JSON array where each element is:
 {{
@@ -485,7 +437,7 @@ Produce a JSON array where each element is:
 • Keep ≤ 5 steps.
 • Maintain correct dependency order.
 • No extra keys."#,
-            latest_request, memory_text
+            latest_request
         );
 
         trace!(prompt = %plan_prompt, "NP2.B: Decomposition plan prompt.");
@@ -529,21 +481,45 @@ Produce a JSON array where each element is:
             return Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) });
         }
         
-        // Get memory context if available in metadata
-        let memory_tasks = self.extract_rolling_memory(task).await;
-        let has_memory = !memory_tasks.is_empty();
-        let memory_text = if has_memory {
-            self.format_rolling_memory(&memory_tasks, Some(3))
-        } else {
-            String::new()
-        };
-        debug!(has_memory = %has_memory, memory_task_count = %memory_tasks.len(), "Memory context prepared");
+        // Process rolling memory if available in metadata
+        let mut memory_text = String::new();
+        if let Some(metadata) = &task.metadata {
+            if let Some(memory_ids_value) = metadata.get("_rolling_memory") {
+                debug!("Found rolling memory task IDs in metadata");
+                if let Some(memory_ids) = memory_ids_value.as_array() {
+                    // If we have a task repository, try to get the actual tasks
+                    if let Some(repo) = &self.task_repository {
+                        debug!("Retrieving tasks from repository using rolling memory IDs");
+                        // Get tasks from repository
+                        let mut memory_tasks = Vec::new();
+                        for id_value in memory_ids {
+                            if let Some(id_str) = id_value.as_str() {
+                                // Using blocking get_task_sync to avoid async complexity here
+                                match repo.get_task(id_str).await {
+                                    Ok(task) => memory_tasks.push(task),
+                                    Err(e) => warn!(task_id = %id_str, error = %e, "Failed to retrieve memory task from repository"),
+                                }
+                            }
+                        }
+                        
+                        // Format the memory tasks
+                        if !memory_tasks.is_empty() {
+                            debug!(memory_task_count = memory_tasks.len(), "Formatting memory tasks for context");
+                            // Limit to 3 most recent to control token usage
+                            memory_text = self.format_rolling_memory(&memory_tasks, Some(3));
+                        }
+                    }
+                }
+            }
+        }
+        let has_memory = !memory_text.is_empty();
+        debug!(has_memory = %has_memory, memory_text_len = %memory_text.len(), "Memory context prepared");
 
         // --- DP2: Local vs Remote vs Reject ---
         let local_tools_desc = self.format_tools(false);
         let remote_agents_desc = self.format_agents();
         
-        // Build the routing prompt with memory context if available
+        // Build the routing prompt, including memory if available
         let routing_prompt = if has_memory {
             format!(
 r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
@@ -560,22 +536,8 @@ AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
 CONVERSATION HISTORY (User/Agent turns):
 {}
 
-Based on the full CONVERSATION HISTORY, AGENT MEMORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request:
-
-1. Handle it locally if one of YOUR LOCAL TOOLS is suitable (respond with "LOCAL").
-   - IMPORTANT: If the latest request matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution so the 'execute_command' tool can handle it. Do NOT reject these internal commands based on the history.
-
-2. Delegate to a specific remote agent if it's more appropriate (respond with "REMOTE: [agent-id]").
-   - CRITICAL: When delegating, you MUST use EXACTLY the agent ID as listed in the AVAILABLE REMOTE AGENTS section above.
-   - The agent-id must match PRECISELY, including capitalization, spaces, and any special characters.
-   - Example: If an agent is listed as "Agent Three -- can remember", you must use "REMOTE: Agent Three -- can remember", not "REMOTE: Agent Three" or any other variation.
-   - Do not abbreviate, shorten, or modify the agent ID in any way.
-
-3. Reject the task ONLY if it's inappropriate, harmful, impossible, OR if it's an internal command that cannot be handled by the 'execute_command' tool (e.g., ':listen', ':stop', ':quit'). Provide a brief explanation for rejection.
-
-Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text."#,
-                local_tools_desc, remote_agents_desc, memory_text, history_text
-            )
+Based on the full CONVERSATION HISTORY, AGENT MEMORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request:"#,
+            local_tools_desc, remote_agents_desc, memory_text, history_text
         } else {
             format!(
 r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
@@ -603,8 +565,7 @@ Based on the full CONVERSATION HISTORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE A
 3. Reject the task ONLY if it's inappropriate, harmful, impossible, OR if it's an internal command that cannot be handled by the 'execute_command' tool (e.g., ':listen', ':stop', ':quit'). Provide a brief explanation for rejection.
 
 Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text."#,
-                local_tools_desc, remote_agents_desc, history_text
-            )
+            local_tools_desc, remote_agents_desc, history_text
         };
         
         trace!(prompt = %routing_prompt, "DP2: Routing prompt.");
@@ -619,6 +580,57 @@ Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, o
             }
         };
         
+        info!(llm_response = %decision, "DP2: LLM routing decision response received.");
+
+        // --- Parse DP2 Decision ---
+        if decision.starts_with("LOCAL") {
+            // --- DP3: Choose Local Tool & Parameters ---
+            info!("DP2 decided LOCAL. Proceeding to DP3 (Tool Selection).");
+            let local_tools_with_params_desc = self.format_tools(true); // Include param hints
+            
+            // Use memory context in the tool parameter prompt if available
+            let tool_param_prompt = if has_memory {
+                // With memory context
+                format!(
+r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
+
+YOUR LOCAL TOOLS:
+{}
+
+AVAILABLE REMOTE AGENTS:
+{}
+
+CONVERSATION HISTORY (User/Agent turns):
+{}
+
+Based on the full CONVERSATION HISTORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request:
+
+1. Handle it locally if one of YOUR LOCAL TOOLS is suitable (respond with "LOCAL").
+   - IMPORTANT: If the latest request matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution so the 'execute_command' tool can handle it. Do NOT reject these internal commands based on the history.
+
+2. Delegate to a specific remote agent if it's more appropriate (respond with "REMOTE: [agent-id]").
+   - CRITICAL: When delegating, you MUST use EXACTLY the agent ID as listed in the AVAILABLE REMOTE AGENTS section above.
+   - The agent-id must match PRECISELY, including capitalization, spaces, and any special characters.
+   - Example: If an agent is listed as "Agent Three -- can remember", you must use "REMOTE: Agent Three -- can remember", not "REMOTE: Agent Three" or any other variation.
+   - Do not abbreviate, shorten, or modify the agent ID in any way.
+
+3. Reject the task ONLY if it's inappropriate, harmful, impossible, OR if it's an internal command that cannot be handled by the 'execute_command' tool (e.g., ':listen', ':stop', ':quit'). Provide a brief explanation for rejection.
+
+Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text."#,
+            local_tools_desc, remote_agents_desc, history_text
+            )
+        };
+        trace!(prompt = %routing_prompt, "DP2: Routing prompt.");
+
+        info!("DP2: Requesting routing decision from LLM.");
+        let decision_result = self.llm.complete(&routing_prompt).await;
+        let decision = match decision_result {
+            Ok(d) => d.trim().to_string(),
+            Err(e) => {
+                error!(error = %e, "DP2: LLM routing decision failed. Falling back to local 'llm'.");
+                return Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) });
+            }
+        };
         info!(llm_response = %decision, "DP2: LLM routing decision response received.");
 
         // --- Parse DP2 Decision ---
@@ -681,8 +693,7 @@ Examples:
 - For a general question: {{"tool_name": "llm", "params": {{"text": "original question text..."}}}}
 
 Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
-                    history_text, memory_text, local_tools_with_params_desc
-                )
+                history_text, memory_text, local_tools_with_params_desc
             } else {
                 // Without memory context
                 format!(
@@ -733,7 +744,7 @@ Examples:
 - For a general question: {{"tool_name": "llm", "params": {{"text": "original question text..."}}}}
 
 Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
-                    history_text, local_tools_with_params_desc
+                history_text, local_tools_with_params_desc
                 )
             };
             trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
@@ -833,214 +844,6 @@ Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
             Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
         }
     }
-    
-    // DP1: Process follow-up message for tasks with memory context
-    #[instrument(skip(self, message), fields(task_id = %task_id))]
-    async fn process_follow_up_with_memory(&self, task_id: &str, message: &Message, memory_tasks: &[Task]) -> Result<RoutingDecision, ServerError> {
-        debug!("Processing follow-up message for task with memory context.");
-        trace!(?message, memory_task_count = memory_tasks.len(), "Follow-up message details.");
-
-        // Extract text from the follow-up message
-        let follow_up_text = message.parts.iter()
-            .filter_map(|p| match p {
-                Part::TextPart(tp) => Some(tp.text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        // Get the task from the appropriate repository
-        let task_result = if let Some(repo) = &self.task_repository {
-            // Use the provided task repository
-            repo.get_task(task_id).await
-        } else {
-            // In production, this would use another method to get the task
-            debug!("No task_repository available, cannot access task details");
-            return Ok(RoutingDecision::Local {
-                tool_name: "llm".to_string(),
-                params: json!({"text": follow_up_text})
-            });
-        };
-
-        // Format memory context if available
-        let memory_text = if !memory_tasks.is_empty() {
-            self.format_rolling_memory(memory_tasks, Some(3))
-        } else {
-            String::new()
-        };
-        let has_memory = !memory_text.is_empty();
-
-        if let Ok(Some(task)) = task_result {
-            // Check task metadata to determine if it's a remote task coming back to us
-            let is_returning_remote_task = if let Some(md) = &task.metadata {
-                md.get("delegated_from").is_some() ||
-                md.get("remote_agent_id").is_some() ||
-                md.get("source_agent_id").is_some()
-            } else {
-                false
-            };
-
-            // Check if this task is in InputRequired state and is returning from another agent
-            if task.status.state == TaskState::InputRequired && is_returning_remote_task {
-                info!("Task is in InputRequired state and is returning from another agent");
-
-                // Use the LLM to decide if we can handle it ourselves or need human input
-                let llm = &self.llm;
-
-                if let Some(history) = &task.history {
-                    // Create prompt for the LLM asking it to decide if we can handle this ourselves
-                    let history_text = history.iter()
-                        .map(|msg| {
-                            let role_str = match msg.role {
-                                Role::User => "User",
-                                Role::Agent => "Agent",
-                            };
-
-                            let content = msg.parts.iter()
-                                .filter_map(|p| match p {
-                                    Part::TextPart(tp) => Some(tp.text.as_str()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-
-                            format!("{}: {}", role_str, content)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-
-                    // Get the current status message which often describes why input is required
-                    let status_message = if let Some(msg) = &task.status.message {
-                        msg.parts.iter()
-                            .filter_map(|p| match p {
-                                Part::TextPart(tp) => Some(tp.text.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    } else {
-                        "No status message available".to_string()
-                    };
-
-                    // Build the decision prompt with memory context if available
-                    let decision_prompt = if has_memory {
-                        format!(
-                            r#"You are assisting with handling a returning delegated task that requires additional input.
-
-AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
-{}
-
-TASK HISTORY:
-{}
-
-REASON INPUT IS REQUIRED:
-{}
-
-FOLLOW-UP MESSAGE/INPUT FROM USER:
-{}
-
-You need to decide how to handle this situation:
-1. HANDLE_DIRECTLY - If you have enough information to answer the question or address the issue directly
-2. NEED_HUMAN_INPUT - If the input required is complex/specific and needs human feedback
-
-Consider:
-- Do you understand what input is needed?
-- Is the follow-up message clear enough to proceed?
-- Could this require specific expertise or personal preferences that only the human would know?
-
-Respond with EXACTLY ONE of these options: HANDLE_DIRECTLY or NEED_HUMAN_INPUT"#,
-                            memory_text, history_text, status_message, follow_up_text
-                        )
-                    } else {
-                        format!(
-                            r#"You are assisting with handling a returning delegated task that requires additional input.
-
-TASK HISTORY:
-{}
-
-REASON INPUT IS REQUIRED:
-{}
-
-FOLLOW-UP MESSAGE/INPUT FROM USER:
-{}
-
-You need to decide how to handle this situation:
-1. HANDLE_DIRECTLY - If you have enough information to answer the question or address the issue directly
-2. NEED_HUMAN_INPUT - If the input required is complex/specific and needs human feedback
-
-Consider:
-- Do you understand what input is needed?
-- Is the follow-up message clear enough to proceed?
-- Could this require specific expertise or personal preferences that only the human would know?
-
-Respond with EXACTLY ONE of these options: HANDLE_DIRECTLY or NEED_HUMAN_INPUT"#,
-                            history_text, status_message, follow_up_text
-                        )
-                    };
-
-                    let decision = match llm.complete(&decision_prompt).await {
-                        Ok(decision) => decision.trim().to_uppercase(),
-                        Err(e) => {
-                            // LLM failed, default to needing human input
-                            warn!("LLM decision failed: {}, defaulting to needing human input", e);
-                            "NEED_HUMAN_INPUT".to_string()
-                        }
-                    };
-
-                    if decision.contains("HANDLE_DIRECTLY") {
-                        info!("LLM decided to handle the InputRequired task directly");
-                        // Pass to local LLM tool for handling
-                        return Ok(RoutingDecision::Local {
-                            tool_name: "llm".to_string(),
-                            params: json!({"text": follow_up_text})
-                        });
-                    } else if decision.contains("NEED_HUMAN_INPUT") {
-                        info!("LLM decided to request human input for the task");
-                        // This is a special case - we'll modify the returned decision to flag it as needing human input
-                        // The ToolExecutor will then handle this special case differently
-                        return Ok(RoutingDecision::Local {
-                            tool_name: "human_input".to_string(),
-                            params: json!({
-                                "text": follow_up_text,
-                                "require_human_input": true,
-                                "prompt": status_message
-                            })
-                        });
-                    } else {
-                        // Default to human input if the decision isn't clear
-                        info!("LLM decision not clear, defaulting to human input");
-                        return Ok(RoutingDecision::Local {
-                            tool_name: "human_input".to_string(),
-                            params: json!({
-                                "text": follow_up_text,
-                                "require_human_input": true,
-                                "prompt": status_message
-                            })
-                        });
-                    }
-                }
-            }
-        }
-
-        // Default case: Handle locally with LLM tool but include memory context
-        info!("DP1: Routing follow-up to LOCAL execution using 'llm' tool with memory context.");
-        
-        // Set up parameters to include memory context if available
-        let mut params = json!({
-            "text": follow_up_text
-        });
-        
-        if has_memory {
-            if let Value::Object(ref mut map) = params {
-                map.insert("memory_context".to_string(), Value::String(memory_text));
-            }
-        }
-        
-        Ok(RoutingDecision::Local {
-            tool_name: "llm".to_string(),
-            params
-        })
-    }
 }
 
 // --- LlmTaskRouterTrait Implementation ---
@@ -1104,31 +907,156 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
         debug!("Processing follow-up message for task.");
         trace!(?message, "Follow-up message details.");
 
-        // Extract memory tasks from the task if available
-        let mut memory_tasks = Vec::new();
-        
-        if let Some(repo) = &self.task_repository {
-            if let Ok(Some(task)) = repo.get_task(task_id).await {
-                if let Some(metadata) = &task.metadata {
-                    if let Some(memory_ids_value) = metadata.get("_rolling_memory") {
-                        if let Some(memory_ids) = memory_ids_value.as_array() {
-                            for id_value in memory_ids {
-                                if let Some(id_str) = id_value.as_str() {
-                                    if let Ok(Some(memory_task)) = repo.get_task(id_str).await {
-                                        memory_tasks.push(memory_task);
-                                    }
-                                }
-                            }
+        // Extract text from the follow-up message
+        let follow_up_text = message.parts.iter()
+            .filter_map(|p| match p {
+                Part::TextPart(tp) => Some(tp.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Get the task from the appropriate repository
+        let task_result = if let Some(repo) = &self.task_repository {
+            // Use the provided task repository (mainly for tests)
+            repo.get_task(task_id).await
+        } else {
+            // In production, this would use another method to get the task
+            debug!("No task_repository available, cannot access task details");
+            return Ok(RoutingDecision::Local {
+                tool_name: "llm".to_string(),
+                params: json!({"text": follow_up_text})
+            });
+        };
+
+        if let Ok(Some(task)) = task_result {
+            // Check task metadata to determine if it's a remote task coming back to us
+            let is_returning_remote_task = if let Some(md) = &task.metadata {
+                md.get("delegated_from").is_some() ||
+                md.get("remote_agent_id").is_some() ||
+                md.get("source_agent_id").is_some()
+            } else {
+                false
+            };
+
+            // Check if this task is in InputRequired state and is returning from another agent
+            if task.status.state == TaskState::InputRequired && is_returning_remote_task {
+                info!("Task is in InputRequired state and is returning from another agent");
+
+                // Use the LLM to decide if we can handle it ourselves or need human input
+                let llm = &self.llm;
+
+                if let Some(history) = &task.history {
+                    // Create prompt for the LLM asking it to decide if we can handle this ourselves
+                    let history_text = history.iter()
+                        .map(|msg| {
+                            let role_str = match msg.role {
+                                Role::User => "User",
+                                Role::Agent => "Agent",
+                            };
+
+                            let content = msg.parts.iter()
+                                .filter_map(|p| match p {
+                                    Part::TextPart(tp) => Some(tp.text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+
+                            format!("{}: {}", role_str, content)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+
+                    // Get the current status message which often describes why input is required
+                    let status_message = if let Some(msg) = &task.status.message {
+                        msg.parts.iter()
+                            .filter_map(|p| match p {
+                                Part::TextPart(tp) => Some(tp.text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        "No status message available".to_string()
+                    };
+
+                    // Build the decision prompt
+                    let decision_prompt = format!(
+                        r#"You are assisting with handling a returning delegated task that requires additional input.
+
+TASK HISTORY:
+{}
+
+REASON INPUT IS REQUIRED:
+{}
+
+FOLLOW-UP MESSAGE/INPUT FROM USER:
+{}
+
+You need to decide how to handle this situation:
+1. HANDLE_DIRECTLY - If you have enough information to answer the question or address the issue directly
+2. NEED_HUMAN_INPUT - If the input required is complex/specific and needs human feedback
+
+Consider:
+- Do you understand what input is needed?
+- Is the follow-up message clear enough to proceed?
+- Could this require specific expertise or personal preferences that only the human would know?
+
+Respond with EXACTLY ONE of these options: HANDLE_DIRECTLY or NEED_HUMAN_INPUT"#,
+                        history_text, status_message, follow_up_text
+                    );
+
+                    let decision = match llm.complete(&decision_prompt).await {
+                        Ok(decision) => decision.trim().to_uppercase(),
+                        Err(e) => {
+                            // LLM failed, default to needing human input
+                            warn!("LLM decision failed: {}, defaulting to needing human input", e);
+                            "NEED_HUMAN_INPUT".to_string()
                         }
+                    };
+
+                    if decision.contains("HANDLE_DIRECTLY") {
+                        info!("LLM decided to handle the InputRequired task directly");
+                        // Pass to local LLM tool for handling
+                        return Ok(RoutingDecision::Local {
+                            tool_name: "llm".to_string(),
+                            params: json!({"text": follow_up_text})
+                        });
+                    } else if decision.contains("NEED_HUMAN_INPUT") { // Removed the "|| true" to prevent always taking this branch
+                        info!("LLM decided to request human input for the task");
+                        // This is a special case - we'll modify the returned decision to flag it as needing human input
+                        // The ToolExecutor will then handle this special case differently
+                        return Ok(RoutingDecision::Local {
+                            tool_name: "human_input".to_string(),
+                            params: json!({
+                                "text": follow_up_text,
+                                "require_human_input": true,
+                                "prompt": status_message
+                            })
+                        });
+                    } else {
+                        // Default to human input if the decision isn't clear
+                        info!("LLM decision not clear, defaulting to human input");
+                        return Ok(RoutingDecision::Local {
+                            tool_name: "human_input".to_string(),
+                            params: json!({
+                                "text": follow_up_text,
+                                "require_human_input": true,
+                                "prompt": status_message
+                            })
+                        });
                     }
                 }
             }
         }
-        
-        debug!(memory_task_count = %memory_tasks.len(), "Retrieved memory tasks for follow-up");
-        
-        // Use the enhanced process_follow_up with memory context
-        self.process_follow_up_with_memory(task_id, message, memory_tasks.as_slice()).await
+
+        // Default case: Handle locally with LLM tool
+        info!("DP1: Routing follow-up to LOCAL execution using 'llm' tool.");
+        Ok(RoutingDecision::Local {
+            tool_name: "llm".to_string(),
+            params: json!({"text": follow_up_text})
+        })
     }
 
     // --- Trait Methods Implementation ---
@@ -1196,4 +1124,5 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
             },
         }
     }
+
 }

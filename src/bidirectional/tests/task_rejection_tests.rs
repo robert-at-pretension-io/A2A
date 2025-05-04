@@ -1,8 +1,9 @@
-use crate::bidirectional::task_router::BidirectionalTaskRouter; // <-- Update path
-use crate::bidirectional::llm_client::LlmClient; // <-- Use new path
-use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; // Import canonical registry
+use crate::bidirectional::task_router::BidirectionalTaskRouter;
+use crate::bidirectional::llm_client::LlmClient;
+use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
+use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
-use crate::types::{Task, TaskState, Message, Part, TextPart, Role, TaskStatus, AgentCard};
+use crate::types::{Task, TaskState, Message, Part, TextPart, Role, TaskStatus, AgentCard, TaskSendParams};
 use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -37,7 +38,7 @@ async fn test_task_rejection() {
     let router = create_test_router_with_response("REJECT: I cannot assist with illegal activities such as hacking into government databases.");
 
     // Invoke the router
-    let decision = router.decide_execution_mode(&task).await.expect("Routing decision failed");
+    let decision = router.decide(&task.into_send_params()).await.expect("Routing decision failed");
 
     // Check that the task was rejected
     match decision {
@@ -61,7 +62,7 @@ async fn test_task_local_processing() {
     // In a real test, we would use a more sophisticated mock
 
     // Invoke the router
-    let decision = router.decide_execution_mode(&task).await.expect("Routing decision failed");
+    let decision = router.decide(&task.into_send_params()).await.expect("Routing decision failed");
 
     // Check that the task was routed for local processing
     match decision {
@@ -109,7 +110,7 @@ async fn test_task_remote_delegation() {
     );
 
     // Invoke the router
-    let decision = router.decide_execution_mode(&task).await.expect("Routing decision failed");
+    let decision = router.decide(&task.into_send_params()).await.expect("Routing decision failed");
 
     // Check that the task was delegated
     match decision {
@@ -164,6 +165,8 @@ async fn test_follow_up_processing() {
     }
 }
 
+// Use into_send_params implementation from router_tests.rs
+
 // Helper to create a test task with the given message content
 fn create_test_task(message_text: &str) -> Task {
     Task {
@@ -194,30 +197,34 @@ fn create_test_task(message_text: &str) -> Task {
 
 // Helper to create a router with a fixed response
 fn create_test_router_with_response(response: &str) -> BidirectionalTaskRouter {
-    let registry = Arc::new(AgentRegistry::new()); // Use registry
+    let registry = Arc::new(AgentRegistry::new());
     let llm = Arc::new(MockLlmClient::new(response.to_string()));
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+    let config = BidirectionalAgentConfig::default(); // Create default config
     
     BidirectionalTaskRouter::new(
         llm,
-        registry, // Pass registry
+        registry,
         enabled_tools,
         None, // No task repository for this test
+        &config, // Pass reference to config
     )
 }
 
 // Helper to create a router with custom registry and response
-fn create_test_router_with_registry_and_response( // Renamed function
-    registry: Arc<AgentRegistry>, // Use registry
+fn create_test_router_with_registry_and_response(
+    registry: Arc<AgentRegistry>,
     response: String,
 ) -> BidirectionalTaskRouter {
     let llm = Arc::new(MockLlmClient::new(response));
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+    let config = BidirectionalAgentConfig::default(); // Create default config
     
     BidirectionalTaskRouter::new(
         llm,
-        registry, // Pass registry
+        registry,
         enabled_tools,
         None, // No task repository for this test
+        &config, // Pass reference to config
     )
 }

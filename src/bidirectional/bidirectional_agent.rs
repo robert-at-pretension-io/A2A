@@ -87,6 +87,8 @@ use crate::client::{
     streaming::{/* StreamingResponse, StreamingResponseStream */}, // Unused
 };
 
+use crate::bidirectional::agent_helpers::RollingMemory;
+
 use crate::server::{
     repositories::task_repository::{TaskRepository, InMemoryTaskRepository},
     services::{
@@ -118,7 +120,7 @@ use dashmap::DashMap;
 use futures_util::{StreamExt, /* TryStreamExt */}; // Removed unused TryStreamExt
 // use reqwest; // Unused
 use serde::{Deserialize, Serialize};
-use serde_json::{/* json, Value, Map */}; // Unused imports
+use serde_json::{json, Value, Map}; // Import json macro for serialization
 use std::{
     sync::Arc,
     // error::Error as StdError, // Unused
@@ -216,6 +218,9 @@ pub struct BidirectionalAgent {
 
     // Known servers discovered/connected to (URL -> Name) - Shared for background updates
     pub known_servers: Arc<DashMap<String, String>>,
+    
+    // Rolling memory for outgoing requests and responses
+    pub rolling_memory: RollingMemory,
 }
 
 impl BidirectionalAgent {
@@ -380,6 +385,9 @@ impl BidirectionalAgent {
 
             // Initialize known servers map with the one we already passed to ToolExecutor
             known_servers: known_servers,
+            
+            // Initialize rolling memory with default settings
+            rolling_memory: RollingMemory::new(),
         };
         
         // REMOVED periodic agent directory saving logic
@@ -518,10 +526,41 @@ impl BidirectionalAgent {
         trace!(?params, "TaskSendParams created.");
 
         debug!(task_id = %task_id, "Calling task_service.process_task."); // Changed to debug
+        
+        // Get the rolling memory tasks for context enhancement
+        let rolling_memory_tasks = self.rolling_memory.get_tasks_chronological();
+        debug!(rolling_memory_count = %rolling_memory_tasks.len(), "Retrieved rolling memory tasks for context");
+        
+        // Before regular task processing, temporarily add rolling memory to the task metadata
+        // This will allow the task router to access it without changing the task router interface
+        let mut enhanced_params = params.clone();
+        if !rolling_memory_tasks.is_empty() {
+            // Create or get existing metadata
+            let mut metadata = enhanced_params.metadata.unwrap_or_else(|| serde_json::Map::new());
+            
+            // Serialize up to 5 most recent tasks from rolling memory (to avoid token limits)
+            // We're only going to include the task IDs, as the full tasks would be too large
+            let memory_task_ids: Vec<String> = if rolling_memory_tasks.len() > 5 {
+                rolling_memory_tasks[rolling_memory_tasks.len() - 5..].iter()
+                    .map(|task| task.id.clone())
+                    .collect()
+            } else {
+                rolling_memory_tasks.iter()
+                    .map(|task| task.id.clone())
+                    .collect()
+            };
+            
+            // Store in metadata for router to access
+            metadata.insert("_rolling_memory".to_string(), json!(memory_task_ids));
+            enhanced_params.metadata = Some(metadata);
+            
+            debug!(memory_task_count = %memory_task_ids.len(), "Added rolling memory task IDs to task metadata");
+        }
+        
         // Use task_service to process the task
         // Instrument the call to task_service
         let task_result = async {
-            self.task_service.process_task(params).await
+            self.task_service.process_task(enhanced_params).await
         }.instrument(tracing::info_span!("task_service_process", task_id = %task_id_clone)).await;
 
         let task = match task_result {

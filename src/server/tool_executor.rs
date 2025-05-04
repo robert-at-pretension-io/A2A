@@ -272,7 +272,7 @@ impl RememberAgentTool {
 impl Tool for RememberAgentTool {
     fn name(&self) -> &str { "remember_agent" }
 
-    fn description(&self) -> &str { "Discovers and stores/updates another agent's information in the registry using its base URL." }
+    fn description(&self) -> &str { "Discovers and stores/updates another agent's information in the registry using its base URL, and automatically connects to it." }
 
     #[instrument(skip(self, params), name="tool_remember_agent")]
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
@@ -311,13 +311,34 @@ impl Tool for RememberAgentTool {
         // If we have known_servers, update it with the agent name returned by discover
         if let Some(known_servers) = &self.known_servers {
             debug!(%agent_url, %agent_name, "Updating known_servers map to keep in sync with agent registry."); // Changed to debug
-            known_servers.insert(agent_url.to_string(), agent_name);
+            known_servers.insert(agent_url.to_string(), agent_name.clone());
         }
 
-        // Return a success message using the URL.
-        let response_text = format!("Successfully discovered and remembered agent from URL '{}'.", agent_url);
+        // Simulate a connection to provide connection feedback
+        debug!(%agent_url, %agent_name, "Auto-connecting to agent after remembering it");
+        let client = A2aClient::new(agent_url);
+        
+        // Try to connect and get more detailed connection info
+        let connection_result = match client.get_agent_card().await {
+            Ok(card) => {
+                let connection_message = format!("✅ Successfully connected to agent: {}", card.name);
+                debug!(%agent_url, agent_name = %card.name, "Successfully connected to remembered agent");
+                connection_message
+            },
+            Err(e) => {
+                warn!(error = %e, %agent_url, "Connection attempt after remembering agent failed");
+                format!("⚠️ Agent remembered but connection failed: {}", e)
+            }
+        };
+
+        // Create a comprehensive response that includes both remembering and connection
+        let response_text = format!(
+            "🔄 Agent Operations Complete:\n\n✅ Successfully discovered and remembered agent from URL '{}'.\n\n{}",
+            agent_url, connection_result
+        );
+        
         info!(%response_text); // Keep info for successful remembering
-        Ok(json!(response_text)) // Return simple text confirmation
+        Ok(json!(response_text)) // Return comprehensive text confirmation
     }
 
     fn capabilities(&self) -> &[&'static str] { &["agent_registry", "agent_discovery", "agent_management"] }
@@ -435,6 +456,28 @@ impl ExecuteCommandTool {
             return Err(ToolError::InvalidParams("execute_command(connect)".to_string(), "No valid URL found in arguments.".to_string()));
         }
         let url = target_url.unwrap();
+        
+        // First, check if this agent is already in the registry
+        let mut agent_in_registry = false;
+        for (_, agent_card) in self.agent_registry.list_all_agents() {
+            if agent_card.url == url {
+                agent_in_registry = true;
+                break;
+            }
+        }
+        
+        // If the agent is not in the registry, suggest using remember_agent first
+        if !agent_in_registry {
+            let remember_suggestion = format!(
+                "⚠️ This agent ({}) is not yet in your registry. \n\
+                 Before connecting, please first remember this agent with: \n\n\
+                 :tool remember_agent {{\n  \"agent_base_url\": \"{}\"\n}}\n\n\
+                 Then try connecting again with:\n\
+                 :connect {}", 
+                url, url, url
+            );
+            return Ok(remember_suggestion);
+        }
 
         let client = A2aClient::new(&url); // Remove mut
         match client.get_agent_card().await {

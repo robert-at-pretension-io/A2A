@@ -9,6 +9,8 @@ use uuid::Uuid;
 
 // Import the LlmClient trait from the new llm_client module
 use crate::bidirectional::llm_client::LlmClient; // <-- Update import path
+// Import helper functions and traits
+use crate::bidirectional::agent_helpers::MessageExt; // <-- Import our extension trait
 // Import from local server components instead of bidirectional_agent
 use crate::server::{
     task_router::{RoutingDecision, LlmTaskRouterTrait}, // Removed unused TaskRouter import

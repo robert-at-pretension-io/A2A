@@ -1,4 +1,5 @@
-use crate::bidirectional::BidirectionalTaskRouter;
+use crate::bidirectional::task_router::BidirectionalTaskRouter;
+use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
 use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::bidirectional::tests::mocks::MockLlmClient;
 use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities};
@@ -85,12 +86,14 @@ async fn test_input_required_llm_decision_direct_handling() {
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["llm".to_string(), "echo".to_string()]);
 
-    // Create the router - now passing the task repository
+    // Create the router - now passing the task repository and config
+    let config = BidirectionalAgentConfig::default(); // Create default config
     let router = BidirectionalTaskRouter::new(
         llm.clone(), 
         registry.clone(), 
         enabled_tools,
         Some(task_repository.clone()), // Add task repository
+        &config, // Pass reference to config
     );
     
     // Create a task that appears to be returning from another agent in InputRequired state
@@ -181,12 +184,14 @@ async fn test_input_required_llm_decision_human_input_needed() {
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["llm".to_string(), "echo".to_string()]);
 
-    // Create the router - now passing the task repository
+    // Create the router - now passing the task repository and config
+    let config = BidirectionalAgentConfig::default(); // Create default config
     let router = BidirectionalTaskRouter::new(
         llm.clone(), 
         registry.clone(), 
         enabled_tools,
         Some(task_repository.clone()), // Add task repository
+        &config, // Pass reference to config
     );
     
     // Create a task that appears to be returning from another agent in InputRequired state
@@ -287,12 +292,14 @@ async fn test_input_required_non_remote_task_default_handling() {
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["llm".to_string(), "echo".to_string()]);
 
-    // Create the router - now passing the task repository
+    // Create the router - now passing the task repository and config
+    let config = BidirectionalAgentConfig::default(); // Create default config
     let router = BidirectionalTaskRouter::new(
         llm.clone(), 
         registry.clone(), 
         enabled_tools,
         Some(task_repository.clone()), // Add task repository
+        &config, // Pass reference to config
     );
     
     // Create a task that is in InputRequired state but NOT returning from another agent

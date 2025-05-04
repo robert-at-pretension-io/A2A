@@ -41,10 +41,10 @@ fn test_agent_card_creation() {
         assert_eq!(card.name, "test-agent"); 
         assert_eq!(card.version, "1.0.0");
         assert_eq!(card.url, "http://127.0.0.1:9090");
-        assert!(card.description.unwrap().contains("bidirectional"));
+        assert!(card.description.unwrap().contains("Bidirectional"));
         assert!(card.capabilities.push_notifications);
         assert!(card.capabilities.state_transition_history);
-        assert!(!card.capabilities.streaming); // Streaming is not supported in the example
+        assert!(card.capabilities.streaming); // Streaming is now supported
         assert_eq!(card.default_input_modes, vec!["text".to_string()]);
         assert_eq!(card.default_output_modes, vec!["text".to_string()]);
     }

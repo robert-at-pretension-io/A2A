@@ -1,10 +1,10 @@
-// Import RoutingDecision from the correct path
-use crate::server::task_router::RoutingDecision;
-use crate::bidirectional::task_router::BidirectionalTaskRouter; // <-- Update path
+// Import from task_router
+use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
+use crate::bidirectional::task_router::BidirectionalTaskRouter;
 use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
-use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities, AgentSkill};
+use crate::bidirectional::config::BidirectionalAgentConfig;
+use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities, AgentSkill, TaskSendParams};
 use std::sync::Arc;
 use serde_json::json; // Import json macro
 use uuid::Uuid;
@@ -27,8 +27,8 @@ async fn test_router_local_decision() {
     // Create a test task
     let task = create_test_task("What is the capital of France?");
     
-    // Test the routing decision
-    let decision = router.decide_execution_mode(&task).await.unwrap();
+    // Test the routing decision - use decide method with task's send params
+    let decision = router.decide(&task.into_send_params()).await.unwrap();
 
     // Verify that the decision is to execute locally (RoutingDecision::Local)
     // Check that a tool_name was provided and params exist (ignore params content for now)
@@ -59,8 +59,8 @@ async fn test_router_remote_decision() {
     // Create a test task
     let task = create_test_task("Please forward this to test-agent");
     
-    // Test the routing decision
-    let decision = router.decide_execution_mode(&task).await.unwrap();
+    // Test the routing decision - use decide method with task's send params
+    let decision = router.decide(&task.into_send_params()).await.unwrap();
 
     // Verify that the decision is to execute remotely with the correct agent ID (RoutingDecision::Remote)
     assert!(matches!(decision, RoutingDecision::Remote { agent_id } if agent_id == "test-agent"));
@@ -83,8 +83,8 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
     // Create a test task
     let task = create_test_task("Please forward this to unknown-agent");
     
-    // Test the routing decision
-    let decision = router.decide_execution_mode(&task).await.unwrap();
+    // Test the routing decision - use decide method with task's send params
+    let decision = router.decide(&task.into_send_params()).await.unwrap();
 
     // Verify that the decision falls back to local execution (RoutingDecision::Local)
     // It should default to the 'llm' tool when the LLM fails to choose or chooses an invalid tool.
@@ -108,8 +108,8 @@ async fn test_router_fallback_to_local_for_unclear_decision() {
     // Create a test task
     let task = create_test_task("What should I do with this?");
     
-    // Test the routing decision
-    let decision = router.decide_execution_mode(&task).await.unwrap();
+    // Test the routing decision - use decide method with task's send params
+    let decision = router.decide(&task.into_send_params()).await.unwrap();
 
     // Verify that the decision falls back to local execution (RoutingDecision::Local)
     // It should default to the 'llm' tool when the LLM decision is unclear.
@@ -146,7 +146,7 @@ async fn test_router_prompt_formatting() {
     let task = create_test_task("Please route this task appropriately");
     
     // Make the routing decision
-    let _ = router.decide_execution_mode(&task).await.unwrap();
+    let _ = router.decide(&task.into_send_params()).await.unwrap();
     
     // Check that the prompt sent to the LLM contains key elements
     // The router now makes TWO calls: one for routing, one for tool choice if local.
@@ -169,20 +169,12 @@ async fn test_router_prompt_formatting() {
     assert!(tool_choice_prompt.contains("choose the SINGLE most appropriate tool"));
     // Removed assertions using the old 'prompt' variable
 
-    // Check the third prompt (tool choice) - assuming DP2 decided LOCAL
-    if calls.len() > 2 { // Check if the third call exists
-        let tool_choice_prompt = &calls[2]; // Index 2 for the third call
-        assert!(tool_choice_prompt.contains("You have decided to handle the latest request in the following CONVERSATION HISTORY locally"));
-        assert!(tool_choice_prompt.contains("AVAILABLE LOCAL TOOLS:"));
-        assert!(tool_choice_prompt.contains("choose the SINGLE most appropriate tool"));
-    } else {
-        // This might happen if DP2 decided REMOTE or REJECT, so DP3 wasn't called.
-        // Or if clarification/decomposition happened.
-        // For this specific test setup, we expect LOCAL, so DP3 should run.
-        // If decomposition/clarification were enabled, this assertion might need adjustment.
-        // Let's assume for this test, clarification/decomposition are off.
-        assert!(calls.len() > 2, "Expected tool choice prompt (DP3) but only found {} calls", calls.len());
-    }
+    // The updated implementation only uses 2 LLM calls:
+    // 1. For routing decision (DP2)
+    // 2. For tool choice (DP3)
+    
+    // For this test, we only need to check that there are 2 calls
+    assert_eq!(calls.len(), 2, "Expected 2 LLM calls (routing + tool choice) but found {} calls", calls.len());
 }
 
 
@@ -252,7 +244,7 @@ fn create_test_task(message_text: &str) -> Task {
 
 // Add helper to convert Task to TaskSendParams for router input
 impl Task {
-    fn into_send_params(self) -> TaskSendParams {
+    pub fn into_send_params(self) -> TaskSendParams {
         TaskSendParams {
             id: self.id,
             message: self.history.unwrap_or_default().last().cloned().unwrap_or_else(|| Message {

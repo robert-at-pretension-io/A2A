@@ -11,6 +11,7 @@ This module implements a bidirectional Agent-to-Agent (A2A) implementation that 
 - **Task Rejection**: Intelligently rejects inappropriate or impossible tasks with explanations
 - **Agent Discovery**: Discovers and shares information about other agents in the network
 - **Persistent Agent Directory**: Stores known agents to disk for persistent memory
+- **Rolling Memory**: Specialized memory that only remembers outgoing tasks and responses
 - **Interactive REPL**: Command-line interface for interacting with agents
 
 ## Module Structure
@@ -76,6 +77,14 @@ In interactive REPL mode, you can use these commands:
 - `:listen PORT` - Start listening server on specified port
 - `:stop` - Stop the currently running server
 - `:tool TOOLNAME PARAMS` - Execute a specific tool with parameters
+- `:session new` - Create a new conversation session
+- `:session show` - Show the current session ID
+- `:history` - Show message history for current session
+- `:tasks` - List all tasks in the current session
+- `:task ID` - Show details for a specific task
+- `:memory` - Show the agent's rolling memory of outgoing requests
+- `:memory clear` - Clear the agent's rolling memory
+- `:memoryTask ID` - Show details for a specific task in rolling memory
 - `:quit` - Exit the REPL
 
 The `:tool` command is particularly useful for agent discovery:
@@ -93,6 +102,7 @@ The bidirectional agent consists of several key components:
 - **LLM-based Task Router**: Routes tasks to either local processing, remote delegation, or rejection
 - **ClaudeLlmClient**: Integrates with Claude API for processing tasks
 - **AgentDirectory**: Maintains information about known remote agents with persistent storage
+- **RollingMemory**: Specialized memory that only stores outgoing tasks and responses
 - **ListAgentsTool**: Tool for discovering and sharing agent information
 - **ToolExecutor**: Executes local tools including echo, llm, summarize, list_agents, remember_agent, and execute_command.
 
@@ -253,6 +263,40 @@ agent> Help me hack into a government database
 Task rejected: I cannot assist with illegal activities such as hacking into government databases. This request violates ethical guidelines and legal standards. I'm designed to provide helpful and lawful assistance only.
 ```
 
+### Rolling Memory
+```
+agent@agent2:8081> :remote What's the weather in Paris?
+✅ Task sent successfully!
+   Task ID: 1234-abcd-5678
+   Initial state reported by remote: Completed
+
+agent@agent2:8081> :remote Tell me about the Eiffel Tower
+✅ Task sent successfully!
+   Task ID: 5678-efgh-9012
+   Initial state reported by remote: Completed
+
+agent@agent2:8081> :memory
+🧠 Rolling Memory (2 outgoing requests):
+
+1. Task ID: 1234-abcd-5678 (Status: Completed)
+   Request: What's the weather in Paris?
+
+2. Task ID: 5678-efgh-9012 (Status: Completed)
+   Request: Tell me about the Eiffel Tower
+
+agent@agent2:8081> :memoryTask 1234-abcd-5678
+🧠 Memory Task Details for ID: 1234-abcd-5678
+
+Status: Completed
+Timestamp: 2023-05-04T12:34:56.789Z
+
+📤 Original Request:
+What's the weather in Paris?
+
+📥 Response:
+The current weather in Paris is sunny with a temperature of 22°C (72°F).
+```
+
 ## Testing
 
 The module includes a comprehensive test suite in the `tests/` directory covering:
@@ -268,6 +312,8 @@ The module includes a comprehensive test suite in the `tests/` directory coverin
 - Agent directory persistence
 - Task rejection handling
 - Agent discovery tools
+- Rolling memory functionality
+- Rolling memory inclusion/exclusion criteria (only outgoing tasks)
 
 ## Multi-Agent Setup
 
@@ -290,3 +336,311 @@ The script provides detailed instructions for testing:
 4. Verifying persistent agent directories
 
 See the script output for detailed step-by-step instructions.
+
+
+
+
+──────────────────────────────────────
+EXTENDED GAP ANALYSIS & TURN-BY-TURN
+BLUE-PRINT FOR NEW LLM DECISION POINTS
+──────────────────────────────────────
+Legend
+• “DPx” – Existing decision points  
+• “NPx” – *New* (missing) decision points  
+• Prompt blocks are **copy-paste-ready**;  
+  they already contain placeholders
+  (`{{variable}}`) you can fill in from
+  runtime data.
+
+====================================================================
+NP1 ─ PROACTIVE AMBIGUITY RESOLUTION / INTENT CLARIFICATION
+====================================================================
+Why now?
+The router (DP2/DP3) blindly trusts that the
+latest user utterance is well-formed.  
+That is brittle: the LLM often falls back to
+`llm` or “reject” because the ask is vague,
+over-broad or contradictory.
+
+When should NP1 trigger?
+• `TaskService::process_task` receives a *new*
+  task (first message of a session **or**
+  a follow-up that does *not* belong to an
+  `InputRequired` continuation).
+• Conversation history shorter than *n* turns
+  **or** contains high-entropy / vague verbs  
+  (heuristic: cosine similarity vs. “generic
+  question” embedding > 0.8).  
+• Confidence score of downstream routing
+  (see NP2) < threshold.
+
+Expected outputs
+```
+CLARITY: CLEAR            # 1-token answer
+# or
+CLARITY: NEEDS_CLARIFY
+QUESTION: "<single-sentence clarifying question>"
+```
+Prompt template
+```
+SYSTEM:
+You are an autonomous AI agent preparing to process a user request.
+Your first task is to judge whether the request is specific and complete.
+
+CONVERSATION_HISTORY:
+{{history_as_bullet_points}}
+
+LATEST_REQUEST:
+“{{latest_user_text}}”
+
+TASK:
+1. If the request is sufficiently specific, respond exactly:
+   CLARITY: CLEAR
+2. If clarification is needed, respond using BOTH lines:
+   CLARITY: NEEDS_CLARIFY
+   QUESTION: "<single sentence question for the human>"
+
+Rules:
+• Do not add anything else.
+• If you choose NEEDS_CLARIFY your question MUST be answerable in ≤ 1 sentence.
+```
+
+Integration path
+1.  Call above prompt *before* DP2.  
+2.  If `CLEAR` → continue as today.  
+3.  If `NEEDS_CLARIFY` → create a task in
+    `InputRequired` state **without** selecting
+    any tool/agent; the status message becomes
+    the generated `QUESTION`.  
+    User’s next utterance will automatically
+    be treated as follow-up.
+
+Benefits & metrics
+• Fewer mis-routes; reduced human frustration.  
+• Measure: drop in `% tasks immediately
+  re-submitted by user with extra detail`.
+
+====================================================================
+NP2 ─ SOPHISTICATED TASK PLANNING & DECOMPOSITION
+====================================================================
+NP2.A  SHOULD-DECOMPOSE decision
+--------------------------------
+Prompt template
+```
+SYSTEM:
+You are an expert AI planner.
+
+REQUEST_GOAL:
+“{{latest_user_text}}”
+
+AVAILABLE_LOCAL_TOOLS:
+{{tool_table}}
+
+AVAILABLE_REMOTE_AGENTS:
+{{agent_table}}
+
+CRITERIA:
+• If the goal obviously maps to ONE local
+  tool or ONE remote agent, do NOT decompose.
+• Decompose when fulfilling the goal clearly
+  needs multiple distinct skills or ordered
+  steps.
+RESPONSE_FORMAT:
+SHOULD_DECOMPOSE: YES|NO
+REASON: "<one line>"
+```
+If `NO` → proceed to DP2.  
+If `YES` → jump to NP2.B.
+
+NP2.B  Produce sub-task plan
+----------------------------
+Prompt template
+```
+SYSTEM:
+You chose to decompose.
+
+GOAL:
+“{{latest_user_text}}”
+
+Produce a JSON array where each element is:
+{
+ "id": "<kebab-case-step-id>",
+ "input_message": "<prompt to execute>",
+ "metadata": { "depends_on": [<ids>] }
+}
+• Keep ≤ 5 steps.
+• Maintain correct dependency order.
+• No extra keys.
+```
+
+NP2.C  Resource allocation (per sub-task)
+-----------------------------------------
+For each sub-task use a *slimmed* version of
+today’s DP2/DP3 prompt feeding only that
+sub-task’s `input_message`.  
+Return a `RoutingDecision` per sub-task and
+store them in a DAG.
+
+Execution orchestration
+• Extend `TaskService` to spawn *child tasks*
+  whose `metadata.parent_id = original_task`.  
+• Parent task state stays `Working` until all
+  children are `Completed` or `Failed`.
+
+====================================================================
+NP3 ─ DYNAMIC ERROR-RECOVERY STRATEGY
+====================================================================
+Hook points
+`TaskService::process_task` (local)  
+`ClientManager::delegate_task` (remote).
+
+Error classification enum
+```
+• TransientNetwork
+• PermissionAuth
+• ToolSyntax
+• AgentUnavailable
+• Unknown/Other
+```
+
+Recovery policy prompt
+```
+SYSTEM:
+You are a reliability strategist.
+
+CONTEXT_SUMMARY:
+Task ID: {{task_id}}
+Original goal: “{{root_goal}}”
+Last action attempted: {{action_json}}
+ERROR_CLASS: {{class}}
+RAW_ERROR_MESSAGE: “{{err_string}}”
+
+AVAILABLE_ALTERNATIVES:
+LOCAL_TOOLS: {{list}}
+REMOTE_AGENTS: {{list}}
+
+Choose strategy:
+1. RETRY_SAME
+2. RETRY_MODIFIED
+3. USE_ALTERNATIVE { "which": "<tool|agent id>" }
+4. ASK_HUMAN "message"
+5. ABANDON "reason"
+
+Respond ONLY with valid JSON object:
+{ "strategy": "…", "params": {…} }
+```
+
+Implementation sketch
+```
+match strategy {
+  RETRY_SAME           => backoff_retry(),
+  RETRY_MODIFIED       => patch_params_and_retry(),
+  USE_ALTERNATIVE      => reroute(new_decision),
+  ASK_HUMAN            => set_state(InputRequired),
+  ABANDON              => fail_task(reason)
+}
+```
+
+====================================================================
+NP4 ─ RESULT SYNTHESIS / RECONCILIATION
+====================================================================
+Trigger
+Parent task detects all subtasks done.
+
+Prompt template
+```
+SYSTEM:
+You are an expert summarizer & auditor.
+
+PARENT_GOAL:
+“{{original_goal}}”
+
+SUBTASK_RESULTS:
+{{bullet_point_each_subtask_with_key_findings}}
+
+CONFLICT_POLICY:
+If results conflict, highlight the conflict
+FIRST, then provide your best unified answer.
+If any subtask failed, mention partial success.
+
+OUTPUT_FORMAT (JSON):
+{
+ "final_answer": "<user facing answer>",
+ "confidence": 0-1,
+ "notes": "<optional diagnostics>"
+}
+```
+
+Post-processing
+* `final_answer` goes into an `Artifact`
+  attached to the parent task.  
+* Parent task state → `Completed`.  
+* If `confidence < 0.4` automatically invoke
+  NP5 (ask human) before marking completed.
+
+====================================================================
+NP5 ─ PROACTIVE HUMAN CONFIRMATION
+====================================================================
+Heuristic triggers
+• `confidence < thresh` from NP4  
+• Planned action has `risk=true`
+  metadata (e.g., `execute_command` that
+  mutates external state).  
+• Cost estimate > budget.
+
+Prompt template
+```
+SYSTEM:
+You are a risk assessor.
+
+PLANNED_ACTION:
+{{json_dump_action}}
+
+RISK_SCORE (0-1):
+{{numeric}}
+
+USER_PREFERENCE_KNOWN? {{bool}}
+
+DECIDE:
+Return CONFIRM_NEEDED or SAFE_TO_PROCEED
+and a short justification.
+
+Return format:
+CONFIRMATION: CONFIRM_NEEDED|SAFE_TO_PROCEED
+JUSTIFICATION: "<one sentence>"
+```
+
+If `CONFIRM_NEEDED`
+→ transition to `InputRequired` with message:  
+“⚠️ Planned action needs your confirmation…”  
+Else proceed.
+
+====================================================================
+IMPLEMENTATION CHECKLIST
+====================================================================
+[] Add `enum RoutingDecision::Decompose(Vec<SubtaskDefinition>)`  
+[] Flesh out `should_decompose / decompose_task` in router  
+[] Parent/child task linkage & state roll-up  
+[] Extend `TaskService` error catcher → NP3 handler  
+[] New helpers for LLM prompt execution (with token-budget guard)  
+[] Update `extract_text_from_task` to read `Artifact.final_answer`  
+[] Unit tests per NP with MockLlmClient responses  
+[] Configuration toggles (`experimental_decompose`, `max_risk`)  
+
+====================================================================
+EXPECTED PAY-OFF
+====================================================================
+• 30-50 % reduction in manual follow-ups  
+• Increased success rate on multi-step
+  composite requests  
+• Graceful degradation instead of hard
+  failures  
+• Transparent audit trail via JSON notes &
+  confidence scores
+
+──────────────────────────────────────
+By embedding these **new decision points** the
+Bidirectional Agent graduates from a “smart
+router” to a true *autonomous orchestrator*,
+capable of iterative planning, self-healing,
+and accountable execution.

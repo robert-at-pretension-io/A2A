@@ -10,4 +10,6 @@ mod input_required_remote_tests; // New test module for InputRequired remote tas
 mod artifact_tests;
 mod repl_commands_tests;
 mod task_rejection_tests;
+mod memory_tests; // New test module for rolling memory feature
+mod memory_isolation_tests; // New test module for rolling memory security and isolation tests
 mod mocks;

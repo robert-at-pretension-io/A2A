@@ -40,6 +40,9 @@ pub(super) fn print_repl_help(agent: &BidirectionalAgent) {
     println!("  :task ID         - Show details for a specific task");
     println!("  :artifacts ID    - Show artifacts for a specific task");
     println!("  :cancelTask ID   - Cancel a running task");
+    println!("  :memory          - Show the agent's rolling memory of outgoing requests");
+    println!("  :memory clear    - Clear the agent's rolling memory");
+    println!("  :memoryTask ID   - Show details for a specific task in rolling memory");
     println!("  :file PATH MSG   - Send message with a file attachment (Not Implemented)"); // Keep note
     println!("  :data JSON MSG   - Send message with JSON data (Not Implemented)"); // Keep note
     println!("  :tool NAME [PARAMS] - Execute local tool with optional JSON parameters");
@@ -611,11 +614,14 @@ pub(super) async fn handle_tool_command(
         ));
     }
 
-    let params_json: Value = match serde_json::from_str(params_str) {
+    // Extract the JSON part (in case user includes text before/after JSON)
+    let extracted_json = crate::bidirectional::task_router::extract_json_from_text(params_str);
+    let params_json: Value = match serde_json::from_str(&extracted_json) {
         Ok(json) => json,
         Err(e) => {
-            error!(error = %e, input_params = %params_str, "Failed to parse JSON parameters for :tool command.");
-            return Err(anyhow!("Invalid JSON parameters: {}", e));
+            error!(error = %e, input_params = %params_str, extracted_json = %extracted_json, 
+                  "Failed to parse JSON parameters for :tool command.");
+            return Err(anyhow!("Invalid JSON parameters: {}. Make sure to provide valid JSON.", e));
         }
     };
 
@@ -680,6 +686,129 @@ pub(super) fn handle_show_card(agent: &BidirectionalAgent) -> Result<String> {
     Ok(output)
 }
 
+/// Handles the ':memory' REPL command logic.
+#[instrument(skip(agent, args), fields(agent_id = %agent.agent_id))]
+pub fn handle_memory(agent: &mut BidirectionalAgent, args: &str) -> Result<String> {
+    debug!(args = %args, "Handling memory command.");
+    
+    // Check if this is a clear command
+    if args.trim() == "clear" {
+        debug!("Clearing rolling memory.");
+        agent.rolling_memory.clear();
+        return Ok("🧠 Rolling memory cleared.".to_string());
+    }
+    
+    // Get the tasks from rolling memory in chronological order
+    let tasks = agent.rolling_memory.get_tasks_chronological();
+    
+    if tasks.is_empty() {
+        debug!("Rolling memory is empty.");
+        return Ok("🧠 Rolling memory is empty. No outgoing requests have been stored.".to_string());
+    }
+    
+    // Format the output
+    let mut output = format!("\n🧠 Rolling Memory ({} outgoing requests):\n\n", tasks.len());
+    
+    for (i, task) in tasks.iter().enumerate() {
+        // Extract text from the first user message (original request)
+        let request_text = task.history.as_ref()
+            .and_then(|history| {
+                history.iter()
+                    .find(|msg| msg.role == Role::User)
+                    .map(|msg| {
+                        msg.parts.iter()
+                            .filter_map(|part| match part {
+                                Part::TextPart(tp) => Some(tp.text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+            })
+            .unwrap_or_else(|| "No request text available".to_string());
+        
+        // Get a short preview of the request
+        let short_request = if request_text.len() > 70 {
+            format!("{}...", &request_text[..67])
+        } else {
+            request_text
+        };
+        
+        // Extract status from the task
+        let status = &task.status.state;
+        
+        // Add to output
+        output.push_str(&format!("{}. Task ID: {} (Status: {:?})\n", i + 1, task.id, status));
+        output.push_str(&format!("   Request: {}\n", short_request));
+        
+        // Add a separator between entries
+        if i < tasks.len() - 1 {
+            output.push_str("\n");
+        }
+    }
+    
+    output.push_str("\nUse :memoryTask ID to view details of a specific task\n");
+    Ok(output)
+}
+
+/// Handles the ':memoryTask ID' REPL command logic.
+#[instrument(skip(agent, task_id), fields(agent_id = %agent.agent_id))]
+pub fn handle_memory_task(agent: &BidirectionalAgent, task_id: &str) -> Result<String> {
+    debug!(task_id = %task_id, "Handling memory task command.");
+    
+    if task_id.is_empty() {
+        error!("No task ID provided for :memoryTask command.");
+        return Err(anyhow!("No task ID provided. Use :memoryTask TASK_ID"));
+    }
+    
+    // Get the task from rolling memory
+    match agent.rolling_memory.get_task(task_id) {
+        Some(task) => {
+            debug!(task_id = %task.id, "Found task in rolling memory.");
+            
+            // Extract original request text
+            let request_text = task.history.as_ref()
+                .and_then(|history| {
+                    history.iter()
+                        .find(|msg| msg.role == Role::User)
+                        .map(|msg| {
+                            msg.parts.iter()
+                                .filter_map(|part| match part {
+                                    Part::TextPart(tp) => Some(tp.text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        })
+                })
+                .unwrap_or_else(|| "No request text available".to_string());
+            
+            // Extract response text
+            let response_text = crate::bidirectional::agent_helpers::extract_text_from_task(agent, &task);
+            
+            // Format the output
+            let mut output = format!("\n🧠 Memory Task Details for ID: {}\n\n", task_id);
+            output.push_str(&format!("Status: {:?}\n", task.status.state));
+            
+            if let Some(timestamp) = &task.status.timestamp {
+                output.push_str(&format!("Timestamp: {}\n", timestamp));
+            }
+            
+            output.push_str("\n📤 Original Request:\n");
+            output.push_str(&format!("{}\n", request_text));
+            
+            output.push_str("\n📥 Response:\n");
+            output.push_str(&format!("{}\n", response_text));
+            
+            Ok(output)
+        },
+        None => {
+            error!(task_id = %task_id, "Task not found in rolling memory.");
+            Err(anyhow!("Task ID {} not found in rolling memory", task_id))
+        }
+    }
+}
+
 /// Handles the ':help' REPL command logic.
 #[instrument(skip(agent), fields(agent_id = %agent.agent_id))]
 pub(super) fn handle_help(agent: &BidirectionalAgent) -> Result<String> {
@@ -707,6 +836,9 @@ pub(super) fn handle_help(agent: &BidirectionalAgent) -> Result<String> {
                :task ID         - Show details for a specific task\n\
                :artifacts ID    - Show artifacts for a specific task\n\
                :cancelTask ID   - Cancel a running task\n\
+               :memory          - Show the agent's rolling memory of outgoing requests\n\
+               :memory clear    - Clear the agent's rolling memory\n\
+               :memoryTask ID   - Show details for a specific task in rolling memory\n\
                :file PATH MSG   - Send message with a file attachment (Not Implemented)\n\
                :data JSON MSG   - Send message with JSON data (Not Implemented)\n\
                :tool NAME [PARAMS] - Execute local tool with optional JSON parameters\n\
@@ -746,6 +878,8 @@ pub async fn handle_repl_command(
         "task" => handle_show_task(agent, args).await,
         "artifacts" => handle_show_artifacts(agent, args).await,
         "cancelTask" => handle_cancel_task(agent, args).await,
+        "memory" => handle_memory(agent, args),
+        "memoryTask" => handle_memory_task(agent, args),
         "tool" => {
             let (tool_name, params_str) = match args.split_once(' ') {
                 Some((name, params)) => (name, params),
