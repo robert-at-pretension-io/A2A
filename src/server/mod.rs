@@ -135,6 +135,15 @@ pub fn create_agent_card() -> serde_json::Value {
         "documentation_url": null,
         "version": "1.0.0",
         "url": "http://localhost:8081",
-        "skills": []
+        "skills": [
+            {
+                "id": "echo",
+                "name": "Echo",
+                "description": "Echoes back the input text",
+                "tags": ["echo", "text_manipulation"],
+                "input_modes": ["text"],
+                "output_modes": ["text"]
+            }
+        ]
     })
 }

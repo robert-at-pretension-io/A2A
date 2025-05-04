@@ -261,6 +261,7 @@ pub struct BidirectionalTaskRouter {
     llm: Arc<dyn LlmClient>,
     agent_registry: Arc<AgentRegistry>, // Use the canonical registry
     enabled_tools: Arc<Vec<String>>,
+    task_repository: Option<Arc<dyn TaskRepository + Send + Sync>>, // Add task repository field
 }
 
 impl BidirectionalTaskRouter {
@@ -268,6 +269,7 @@ impl BidirectionalTaskRouter {
          llm: Arc<dyn LlmClient>,
          agent_registry: Arc<AgentRegistry>, // Use canonical registry
          enabled_tools: Arc<Vec<String>>,
+         task_repository: Option<Arc<dyn TaskRepository + Send + Sync>>, // Add task repository parameter
      ) -> Self {
         // Ensure "echo" is always considered enabled internally for fallback, even if not in config
         let mut tools = enabled_tools.as_ref().clone();
@@ -278,6 +280,7 @@ impl BidirectionalTaskRouter {
             llm,
             agent_registry, // Store the registry
             enabled_tools: Arc::new(tools),
+            task_repository, // Store the task repository
         }
     }
 
@@ -566,16 +569,13 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
         decision
     }
  
-    // Add the required process_follow_up method
-    // REMOVED #[instrument(skip(self, message), fields(task_id))]
+    // Process follow-up message for tasks, including enhanced InputRequired handling
+    #[instrument(skip(self, message), fields(task_id = %task_id))]
     async fn process_follow_up(&self, task_id: &str, message: &Message) -> Result<RoutingDecision, ServerError> {
         debug!("Processing follow-up message for task.");
         trace!(?message, "Follow-up message details.");
-        // For now, always route follow-ups locally using the 'llm' tool as a simple default.
-        // A real implementation might involve the LLM again to choose a tool based on history.
-        info!("Defaulting follow-up routing to LOCAL execution using 'llm' tool.");
         
-        // Extract text from the follow-up message for the 'llm' tool's 'text' parameter
+        // Extract text from the follow-up message
         let follow_up_text = message.parts.iter()
             .filter_map(|p| match p {
                 Part::TextPart(tp) => Some(tp.text.as_str()),
@@ -583,7 +583,144 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        
+        // Get the task from the appropriate repository
+        let task_result = if let Some(repo) = &self.task_repository {
+            // Use the provided task repository (mainly for tests)
+            repo.get_task(task_id).await
+        } else {
+            // In production, this would use another method to get the task
+            debug!("No task_repository available, cannot access task details");
+            return Ok(RoutingDecision::Local { 
+                tool_name: "llm".to_string(), 
+                params: json!({"text": follow_up_text}) 
+            });
+        };
+        
+        if let Ok(Some(task)) = task_result {
+            // Check task metadata to determine if it's a remote task coming back to us
+            let is_returning_remote_task = if let Some(md) = &task.metadata {
+                md.get("delegated_from").is_some() || 
+                md.get("remote_agent_id").is_some() ||
+                md.get("source_agent_id").is_some()
+            } else {
+                false
+            };
             
+            // Check if this task is in InputRequired state and is returning from another agent
+            if task.status.state == TaskState::InputRequired && is_returning_remote_task {
+                info!("Task is in InputRequired state and is returning from another agent");
+                
+                // Use the LLM to decide if we can handle it ourselves or need human input
+                let llm = &self.llm;
+                
+                if let Some(history) = &task.history {
+                    // Create prompt for the LLM asking it to decide if we can handle this ourselves
+                    let history_text = history.iter()
+                        .map(|msg| {
+                            let role_str = match msg.role {
+                                Role::User => "User",
+                                Role::Agent => "Agent",
+                            };
+                            
+                            let content = msg.parts.iter()
+                                .filter_map(|p| match p {
+                                    Part::TextPart(tp) => Some(tp.text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            
+                            format!("{}: {}", role_str, content)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    
+                    // Get the current status message which often describes why input is required
+                    let status_message = if let Some(msg) = &task.status.message {
+                        msg.parts.iter()
+                            .filter_map(|p| match p {
+                                Part::TextPart(tp) => Some(tp.text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        "No status message available".to_string()
+                    };
+                    
+                    // Build the decision prompt
+                    let decision_prompt = format!(
+                        r#"You are assisting with handling a returning delegated task that requires additional input.
+
+TASK HISTORY:
+{}
+
+REASON INPUT IS REQUIRED:
+{}
+
+FOLLOW-UP MESSAGE/INPUT FROM USER:
+{}
+
+You need to decide how to handle this situation:
+1. HANDLE_DIRECTLY - If you have enough information to answer the question or address the issue directly
+2. NEED_HUMAN_INPUT - If the input required is complex/specific and needs human feedback
+
+Consider:
+- Do you understand what input is needed?
+- Is the follow-up message clear enough to proceed?
+- Could this require specific expertise or personal preferences that only the human would know?
+
+Respond with EXACTLY ONE of these options: HANDLE_DIRECTLY or NEED_HUMAN_INPUT"#,
+                        history_text, status_message, follow_up_text
+                    );
+                    
+                    let decision = match llm.complete(&decision_prompt).await {
+                        Ok(decision) => decision.trim().to_uppercase(),
+                        Err(e) => {
+                            // LLM failed, default to needing human input
+                            warn!("LLM decision failed: {}, defaulting to needing human input", e);
+                            "NEED_HUMAN_INPUT".to_string()
+                        }
+                    };
+                    
+                    if decision.contains("HANDLE_DIRECTLY") {
+                        info!("LLM decided to handle the InputRequired task directly");
+                        // Pass to local LLM tool for handling
+                        return Ok(RoutingDecision::Local { 
+                            tool_name: "llm".to_string(), 
+                            params: json!({"text": follow_up_text}) 
+                        });
+                    } else if decision.contains("NEED_HUMAN_INPUT") { // Removed the "|| true" to prevent always taking this branch
+                        info!("LLM decided to request human input for the task");
+                        // This is a special case - we'll modify the returned decision to flag it as needing human input
+                        // The ToolExecutor will then handle this special case differently
+                        return Ok(RoutingDecision::Local { 
+                            tool_name: "human_input".to_string(), 
+                            params: json!({
+                                "text": follow_up_text,
+                                "require_human_input": true,
+                                "prompt": status_message
+                            }) 
+                        });
+                    } else {
+                        // Default to human input if the decision isn't clear
+                        info!("LLM decision not clear, defaulting to human input");
+                        return Ok(RoutingDecision::Local { 
+                            tool_name: "human_input".to_string(), 
+                            params: json!({
+                                "text": follow_up_text,
+                                "require_human_input": true,
+                                "prompt": status_message
+                            }) 
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Default case: Handle locally with LLM tool
+        info!("Routing follow-up to LOCAL execution using 'llm' tool.");
         Ok(RoutingDecision::Local { 
             tool_name: "llm".to_string(), 
             params: json!({"text": follow_up_text}) 
@@ -747,12 +884,13 @@ impl BidirectionalAgent {
         ));
         trace!("ToolExecutor created.");
 
-        // Create the task router, passing the enabled tools list and registry
+        // Create the task router, passing the enabled tools list, registry, and task repository
         let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> =
             Arc::new(BidirectionalTaskRouter::new(
                 llm.clone(),
                 agent_registry.clone(), // Pass registry instead of directory
                 enabled_tools.clone(),
+                Some(task_repository.clone()), // Pass task repository
             ));
         trace!("BidirectionalTaskRouter created.");
 
@@ -1848,6 +1986,32 @@ impl BidirectionalAgent {
         };
         trace!(?capabilities, "Agent capabilities determined.");
 
+        // Convert tools to agent skills
+        let mut skills = Vec::new();
+        
+        // Get tools from the task service's tool executor if available
+        // self.task_service is an Arc<TaskService>, not an Option
+        let task_service = &self.task_service;
+        if let Some(tool_executor) = &task_service.tool_executor {
+            for (tool_name, tool) in tool_executor.tools.iter() {
+                // Create an AgentSkill for each tool
+                let skill = crate::types::AgentSkill {
+                    id: tool_name.clone(),
+                    name: tool_name.clone(),
+                    description: Some(tool.description().to_string()),
+                    examples: None,
+                    input_modes: Some(vec!["text".to_string()]),
+                    output_modes: Some(vec!["text".to_string()]),
+                    tags: Some(tool.capabilities().iter().map(|&s| s.to_string()).collect()),
+                };
+                skills.push(skill);
+            }
+        } else {
+            debug!("No tool executor found in task service, skills list will be empty");
+        }
+        
+        trace!(skills_count = skills.len(), "Skills for agent card");
+
         let card = AgentCard {
             // id field does not exist on AgentCard in types.rs
             name: self.agent_name.clone(), // Use the configured agent name (falls back to agent_id if None)
@@ -1860,7 +2024,7 @@ impl BidirectionalAgent {
             default_output_modes: vec!["text".to_string()], // Example
             documentation_url: None,
             provider: None,
-            skills: vec![], // skills is Vec<AgentSkill>, provide empty vec
+            skills, // Use the skills we collected from tools
             // Add other fields from AgentCard if they exist
         };
         trace!(?card, "Agent card created.");

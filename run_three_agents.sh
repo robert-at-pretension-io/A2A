@@ -102,8 +102,8 @@ bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-1"
 agent_name = "Agent One"
 
-[client]
-target_url = "http://localhost:4201"
+# [client]
+# target_url = "http://localhost:4201"
 
 [llm]
 # API key set via environment variable
@@ -126,8 +126,8 @@ bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-2"
 agent_name = "Agent Two"
 
-[client]
-target_url = "http://localhost:4200"
+# [client]
+# target_url = "http://localhost:4200"
 
 [llm]
 # API key set via environment variable
@@ -148,14 +148,14 @@ cat > "${PROJECT_DIR}/agent3_config.toml" << EOF
 port = 4202
 bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-3"
-agent_name = "Agent Three"
+agent_name = "Agent Three -- can remember"
 
-[client]
-target_url = "http://localhost:4201"
+# [client]
+# target_url = "http://localhost:4201"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent specialized in data analysis that can communicate with other agents."
+system_prompt = "You are an AI agent specialized in remembering other agents and relaying that information to other agents when requested"
 
 [mode]
 repl = true
@@ -163,7 +163,7 @@ get_agent_card = false
 repl_log_file = "shared_agent_interactions.log"
 
 [tools]
-enabled = ["echo", "summarize", "list_agents", "remember_agent", "execute_command"] # <-- Add execute_command
+enabled = ["echo", "summarize", "list_agents", "remember_agent", "execute_command", "llm"] # <-- Add execute_command
 # REMOVED agent_directory_path
 EOF
 
@@ -219,11 +219,11 @@ sleep 1
 # Start Agent 3
 AGENT3_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 3 (listening on port 4202, connecting to 4201)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent3_config.toml" # Changed to info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent 3 (Port 4202)" -- bash -c "$AGENT3_CMD" &
+    gnome-terminal --title="Agent 3 -- can remember (Port 4202)" -- bash -c "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent 3 (Port 4202)" -e "$AGENT3_CMD" &
+    xterm -title "Agent 3 -- can remember (Port 4202)" -e "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent 3 (Port 4202)" -e bash -c "$AGENT3_CMD" &
+    konsole --new-tab -p tabtitle="Agent 3 -- can remember (Port 4202)" -e bash -c "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "terminal" ]; then
     terminal -e "$AGENT3_CMD" &
 fi

@@ -1,9 +1,11 @@
 use crate::server::tool_executor::{ToolExecutor, ListAgentsTool, Tool, ToolError};
 // Import the canonical AgentRegistry instead of the local AgentDirectory
-use crate::server::agent_registry::AgentRegistry; 
-use crate::types::AgentCard;
+use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; 
+use crate::types::{AgentCard, AgentSkill};
 use std::sync::Arc;
 use serde_json::{json, Value};
+use chrono::Utc;
+use dashmap::DashMap;
 
 // Test implementation of LlmClient for testing
 #[derive(Clone)]
@@ -14,6 +16,66 @@ impl crate::bidirectional::bidirectional_agent::LlmClient for MockLlmClient {
     async fn complete(&self, _prompt: &str) -> anyhow::Result<String> {
         Ok("mock response".to_string())
     }
+}
+
+#[tokio::test]
+async fn test_tool_executor_list_agents_with_skills() {
+    // Instead of testing the bidirectional agent implementation directly,
+    // let's verify that the ListAgentsTool returns agent cards with skills
+    
+    // Create agent registry
+    let registry = Arc::new(AgentRegistry::new());
+    
+    // Add a test agent with skills to the registry
+    let mut card = AgentCard {
+        name: "Test Agent".to_string(),
+        url: "http://localhost:8080".to_string(),
+        description: Some("Test agent".to_string()),
+        documentation_url: None,
+        provider: None,
+        capabilities: Default::default(),
+        default_input_modes: vec!["text".to_string()],
+        default_output_modes: vec!["text".to_string()],
+        authentication: None,
+        skills: vec![
+            crate::types::AgentSkill {
+                id: "echo".to_string(),
+                name: "Echo Tool".to_string(),
+                description: Some("Echoes back the input text".to_string()),
+                examples: None,
+                input_modes: Some(vec!["text".to_string()]),
+                output_modes: Some(vec!["text".to_string()]),
+                tags: Some(vec!["echo".to_string(), "text_manipulation".to_string()]),
+            }
+        ],
+        version: "1.0.0".to_string(),
+    };
+    
+    registry.agents.insert("test-agent".to_string(), CachedAgentInfo {
+        card: card.clone(),
+        last_checked: Utc::now(),
+    });
+    
+    // Create the list_agents tool with the registry
+    let tool = ListAgentsTool::new(registry);
+    
+    // Execute the tool to get agent details
+    let result = tool.execute(json!({})).await.expect("Tool execution failed");
+    
+    // Extract the agents array from the result
+    let agents = result.get("agents").and_then(Value::as_array).expect("Missing agents array");
+    assert_eq!(agents.len(), 1, "Should return 1 agent");
+    
+    // Verify the agent has skills in the result
+    let agent = &agents[0];
+    let skills = agent.get("skills").and_then(Value::as_array).expect("Agent should have skills array");
+    assert_eq!(skills.len(), 1, "Agent should have 1 skill");
+    
+    // Verify the skill details
+    let skill = &skills[0];
+    assert_eq!(skill.get("id").and_then(Value::as_str).unwrap(), "echo", "Skill should have correct id");
+    assert_eq!(skill.get("name").and_then(Value::as_str).unwrap(), "Echo Tool", "Skill should have correct name");
+    assert!(skill.get("tags").is_some(), "Skill should have tags");
 }
 
 #[tokio::test]
@@ -72,17 +134,13 @@ async fn test_list_agents_tool_with_agents() {
     // For simplicity in this unit test, we'll assume discover works and adds them.
     // A more complex test might involve mocking the A2aClient used by discover.
     // We'll manually insert into the registry's internal map for this test.
-    registry.agents.insert("agent-1".to_string(), crate::server::agent_registry::CachedAgentInfo {
+    registry.agents.insert("agent-1".to_string(), CachedAgentInfo {
         card: card1.clone(),
-        last_seen: Utc::now(),
-        active: true,
-        base_url: card1.url.clone(),
+        last_checked: Utc::now(),
     });
-     registry.agents.insert("agent-2".to_string(), crate::server::agent_registry::CachedAgentInfo {
+     registry.agents.insert("agent-2".to_string(), CachedAgentInfo {
         card: card2.clone(),
-        last_seen: Utc::now(),
-        active: true,
-        base_url: card2.url.clone(),
+        last_checked: Utc::now(),
     });
 
     // Create tool, passing the registry
@@ -139,20 +197,22 @@ async fn test_tool_executor_with_list_agents() {
     };
     
     // Add agent to registry's internal map for the test
-    registry.agents.insert("test-agent".to_string(), crate::server::agent_registry::CachedAgentInfo {
+    registry.agents.insert("test-agent".to_string(), CachedAgentInfo {
         card: card.clone(),
-        last_seen: Utc::now(),
-        active: true,
-        base_url: card.url.clone(),
+        last_checked: Utc::now(),
     });
 
     // Create tool executor with list_agents enabled, passing the registry
     let executor = ToolExecutor::with_enabled_tools(
         &["echo".to_string(), "list_agents".to_string()],
         Some(llm),
-        // REMOVED agent_directory argument
         Some(registry), // Pass the registry
         None,
+        "test-agent", // agent_id 
+        "Test Agent", // agent_name
+        "1.0.0",      // agent_version
+        "localhost",  // bind_address
+        8080,         // port
     );
     
     // Check that list_agents tool is registered

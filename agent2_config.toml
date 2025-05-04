@@ -4,8 +4,8 @@ bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-2"
 agent_name = "Agent Two"
 
-[client]
-target_url = "http://localhost:4200"
+# [client]
+# target_url = "http://localhost:4200"
 
 [llm]
 # API key set via environment variable
@@ -17,5 +17,5 @@ get_agent_card = false
 repl_log_file = "shared_agent_interactions.log"
 
 [tools]
-enabled = ["echo", "llm", "list_agents"]
+enabled = ["echo", "llm", "list_agents", "execute_command"] # <-- Add execute_command
 # REMOVED agent_directory_path

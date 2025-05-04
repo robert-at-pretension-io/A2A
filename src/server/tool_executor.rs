@@ -323,6 +323,40 @@ impl Tool for RememberAgentTool {
     fn capabilities(&self) -> &[&'static str] { &["agent_registry", "agent_discovery", "agent_management"] }
 }
 
+/// Tool that handles tasks requiring human input
+/// This is used when a task in InputRequired state is returned from
+/// agent B back to agent A, and the LLM decides human input is needed
+pub struct HumanInputTool;
+
+#[async_trait]
+impl Tool for HumanInputTool {
+    fn name(&self) -> &str { "human_input" }
+    
+    fn description(&self) -> &str { 
+        "Handles tasks that require human input through the REPL interface. Used for returning tasks in InputRequired state that need human expertise." 
+    }
+    
+    async fn execute(&self, params: Value) -> Result<Value, ToolError> {
+        // Extract text and prompt from parameters
+        let text = params.get("text").and_then(|v| v.as_str()).unwrap_or_default();
+        let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap_or("Additional input required.");
+        
+        // Generate a message informing the user about the required input
+        let human_prompt = format!(
+            "🔄 This task requires human input.\n\n\
+            Original follow-up message: {}\n\n\
+            Reason input is needed: {}\n\n\
+            Please provide the required information through the REPL interface.",
+            text, prompt
+        );
+        
+        // Return the message as result - this will get displayed to the user
+        Ok(json!(human_prompt))
+    }
+    
+    fn capabilities(&self) -> &[&'static str] { &["human_interaction", "input_required"] }
+}
+
 /// Tool to execute internal agent commands based on natural language requests.
 /// Note: This tool attempts the command logic but cannot directly modify the core agent state
 /// (like self.client or self.current_session_id) due to ownership constraints.
@@ -586,6 +620,10 @@ impl ToolExecutor {
         // Always register the echo tool as a fallback
         map.insert("echo".into(), Box::new(EchoTool));
         tracing::debug!("Tool 'echo' registered.");
+        
+        // Always register the human_input tool as it's essential for InputRequired handling
+        map.insert("human_input".into(), Box::new(HumanInputTool));
+        tracing::debug!("Tool 'human_input' registered.");
 
         for name in enabled {
             match name.as_str() {

@@ -263,7 +263,7 @@ async fn test_multiple_input_required_tasks() {
     
     // Provide follow-up and complete the first task
     let response1 = agent.process_message_directly("Answer 1").await.unwrap();
-    assert!(response1.contains("Follow-up task completed successfully"));
+    assert!(response1.contains("Follow-up task completed"));
     
     // Create second task that requires input
     let task2 = agent.create_input_required_task("Question 2").await.unwrap();
@@ -271,5 +271,52 @@ async fn test_multiple_input_required_tasks() {
     
     // Provide follow-up and complete the second task
     let response2 = agent.process_message_directly("Answer 2").await.unwrap();
-    assert!(response2.contains("Follow-up task completed successfully"));
+    assert!(response2.contains("Follow-up task completed"));
+}
+
+#[tokio::test]
+async fn test_follow_up_processing_end_to_end() {
+    // Create test agent
+    let mut agent = TestAgentWithInputRequired::new();
+    
+    // Create a session
+    let session_id = agent.create_new_session();
+    
+    // Create a task that will require input
+    let task = agent.create_input_required_task("I need help with something but will provide details later").await.unwrap();
+    
+    // Verify the task is in InputRequired state
+    assert_eq!(task.status.state, TaskState::InputRequired);
+    
+    // Get task ID for follow-up check
+    let task_id = task.id.clone();
+    
+    // Provide follow-up information
+    let follow_up_response = agent.process_message_directly("Here are the details: I need to analyze sales data").await.unwrap();
+    
+    // The response should indicate the task was processed properly
+    assert!(follow_up_response.contains("Follow-up"), 
+           "Response should indicate follow-up processing: {}", follow_up_response);
+    
+    // Check that the task state was updated (from InputRequired to Completed)
+    let params = TaskQueryParams {
+        id: task_id,
+        history_length: None,
+        metadata: None,
+    };
+    
+    let updated_task = agent.task_service.get_task(params).await.unwrap();
+    assert_ne!(updated_task.status.state, TaskState::InputRequired, 
+              "Task should no longer be in InputRequired state after follow-up");
+    
+    // Check state history to verify the state transition happened
+    let state_history = agent.task_repository.get_state_history(&updated_task.id).await.unwrap();
+    
+    // Should have at least 3 states: Submitted -> InputRequired -> Working/Completed
+    assert!(state_history.len() >= 3, 
+           "Task should have at least 3 state history entries (found {})", state_history.len());
+    
+    // Last entry should match the current state
+    assert_eq!(state_history.last().unwrap().status.state, updated_task.status.state,
+              "Last state in history should match current task state");
 }

@@ -3,7 +3,7 @@ use crate::server::task_router::RoutingDecision;
 use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter}; // Removed AgentDirectory import
 use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; // Import canonical registry
 use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities};
+use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities, AgentSkill};
 use std::sync::Arc;
 use uuid::Uuid;
 use chrono::Utc;
@@ -19,7 +19,7 @@ async fn test_router_local_decision() {
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None);
 
     // Create a test task
     let task = create_test_task("What is the capital of France?");
@@ -44,15 +44,13 @@ async fn test_router_remote_decision() {
     let agent_card = create_test_agent_card("http://example.com/agent");
     registry.agents.insert("test-agent".to_string(), CachedAgentInfo {
         card: agent_card.clone(),
-        last_seen: Utc::now(),
-        active: true,
-        base_url: agent_card.url.clone(),
+        last_checked: Utc::now(),
     });
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None);
 
     // Create a test task
     let task = create_test_task("Please forward this to test-agent");
@@ -75,7 +73,7 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None);
 
     // Create a test task
     let task = create_test_task("Please forward this to unknown-agent");
@@ -99,7 +97,7 @@ async fn test_router_fallback_to_local_for_unclear_decision() {
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None);
 
     // Create a test task
     let task = create_test_task("What should I do with this?");
@@ -124,16 +122,18 @@ async fn test_router_prompt_formatting() {
     let agent_card1 = create_test_agent_card("http://example.com/agent1");
     let agent_card2 = create_test_agent_card("http://example.com/agent2");
     registry.agents.insert("test-agent-1".to_string(), CachedAgentInfo {
-        card: agent_card1.clone(), last_seen: Utc::now(), active: true, base_url: agent_card1.url.clone(),
+        card: agent_card1.clone(),
+        last_checked: Utc::now(),
     });
     registry.agents.insert("test-agent-2".to_string(), CachedAgentInfo {
-        card: agent_card2.clone(), last_seen: Utc::now(), active: true, base_url: agent_card2.url.clone(),
+        card: agent_card2.clone(),
+        last_checked: Utc::now(),
     });
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
 
     // Create the router
-    let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools);
+    let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools, None);
 
     // Create a test task
     let task = create_test_task("Please route this task appropriately");
@@ -207,6 +207,16 @@ fn create_test_agent_card(url: &str) -> AgentCard {
         default_output_modes: vec!["text".to_string()],
         documentation_url: None,
         provider: None,
-        skills: vec![],
+        skills: vec![
+            AgentSkill {
+                id: "echo".to_string(),
+                name: "Echo Tool".to_string(),
+                description: Some("Echoes back the input text".to_string()),
+                examples: None,
+                input_modes: Some(vec!["text".to_string()]),
+                output_modes: Some(vec!["text".to_string()]),
+                tags: Some(vec!["echo".to_string(), "text_manipulation".to_string()]),
+            }
+        ],
     }
 }

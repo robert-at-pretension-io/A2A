@@ -1,11 +1,10 @@
 use crate::bidirectional::bidirectional_agent::{BidirectionalTaskRouter, LlmClient}; // Removed AgentDirectory
 use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo}; // Import canonical registry
-use crate::server::task_router::RoutingDecision;
+use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
 use crate::types::{Task, TaskState, Message, Part, TextPart, Role, TaskStatus, AgentCard};
 use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
-use futures::lock::Mutex;
 use uuid::Uuid;
 
 /// Mock LLM client for testing that returns controlled responses
@@ -98,7 +97,8 @@ async fn test_task_remote_delegation() {
     };
     // Add agent to registry map
     registry.agents.insert("data-agent".to_string(), CachedAgentInfo {
-        card: agent_card.clone(), last_seen: Utc::now(), active: true, base_url: agent_card.url.clone(),
+        card: agent_card.clone(), 
+        last_checked: Utc::now(),
     });
 
     // Create a router that will delegate to the data agent
@@ -116,6 +116,50 @@ async fn test_task_remote_delegation() {
             assert_eq!(agent_id, "data-agent", "Task should be delegated to data-agent");
         },
         other => panic!("Expected Remote decision, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_follow_up_processing() {
+    // Create a task ID that would have an InputRequired task
+    let task_id = Uuid::new_v4().to_string();
+    
+    // Create a follow-up message
+    let follow_up_message = Message {
+        role: Role::User,
+        parts: vec![Part::TextPart(TextPart {
+            type_: "text".to_string(),
+            text: "Here is the additional information you requested".to_string(),
+            metadata: None,
+        })],
+        metadata: None,
+    };
+    
+    // Create a router with default LLM tool response
+    let router = create_test_router_with_response("FOLLOW_UP_LOCAL");
+    
+    // Call process_follow_up directly to test the implementation
+    let decision = router.process_follow_up(&task_id, &follow_up_message).await
+        .expect("Follow-up routing failed");
+    
+    // Check that the follow-up is routed to local processing with the LLM tool
+    match decision {
+        RoutingDecision::Local { tool_name, params } => {
+            assert_eq!(tool_name, "llm", "Follow-up should be processed locally with llm tool");
+            
+            // Check that the text parameter contains the follow-up message
+            if let Some(text) = params.get("text") {
+                assert!(text.is_string(), "Text parameter should be a string");
+                assert_eq!(
+                    text.as_str().unwrap(),
+                    "Here is the additional information you requested",
+                    "Text parameter should contain the follow-up message"
+                );
+            } else {
+                panic!("Text parameter missing from llm tool params");
+            }
+        },
+        other => panic!("Expected Local decision for follow-up, got {:?}", other),
     }
 }
 
@@ -157,6 +201,7 @@ fn create_test_router_with_response(response: &str) -> BidirectionalTaskRouter {
         llm,
         registry, // Pass registry
         enabled_tools,
+        None, // No task repository for this test
     )
 }
 
@@ -172,5 +217,6 @@ fn create_test_router_with_registry_and_response( // Renamed function
         llm,
         registry, // Pass registry
         enabled_tools,
+        None, // No task repository for this test
     )
 }

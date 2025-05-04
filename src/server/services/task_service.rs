@@ -471,26 +471,320 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
             TaskState::InputRequired => {
                 debug!("Task is in InputRequired state. Processing follow-up."); // Changed to debug
                 // Process the follow-up message using the configured router/executor if available
-                if let (Some(router), Some(executor)) = (&self.task_router, &self.tool_executor) {
+                if let (Some(router), Some(executor), Some(message_val)) = (&self.task_router, &self.tool_executor, &message) {
                      debug!("Using bidirectional components for follow-up processing.");
-                     // TODO: Implement proper follow-up routing/execution logic
-                     // For now, just mark as completed like the standalone version
-                     warn!("Bidirectional follow-up processing not fully implemented. Marking as Completed.");
-                     task.status = TaskStatus {
-                         state: TaskState::Completed,
-                         timestamp: Some(Utc::now()),
-                         message: Some(Message {
-                             role: Role::Agent,
-                             parts: vec![Part::TextPart(TextPart {
-                                 type_: "text".to_string(),
-                                 text: "Follow-up task completed (bidir placeholder).".to_string(),
-                                 metadata: None,
-                             })],
-                             metadata: None,
-                         }),
-                     };
+                     
+                     // Get routing decision for the follow-up message
+                     match router.process_follow_up(&task.id, message_val).await {
+                         Ok(decision) => {
+                             debug!(?decision, "Follow-up routing decision received.");
+                             
+                             // Process the follow-up according to the decision
+                             match decision {
+                                 RoutingDecision::Local { tool_name, params } => {
+                                     info!(%tool_name, ?params, "Executing follow-up locally using tool and extracted parameters.");
+                                     // Execute locally and wait for completion, passing the extracted params
+                                     match executor.execute_task_locally(&mut task, &tool_name, params).await {
+                                         Ok(_) => {
+                                             debug!("Local execution of follow-up finished by tool executor.");
+                                             // Task state should be updated by the executor (Completed or Failed)
+                                         }
+                                         Err(e) => {
+                                             error!(error = %e, "Local tool execution for follow-up failed.");
+                                             task.status.state = TaskState::Failed;
+                                             task.status.message = Some(Message { 
+                                                 role: Role::Agent, 
+                                                 parts: vec![Part::TextPart(TextPart { 
+                                                     type_: "text".to_string(), 
+                                                     text: format!("Follow-up execution failed: {}", e), 
+                                                     metadata: None 
+                                                 })], 
+                                                 metadata: None 
+                                             });
+                                             task.status.timestamp = Some(Utc::now());
+                                         }
+                                     }
+                                 },
+                                 RoutingDecision::Remote { agent_id } => {
+                                     info!(%agent_id, "Delegating follow-up to remote agent.");
+                                     
+                                     // Check if we have the client manager for remote delegation
+                                     if let Some(cm) = &self.client_manager {
+                                         // Handle remote delegation similar to initial task delegation
+                                         // Potentially simplify compared to full task delegation
+                                         
+                                         // --- LLM Rewrite Logic (simplified for follow-up) ---
+                                         let mut message_to_send = message_val.clone();
+                                         let delegating_agent_id = self.agent_id.as_deref().unwrap_or("UnknownAgent");
+                                         
+                                         if let Some(llm) = &self.llm_client {
+                                             debug!("Attempting to rewrite follow-up message using LLM for delegation.");
+                                             // Extract original text
+                                             let original_text = message_val.parts.iter()
+                                                 .filter_map(|p| match p {
+                                                     Part::TextPart(tp) => Some(tp.text.as_str()),
+                                                     _ => None,
+                                                 })
+                                                 .collect::<Vec<_>>()
+                                                 .join("\n");
+                                             
+                                             if !original_text.is_empty() {
+                                                 let rewrite_prompt = format!(
+                                                     r#"You are helping Agent '{delegating_agent_id}' delegate a follow-up request to Agent '{agent_id}'.
+                                                     Agent '{delegating_agent_id}' received the following follow-up message from a user:
+                                                     "{original_text}"
+                                                     
+                                                     Rewrite this as a follow-up message FROM Agent '{delegating_agent_id}' TO Agent '{agent_id}'.
+                                                     The rewritten message should:
+                                                     1. Briefly remind Agent '{agent_id}' that this is a follow-up to a previous request.
+                                                     2. Clearly state the new information or question from the user.
+                                                     
+                                                     Respond ONLY with the rewritten message text, suitable for sending directly to Agent '{agent_id}'."#
+                                                 );
+                                                 
+                                                 match llm.complete(&rewrite_prompt).await {
+                                                     Ok(rewritten_text) => {
+                                                         debug!("Successfully rewrote follow-up message for delegation.");
+                                                         trace!(rewritten_text = %rewritten_text, "Rewritten follow-up message content.");
+                                                         // Replace the message content with the rewritten text
+                                                         message_to_send = Message {
+                                                             role: Role::User,
+                                                             parts: vec![Part::TextPart(TextPart {
+                                                                 type_: "text".to_string(),
+                                                                 text: rewritten_text.trim().to_string(),
+                                                                 metadata: None,
+                                                             })],
+                                                             metadata: None,
+                                                         };
+                                                     }
+                                                     Err(e) => {
+                                                         warn!(error = %e, "LLM rewrite of follow-up failed. Sending original message.");
+                                                     }
+                                                 }
+                                             }
+                                         }
+                                         // --- End LLM Rewrite Logic ---
+                                         
+                                         // Create a new task for the delegated follow-up
+                                         let delegation_params = TaskSendParams {
+                                             id: Uuid::new_v4().to_string(),
+                                             message: message_to_send,
+                                             session_id: task.session_id.clone(),
+                                             metadata: task.metadata.clone(),
+                                             history_length: None,
+                                             push_notification: None,
+                                         };
+                                         let remote_task_id = delegation_params.id.clone();
+                                         
+                                         // Send the delegated follow-up
+                                         match cm.send_task(&agent_id, delegation_params).await {
+                                             Ok(initial_remote_task) => {
+                                                 info!(%agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Follow-up delegation initiated successfully.");
+                                                 
+                                                 // Update local task to indicate delegation
+                                                 task.status.state = TaskState::Working;
+                                                 task.status.timestamp = Some(Utc::now());
+                                                 task.status.message = Some(Message {
+                                                     role: Role::Agent,
+                                                     parts: vec![Part::TextPart(TextPart {
+                                                         type_: "text".to_string(),
+                                                         text: format!("Follow-up delegated to agent '{}'. Remote Task ID: {}. Monitoring...", agent_id, remote_task_id),
+                                                         metadata: None,
+                                                     })],
+                                                     metadata: None,
+                                                 });
+                                                 
+                                                 // Save remote task ID in metadata
+                                                 task.metadata.get_or_insert_with(Default::default).insert(
+                                                     "remote_follow_up_task_id".to_string(), 
+                                                     remote_task_id.clone().into()
+                                                 );
+                                                 
+                                                 self.task_repository.save_task(&task).await?;
+                                                 self.task_repository.save_state_history(&task.id, &task).await?;
+                                                 
+                                                 // Poll for remote task completion
+                                                 let max_polling_attempts = 30;
+                                                 let polling_interval = Duration::from_secs(2);
+                                                 let mut final_remote_task: Option<Task> = None;
+                                                 
+                                                 for attempt in 1..=max_polling_attempts {
+                                                     debug!(attempt, max_polling_attempts, "Polling remote follow-up task status.");
+                                                     match cm.get_task_status(&agent_id, &remote_task_id).await {
+                                                         Ok(remote_task_update) => {
+                                                             trace!(remote_state = ?remote_task_update.status.state, "Received remote follow-up task status update.");
+                                                             
+                                                             // Check if remote task reached a final state
+                                                             if matches!(remote_task_update.status.state, 
+                                                                 TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::InputRequired) 
+                                                             {
+                                                                 info!(final_state = ?remote_task_update.status.state, "Remote follow-up task reached final state.");
+                                                                 final_remote_task = Some(remote_task_update);
+                                                                 break;
+                                                             }
+                                                         }
+                                                         Err(e) => {
+                                                             error!(error = %e, "Polling remote follow-up task failed.");
+                                                             // Update local task due to monitoring error
+                                                             task.status.state = TaskState::Failed;
+                                                             task.status.message = Some(Message {
+                                                                 role: Role::Agent,
+                                                                 parts: vec![Part::TextPart(TextPart {
+                                                                     type_: "text".to_string(),
+                                                                     text: format!(
+                                                                         "Lost connection while monitoring delegated follow-up task '{}'. Error: {}.",
+                                                                         remote_task_id, e
+                                                                     ),
+                                                                     metadata: None,
+                                                                 })],
+                                                                 metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
+                                                             });
+                                                             task.status.timestamp = Some(Utc::now());
+                                                             self.task_repository.save_task(&task).await?;
+                                                             self.task_repository.save_state_history(&task.id, &task).await?;
+                                                             return Ok(task);
+                                                         }
+                                                     }
+                                                     // Wait before next poll
+                                                     sleep(polling_interval).await;
+                                                 }
+                                                 
+                                                 // Update task with final remote state
+                                                 if let Some(final_task) = final_remote_task {
+                                                     info!(final_state = ?final_task.status.state, "Updating local task with final remote follow-up state.");
+                                                     
+                                                     // Mirror the final state, message, and artifacts
+                                                     task.status = final_task.status;
+                                                     
+                                                     // If remote task produced artifacts, add them to our task
+                                                     if let Some(remote_artifacts) = final_task.artifacts {
+                                                         if !remote_artifacts.is_empty() {
+                                                             // Get our existing artifacts or create empty vec
+                                                             let artifacts = task.artifacts.get_or_insert_with(Vec::new);
+                                                             
+                                                             // Add remote artifacts to our collection
+                                                             for mut artifact in remote_artifacts {
+                                                                 // Update index to continue from our last artifact
+                                                                 artifact.index = artifacts.len() as i64;
+                                                                 artifacts.push(artifact);
+                                                             }
+                                                         }
+                                                     }
+                                                     
+                                                     // Ensure timestamp is updated
+                                                     task.status.timestamp = Some(Utc::now());
+                                                 } else {
+                                                     warn!(polling_attempts = max_polling_attempts, "Remote follow-up task did not reach final state after polling. Marking as Failed.");
+                                                     task.status.state = TaskState::Failed;
+                                                     task.status.message = Some(Message {
+                                                         role: Role::Agent,
+                                                         parts: vec![Part::TextPart(TextPart {
+                                                             type_: "text".to_string(),
+                                                             text: format!(
+                                                                 "The delegated follow-up task '{}' timed out without reaching a final state.",
+                                                                 remote_task_id
+                                                             ),
+                                                             metadata: None,
+                                                         })],
+                                                         metadata: Some(serde_json::json!({ "error_context": "polling_timeout" }).as_object().unwrap().clone()),
+                                                     });
+                                                     task.status.timestamp = Some(Utc::now());
+                                                 }
+                                                 
+                                                 // Save the final state
+                                                 self.task_repository.save_task(&task).await?;
+                                                 self.task_repository.save_state_history(&task.id, &task).await?;
+                                             }
+                                             Err(e) => {
+                                                 error!(%agent_id, error = %e, "Failed to delegate follow-up task.");
+                                                 task.status.state = TaskState::Failed;
+                                                 task.status.message = Some(Message {
+                                                     role: Role::Agent,
+                                                     parts: vec![Part::TextPart(TextPart {
+                                                         type_: "text".to_string(),
+                                                         text: format!(
+                                                             "Failed to send follow-up to agent '{}'. Error: {}.",
+                                                             agent_id, e
+                                                         ),
+                                                         metadata: None,
+                                                     })],
+                                                     metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
+                                                 });
+                                                 task.status.timestamp = Some(Utc::now());
+                                                 self.task_repository.save_task(&task).await?;
+                                                 self.task_repository.save_state_history(&task.id, &task).await?;
+                                             }
+                                         }
+                                     } else {
+                                         error!("Client manager not available for remote follow-up delegation.");
+                                         task.status.state = TaskState::Failed;
+                                         task.status.message = Some(Message {
+                                             role: Role::Agent,
+                                             parts: vec![Part::TextPart(TextPart {
+                                                 type_: "text".to_string(),
+                                                 text: "Cannot delegate follow-up: client manager not available.".to_string(),
+                                                 metadata: None,
+                                             })],
+                                             metadata: None,
+                                         });
+                                         task.status.timestamp = Some(Utc::now());
+                                         self.task_repository.save_task(&task).await?;
+                                         self.task_repository.save_state_history(&task.id, &task).await?;
+                                     }
+                                 },
+                                 RoutingDecision::Reject { reason } => {
+                                     info!(%reason, "Follow-up message rejected based on routing decision.");
+                                     task.status.state = TaskState::Failed;
+                                     task.status.timestamp = Some(Utc::now());
+                                     task.status.message = Some(Message {
+                                         role: Role::Agent,
+                                         parts: vec![Part::TextPart(TextPart {
+                                             type_: "text".to_string(),
+                                             text: format!("Follow-up rejected: {}", reason),
+                                             metadata: None,
+                                         })],
+                                         metadata: None,
+                                     });
+                                     self.task_repository.save_task(&task).await?;
+                                     self.task_repository.save_state_history(&task.id, &task).await?;
+                                 },
+                                 RoutingDecision::Decompose { subtasks: _ } => {
+                                     warn!("Follow-up decomposition requested but not implemented.");
+                                     task.status.state = TaskState::Failed;
+                                     task.status.timestamp = Some(Utc::now());
+                                     task.status.message = Some(Message {
+                                         role: Role::Agent,
+                                         parts: vec![Part::TextPart(TextPart {
+                                             type_: "text".to_string(),
+                                             text: "Follow-up decomposition is not implemented.".to_string(),
+                                             metadata: None,
+                                         })],
+                                         metadata: None,
+                                     });
+                                     self.task_repository.save_task(&task).await?;
+                                     self.task_repository.save_state_history(&task.id, &task).await?;
+                                 }
+                             }
+                         },
+                         Err(e) => {
+                             error!(error = %e, "Follow-up routing decision failed.");
+                             task.status.state = TaskState::Failed;
+                             task.status.message = Some(Message {
+                                 role: Role::Agent,
+                                 parts: vec![Part::TextPart(TextPart {
+                                     type_: "text".to_string(),
+                                     text: format!("Follow-up routing failed: {}.", e),
+                                     metadata: None,
+                                 })],
+                                 metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
+                             });
+                             task.status.timestamp = Some(Utc::now());
+                             self.task_repository.save_task(&task).await?;
+                             self.task_repository.save_state_history(&task.id, &task).await?;
+                         }
+                     }
                 } else {
-                    debug!("Standalone mode: Processing follow-up content directly."); // Changed to debug
+                    debug!("Standalone mode or missing message: Processing follow-up content directly.");
                     // Standalone: Process content directly (or use a simpler logic)
                     self.process_task_content(&mut task, message).await?; // process_task_content handles state transition
                 }
