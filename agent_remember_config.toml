@@ -1,21 +1,20 @@
 [server]
 port = 4300
 bind_address = "0.0.0.0"
-agent_id = "bidirectional-agent-remember"
-agent_name = "Agent Remember"
+agent_id = "hub"
+agent_name = "Central Hub"
 
 [client]
 # No initial target URL
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent that can remember other agents using the 'remember_agent' tool."
+system_prompt = "You are the Central Hub agent that maintains a registry of all other agents. Your primary role is to remember and connect with other agents, and provide information about the agents you know."
 
 [mode]
 repl = true
 repl_log_file = "remember_agent_demo.log"
 
 [tools]
-# Enable remember_agent and list_agents
-enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command"] # <-- Add execute_command
-# REMOVED agent_directory_path
+# Enable all available tools for the hub
+enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command", "summarize", "human_input"]

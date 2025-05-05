@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument, trace, warn};
+use regex::Regex; // Add regex for URL extraction
 
 /// Utility function to extract JSON objects from text where the LLM might add
 /// explanatory text before or after the actual JSON object.
@@ -239,7 +240,7 @@ impl BidirectionalTaskRouter {
                     "llm" => ("General purpose LLM request. Good for questions, generation, analysis if no specific tool fits.", r#"{"text": "..."}"#),
                     "summarize" => ("Summarizes the input text.", r#"{"text": "..."}"#),
                     "list_agents" => ("Lists known agents. Use only if the task is explicitly about listing agents.", r#"{} or {"format": "simple" | "detailed"}"#),
-                    "remember_agent" => ("IMPORTANT: Use this tool to store information about another agent given its URL and automatically connect to it. Use this whenever the user mentions an agent URL or wants to remember/connect to a specific agent.", r#"{"agent_base_url": "http://..."}"#),
+                    "remember_agent" => ("IMPORTANT: Use this tool to store information about another agent given its URL and automatically connect to it. Use this whenever the user mentions an agent URL or wants to remember/connect to a specific agent. Even if the request is vague like 'remember them' or 'connect to it', use this tool with the most recently mentioned URL.", r#"{"agent_base_url": "http://..."}"#),
                     "execute_command" => ("Executes internal agent commands (like connect, disconnect, servers, session new, card). Use for requests matching these commands.", r#"{"command": "command_name", "args": "arguments_string"}"#),
                     "echo" => ("Simple echo tool for testing. Use only if the task is explicitly to echo.", r#"{"text": "..."}"#),
                     _ => ("A custom tool.", r#"{...}"#), // Generic hint for unknown tools
@@ -314,6 +315,43 @@ impl BidirectionalTaskRouter {
     }
 
 
+    // Helper function to extract URLs from conversation history
+    // This is used to improve the "remember them" handling when URLs aren't explicitly provided
+    fn extract_url_from_history(&self, history_text: &str) -> Option<String> {
+        debug!("Attempting to extract URL from conversation history");
+        
+        // Define regex pattern to match URLs (simple pattern, can be improved)
+        let url_pattern = regex::Regex::new(r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?::\d+)?(?:/[-\w%!$&'()*+,;=:@/~]*)?").ok()?;
+        
+        // Split history into lines and search from most recent to oldest
+        let lines: Vec<&str> = history_text.lines().collect();
+        
+        // First search for URLs in messages about "connect to" or similar terms
+        for line in lines.iter().rev() {
+            // Check if this line contains "connect" or "agent at" and a URL
+            if line.to_lowercase().contains("connect") || 
+               line.to_lowercase().contains("agent at") || 
+               line.to_lowercase().contains("remember") {
+                // Look for URL in this line
+                if let Some(url_match) = url_pattern.find(line) {
+                    debug!(url = %url_match.as_str(), "Found URL in relevant line of conversation history");
+                    return Some(url_match.as_str().to_string());
+                }
+            }
+        }
+        
+        // If no URL found in relevant lines, look for any URL in history
+        for line in lines.iter().rev() {
+            if let Some(url_match) = url_pattern.find(line) {
+                debug!(url = %url_match.as_str(), "Found URL in general conversation history");
+                return Some(url_match.as_str().to_string());
+            }
+        }
+        
+        debug!("No URL found in conversation history");
+        None
+    }
+    
     // NP1: Check if the request needs clarification
     #[instrument(skip(self, task), fields(task_id = %task.id))]
     async fn check_clarification(&self, task: &Task) -> Result<Option<RoutingDecision>, ServerError> {
@@ -764,6 +802,24 @@ Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
                                         // Extract the URL from remember_agent parameters for logging
                                         if let Some(url) = params.get("agent_base_url").and_then(|u| u.as_str()) {
                                             debug!(url = %url, "Processing remember_agent which will automatically connect as well.");
+                                        } else {
+                                            // Special handling for vague "remember" requests - try to extract URL from history
+                                            debug!("remember_agent doesn't have valid URL parameter, will try to extract from history");
+                                            let extracted_url = self.extract_url_from_history(&history_text);
+                                            
+                                            if let Some(url) = extracted_url {
+                                                debug!(extracted_url = %url, "Found URL in conversation history for remember_agent");
+                                                // Create new params with the extracted URL
+                                                let enhanced_params = json!({
+                                                    "agent_base_url": url
+                                                });
+                                                return Ok(RoutingDecision::Local { 
+                                                    tool_name: tool_name.to_string(), 
+                                                    params: enhanced_params 
+                                                });
+                                            } else {
+                                                debug!("No URL found in history for remember_agent, proceeding with original params");
+                                            }
                                         }
                                         
                                         // We process the tool normally since it now handles both remembering and connecting

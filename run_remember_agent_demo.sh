@@ -1,19 +1,25 @@
 #!/bin/bash
 
-# Script to demonstrate the 'remember_agent' tool
-# Agent Remember (port 4300) will be instructed to remember Agent Target (port 4301)
+# Script to demonstrate the 'remember_agent' tool with descriptive agent names
+# Hub (port 4300) will serve as the central hub that connects to and remembers other agents
+# Seeker (port 4301) will ask to be remembered by Hub
+# Explorer (port 4302) will ask Hub about all agents it knows
 
 # Function to handle cleanup on exit
 cleanup() {
     echo "Cleaning up and stopping all agents..."
     
     # Kill any background processes we started
-    if [ -n "$AGENT_REMEMBER_PID" ]; then
-        kill $AGENT_REMEMBER_PID 2>/dev/null || true
+    if [ -n "$HUB_PID" ]; then
+        kill $HUB_PID 2>/dev/null || true
     fi
     
-    if [ -n "$AGENT_TARGET_PID" ]; then
-        kill $AGENT_TARGET_PID 2>/dev/null || true
+    if [ -n "$SEEKER_PID" ]; then
+        kill $SEEKER_PID 2>/dev/null || true
+    fi
+    
+    if [ -n "$EXPLORER_PID" ]; then
+        kill $EXPLORER_PID 2>/dev/null || true
     fi
 
     # Exit
@@ -87,117 +93,163 @@ mkdir -p "${PROJECT_DIR}/data"
 
 echo "Starting bidirectional agents for 'remember_agent' demonstration..."
 
-# Create config file for Agent Remember (Port 4300)
+# Create config file for Hub Agent (Port 4300)
 cat > "${PROJECT_DIR}/agent_remember_config.toml" << EOF
 [server]
 port = 4300
 bind_address = "0.0.0.0"
-agent_id = "bidirectional-agent-remember"
-agent_name = "Agent Remember"
+agent_id = "hub"
+agent_name = "Central Hub"
 
 [client]
 # No initial target URL
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent that can remember other agents using the 'remember_agent' tool."
+system_prompt = "You are the Central Hub agent that maintains a registry of all other agents. Your primary role is to remember and connect with other agents, and provide information about the agents you know."
 
 [mode]
 repl = true
 repl_log_file = "remember_agent_demo.log"
 
 [tools]
-# Enable remember_agent and list_agents
-enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command"]
-# REMOVED agent_directory_path
+# Enable all available tools for the hub
+enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command", "summarize", "human_input"]
 EOF
 
-# Create config file for Agent Target (Port 4301)
+# Create config file for Seeker Agent (Port 4301)
 cat > "${PROJECT_DIR}/agent_target_config.toml" << EOF
 [server]
 port = 4301
 bind_address = "0.0.0.0"
-agent_id = "bidirectional-agent-target"
-agent_name = "Agent Target"
+agent_id = "seeker"
+agent_name = "Knowledge Seeker"
 
-[client]
-# No client needed for this agent
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are a simple target agent."
+system_prompt = "You are the Knowledge Seeker agent. Your role is to ask other agents to remember you, and to query other agents for information. You specialize in initiating connections with new agents."
 
 [mode]
-repl = true # Keep REPL for observation if needed
+repl = true
 repl_log_file = "remember_agent_demo.log"
 
 [tools]
-enabled = ["echo", "llm", "execute_command"] # Only basic tools needed
-# REMOVED agent_directory_path
+# Enable all tools for the seeker as well
+enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command", "summarize", "human_input"]
 EOF
 
-# Start Agent Target (listens on 4301)
-AGENT_TARGET_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent Target (listening on port 4301)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent_target_config.toml" # Keep RUST_LOG=info
+# Create config file for Explorer Agent (Port 4302)
+cat > "${PROJECT_DIR}/agent_gamma_config.toml" << EOF
+[server]
+port = 4302
+bind_address = "0.0.0.0"
+agent_id = "explorer"
+agent_name = "Network Explorer"
+
+[llm]
+# API key set via environment variable
+system_prompt = "You are the Network Explorer agent. Your role is to discover information about other agents in the network by querying hub agents about their known connections."
+
+[mode]
+repl = true
+repl_log_file = "remember_agent_demo.log"
+
+[tools]
+# Enable all tools for the explorer
+enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command", "summarize", "human_input"]
+EOF
+
+# Start Knowledge Seeker Agent (listens on 4301)
+SEEKER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Knowledge Seeker Agent (listening on port 4301)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY  ./target/debug/bidirectional-agent agent_target_config.toml"
 if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent Target (Port 4301)" -- bash -c "$AGENT_TARGET_CMD" &
+    gnome-terminal --title="Knowledge Seeker (Port 4301)" -- bash -c "$SEEKER_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent Target (Port 4301)" -e "$AGENT_TARGET_CMD" &
+    xterm -title "Knowledge Seeker (Port 4301)" -e "$SEEKER_CMD" &
 elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent Target (Port 4301)" -e bash -c "$AGENT_TARGET_CMD" &
+    konsole --new-tab -p tabtitle="Knowledge Seeker (Port 4301)" -e bash -c "$SEEKER_CMD" &
 elif [ "$TERMINAL" = "terminal" ]; then
-    terminal -e "$AGENT_TARGET_CMD" &
+    terminal -e "$SEEKER_CMD" &
 fi
 
-# Find and save the PID of Agent Target
-sleep 2
-AGENT_TARGET_PID=$(find_agent_pid "agent_target_config.toml")
-if [ -z "$AGENT_TARGET_PID" ]; then
-    echo "Warning: Failed to get PID for Agent Target. Cleanup might be incomplete."
-else
-    echo "Agent Target PID: $AGENT_TARGET_PID"
-fi
-
-# Start Agent Remember (listens on 4300)
-AGENT_REMEMBER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent Remember (listening on port 4300)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent_remember_config.toml" # Keep RUST_LOG=info
+# Start Network Explorer Agent (listens on 4302)
+EXPLORER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Network Explorer Agent (listening on port 4302)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY  ./target/debug/bidirectional-agent agent_gamma_config.toml"
 if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent Remember (Port 4300)" -- bash -c "$AGENT_REMEMBER_CMD" &
+    gnome-terminal --title="Network Explorer (Port 4302)" -- bash -c "$EXPLORER_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent Remember (Port 4300)" -e "$AGENT_REMEMBER_CMD" &
+    xterm -title "Network Explorer (Port 4302)" -e "$EXPLORER_CMD" &
 elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent Remember (Port 4300)" -e bash -c "$AGENT_REMEMBER_CMD" &
+    konsole --new-tab -p tabtitle="Network Explorer (Port 4302)" -e bash -c "$EXPLORER_CMD" &
 elif [ "$TERMINAL" = "terminal" ]; then
-    terminal -e "$AGENT_REMEMBER_CMD" &
+    terminal -e "$EXPLORER_CMD" &
 fi
 
-# Find and save the PID of Agent Remember
+# Find and save the PIDs of Seeker and Explorer
 sleep 2
-AGENT_REMEMBER_PID=$(find_agent_pid "agent_remember_config.toml")
-if [ -z "$AGENT_REMEMBER_PID" ]; then
-    echo "Warning: Failed to get PID for Agent Remember. Cleanup might be incomplete."
+SEEKER_PID=$(find_agent_pid "agent_target_config.toml")
+if [ -z "$SEEKER_PID" ]; then
+    echo "Warning: Failed to get PID for Knowledge Seeker Agent. Cleanup might be incomplete."
 else
-    echo "Agent Remember PID: $AGENT_REMEMBER_PID"
+    echo "Knowledge Seeker Agent PID: $SEEKER_PID"
+fi
+
+EXPLORER_PID=$(find_agent_pid "agent_gamma_config.toml")
+if [ -z "$EXPLORER_PID" ]; then
+    echo "Warning: Failed to get PID for Network Explorer Agent. Cleanup might be incomplete."
+else
+    echo "Network Explorer Agent PID: $EXPLORER_PID"
+fi
+
+# Start Central Hub Agent (listens on 4300)
+HUB_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Central Hub Agent (listening on port 4300)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY  ./target/debug/bidirectional-agent agent_remember_config.toml"
+if [ "$TERMINAL" = "gnome-terminal" ]; then
+    gnome-terminal --title="Central Hub (Port 4300)" -- bash -c "$HUB_CMD" &
+elif [ "$TERMINAL" = "xterm" ]; then
+    xterm -title "Central Hub (Port 4300)" -e "$HUB_CMD" &
+elif [ "$TERMINAL" = "konsole" ]; then
+    konsole --new-tab -p tabtitle="Central Hub (Port 4300)" -e bash -c "$HUB_CMD" &
+elif [ "$TERMINAL" = "terminal" ]; then
+    terminal -e "$HUB_CMD" &
+fi
+
+# Find and save the PID of Central Hub
+sleep 2
+HUB_PID=$(find_agent_pid "agent_remember_config.toml")
+if [ -z "$HUB_PID" ]; then
+    echo "Warning: Failed to get PID for Central Hub Agent. Cleanup might be incomplete."
+else
+    echo "Central Hub Agent PID: $HUB_PID"
 fi
 
 echo "All agents started and listening on their respective ports."
 echo
-echo "=== REMEMBER AGENT DEMO INSTRUCTIONS ==="
+echo "=== AGENT NETWORK DEMO INSTRUCTIONS ==="
 echo
-echo "1. Verify Agent Remember (Port 4300) doesn't know Agent Target yet:"
-echo "   - In Agent Remember terminal: :tool list_agents"
-echo "   - You should see an empty list or only the agent itself."
+echo "1. Verify the Central Hub (Port 4300) doesn't know other agents yet:"
+echo "   - In Central Hub terminal: :tool list_agents"
+echo "   - You should see an empty list or only the Hub itself."
 echo
-echo "2. Tell Agent Remember to discover and store Agent Target (Port 4301):"
-echo "   - In Agent Remember terminal: :tool remember_agent {\"agent_base_url\":\"http://localhost:4301\"}"
-echo "   - Agent Remember will connect to Agent Target, fetch its card, and store it."
-echo "   - You should see a success message."
+echo "2. In the Knowledge Seeker terminal (Port 4301), request to be remembered by the Hub:"
+echo "   - Type: please tell the Central Hub to remember me at http://localhost:4301"
+echo "   - The Seeker will send this request to the Hub."
 echo
-echo "3. Verify Agent Remember now knows Agent Target:"
-echo "   - In Agent Remember terminal: :tool list_agents {\"format\":\"detailed\"}"
-echo "   - You should now see 'Agent Target' listed."
+echo "3. In the Central Hub terminal, you should see the request. Respond with:"
+echo "   - Type: I'll remember you"
+echo "   - The Hub should understand from context and remember the Seeker URL."
 echo
-echo "4. (Optional) Try remembering an invalid URL:"
-echo "   - In Agent Remember terminal: :tool remember_agent {\"agent_base_url\":\"http://invalid-url:9999\"}"
-echo "   - This should fail and return an error message."
+echo "4. In the Network Explorer terminal (Port 4302), ask the Hub about known agents:"
+echo "   - Type: connect to http://localhost:4300"
+echo "   - Then type: what agents do you know about?"
+echo "   - The Hub should respond with information about the Seeker agent."
+echo
+echo "5. Test the pronoun resolution in the Hub:"
+echo "   - In the Hub terminal, if Explorer (4302) asks to be remembered, just type:"
+echo "   - Type: remember them"
+echo "   - The Hub should correctly interpret 'them' as referring to the Explorer."
+echo
+echo "6. Verify the Hub now knows both Seeker and Explorer:"
+echo "   - In the Hub terminal: :tool list_agents {\"format\":\"detailed\"}"
+echo "   - You should see both the Seeker and Explorer listed."
 echo
 echo "Press Ctrl+C to stop all agents."
 

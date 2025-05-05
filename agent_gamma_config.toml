@@ -1,0 +1,17 @@
+[server]
+port = 4302
+bind_address = "0.0.0.0"
+agent_id = "explorer"
+agent_name = "Network Explorer"
+
+[llm]
+# API key set via environment variable
+system_prompt = "You are the Network Explorer agent. Your role is to discover information about other agents in the network by querying hub agents about their known connections."
+
+[mode]
+repl = true
+repl_log_file = "remember_agent_demo.log"
+
+[tools]
+# Enable all tools for the explorer
+enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command", "summarize", "human_input"]

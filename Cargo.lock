@@ -36,6 +36,7 @@ dependencies = [
  "once_cell",
  "proptest",
  "rand 0.8.5",
+ "regex",
  "reqwest",
  "rustyline",
  "serde",

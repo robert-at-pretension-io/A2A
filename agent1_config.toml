@@ -17,5 +17,5 @@ get_agent_card = false
 repl_log_file = "shared_agent_interactions.log"
 
 [tools]
-enabled = ["echo", "llm", "list_agents", "execute_command"]
+enabled = ["echo", "llm", "list_agents", "execute_command", "remember_agent"]
 # REMOVED agent_directory_path

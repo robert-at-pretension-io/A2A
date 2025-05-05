@@ -491,6 +491,51 @@ async fn test_memory_isolation_with_permissions() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test that memory is correctly used to maintain context in follow-up commands
+#[tokio::test]
+async fn test_memory_context_in_followup_commands() -> anyhow::Result<()> {
+    // Create a configured agent for testing
+    let mut config = BidirectionalAgentConfig::default();
+    config.llm.claude_api_key = Some("test_key".to_string());
+    let mut agent = BidirectionalAgent::new(config)?;
+    
+    // Simulate a first command about connecting to an agent
+    let connect_task = create_test_task_with_metadata(
+        "connect-task", 
+        TaskState::Completed, 
+        "Please connect to http://localhost:4202",
+        json!({
+            "llm_response": "This agent (http://localhost:4202) is not yet in your registry. Before connecting, please remember this agent."
+        })
+    );
+    
+    // Add the connect task to rolling memory
+    agent.rolling_memory.add_task(connect_task.clone());
+    
+    // Now create a follow-up "remember them" task that should reference the previous context
+    let remember_task = create_test_task(
+        "remember-task", 
+        TaskState::Working, 
+        "remember them"
+    );
+    
+    // In a real scenario, the LLM should use the rolling memory context to understand
+    // that "remember them" refers to remembering the agent at http://localhost:4202
+    
+    // Get all tasks from rolling memory
+    let memory_tasks = agent.rolling_memory.get_all_tasks();
+    assert_eq!(memory_tasks.len(), 1, "Should have 1 task in memory");
+    
+    // Verify the first task is present with the right context
+    let saved_connect_task = agent.rolling_memory.get_task("connect-task");
+    assert!(saved_connect_task.is_some(), "Connect task should be in memory");
+    
+    // In the future, we would ideally test that the LLM is using this context
+    // appropriately for follow-up commands
+    
+    Ok(())
+}
+
 /// Test that memory from one user's task doesn't influence another user's similar task
 #[tokio::test]
 async fn test_memory_isolation_for_similar_tasks() -> anyhow::Result<()> {
