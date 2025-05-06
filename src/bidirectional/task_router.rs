@@ -395,41 +395,58 @@ LATEST_REQUEST:
 "{}"
 
 TASK:
-1. If the request is sufficiently specific, respond exactly:
-   CLARITY: CLEAR
-2. If clarification is needed, respond using BOTH lines:
-   CLARITY: NEEDS_CLARIFY
-   QUESTION: "<single sentence question for the human>"
+Analyze the LATEST_REQUEST in the context of CONVERSATION_HISTORY and AGENT_MEMORY.
+Respond with a JSON object matching the following schema:
+{{
+  "type": "object",
+  "properties": {{
+    "clarity": {{ "type": "string", "enum": ["CLEAR", "NEEDS_CLARIFY"] }},
+    "question": {{ "type": "string", "description": "A single sentence question for the human if clarity is NEEDS_CLARIFY. Omit if CLEAR." }}
+  }},
+  "required": ["clarity"]
+}}
 
-Rules:
-• Do not add anything else.
-• If you choose NEEDS_CLARIFY your question MUST be answerable in ≤ 1 sentence."#,
+If clarity is NEEDS_CLARIFY, the question MUST be answerable in ≤ 1 sentence.
+If clarity is CLEAR, omit the "question" field or set it to null.
+Do not add any explanations or text outside the JSON object."#,
             memory_text, history_text, latest_request
         );
 
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "clarity": { "type": "string", "enum": ["CLEAR", "NEEDS_CLARIFY"] },
+                "question": { "type": "string" }
+            },
+            "required": ["clarity"]
+        });
+
         trace!(prompt = %prompt, "NP1: Clarity check prompt.");
-        let llm_response = self.llm.complete(&prompt).await.map_err(|e| {
-            error!(error = %e, "NP1: LLM call failed during clarification check.");
+        let structured_response = self.llm.complete_structured(&prompt, None, schema).await.map_err(|e| {
+            error!(error = %e, "NP1: LLM structured call failed during clarification check.");
             ServerError::Internal(format!("LLM error during clarification: {}", e))
         })?;
-        trace!(llm_response = %llm_response, "NP1: LLM response received.");
+        trace!(?structured_response, "NP1: LLM structured response received.");
 
-        if llm_response.contains("CLARITY: NEEDS_CLARIFY") {
-            if let Some(question_line) = llm_response.lines().find(|line| line.starts_with("QUESTION:")) {
-                 let question = question_line.strip_prefix("QUESTION:").unwrap_or("").trim().trim_matches('"').to_string();
-                 if !question.is_empty() {
-                    info!(clarification_question = %question, "NP1: Task needs clarification.");
-                    return Ok(Some(RoutingDecision::NeedsClarification { question }));
-                 } else {
-                    warn!(llm_response = %llm_response, "NP1: LLM indicated clarification needed but question was empty/malformed. Proceeding without clarification.");
-                 }
+        if let Some(clarity_str) = structured_response.get("clarity").and_then(Value::as_str) {
+            if clarity_str == "NEEDS_CLARIFY" {
+                if let Some(question) = structured_response.get("question").and_then(Value::as_str) {
+                    if !question.is_empty() {
+                        info!(clarification_question = %question, "NP1: Task needs clarification.");
+                        return Ok(Some(RoutingDecision::NeedsClarification { question: question.to_string() }));
+                    } else {
+                        warn!(?structured_response, "NP1: LLM indicated clarification needed but question was empty. Proceeding without clarification.");
+                    }
+                } else {
+                    warn!(?structured_response, "NP1: LLM indicated clarification needed but 'question' field missing or not a string. Proceeding without clarification.");
+                }
+            } else if clarity_str == "CLEAR" {
+                debug!("NP1: Task is clear, proceeding to next step.");
             } else {
-                 warn!(llm_response = %llm_response, "NP1: LLM indicated clarification needed but QUESTION line missing. Proceeding without clarification.");
+                warn!(?structured_response, "NP1: Unexpected 'clarity' value in LLM response. Assuming clear.");
             }
-        } else if llm_response.contains("CLARITY: CLEAR") {
-            debug!("NP1: Task is clear, proceeding to next step.");
         } else {
-            warn!(llm_response = %llm_response, "NP1: Unexpected LLM response for clarification check. Assuming clear.");
+            warn!(?structured_response, "NP1: LLM response missing 'clarity' field or not a string. Assuming clear.");
         }
 
         Ok(None) // Assume clear if check skipped, failed, or explicitly clear
@@ -487,24 +504,41 @@ CRITERIA:
 • If the goal obviously maps to ONE local tool or ONE remote agent, do NOT decompose.
 • Decompose when fulfilling the goal clearly needs multiple distinct skills or ordered steps.
 RESPONSE_FORMAT:
-SHOULD_DECOMPOSE: YES|NO
-REASON: "<one line>""#,
+Respond with a JSON object matching this schema:
+{{
+  "type": "object",
+  "properties": {{
+    "should_decompose": {{ "type": "boolean" }},
+    "reason": {{ "type": "string", "description": "A one-line reason for your decision." }}
+  }},
+  "required": ["should_decompose", "reason"]
+}}
+Do not add any explanations or text outside the JSON object."#,
             latest_request, memory_text, tool_table, agent_table
         );
 
+        let schema_a = json!({
+            "type": "object",
+            "properties": {
+                "should_decompose": { "type": "boolean" },
+                "reason": { "type": "string" }
+            },
+            "required": ["should_decompose", "reason"]
+        });
+
         trace!(prompt = %should_decompose_prompt, "NP2.A: Should-decompose prompt.");
-        let llm_response_a = self.llm.complete(&should_decompose_prompt).await.map_err(|e| {
-            error!(error = %e, "NP2.A: LLM call failed during should-decompose check.");
+        let structured_response_a = self.llm.complete_structured(&should_decompose_prompt, None, schema_a).await.map_err(|e| {
+            error!(error = %e, "NP2.A: LLM structured call failed during should-decompose check.");
             ServerError::Internal(format!("LLM error during should-decompose: {}", e))
         })?;
-        trace!(llm_response = %llm_response_a, "NP2.A: LLM response received.");
+        trace!(?structured_response_a, "NP2.A: LLM structured response received.");
 
-        if !llm_response_a.contains("SHOULD_DECOMPOSE: YES") {
-            debug!("NP2.A: LLM decided not to decompose.");
+        if !structured_response_a.get("should_decompose").and_then(Value::as_bool).unwrap_or(false) {
+            debug!("NP2.A: LLM decided not to decompose. Reason: {:?}", structured_response_a.get("reason").and_then(Value::as_str));
             return Ok(None); // Don't decompose
         }
 
-        info!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan.");
+        info!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan. Reason: {:?}", structured_response_a.get("reason").and_then(Value::as_str));
 
         // --- NP2.B: Generate Decomposition Plan ---
         let plan_prompt = format!(
@@ -514,44 +548,65 @@ You chose to decompose.
 GOAL:
 "{}"{}
 
-Produce a JSON array where each element is:
+Produce a JSON array where each element is an object matching this schema:
 {{
- "id": "<kebab-case-step-id>",
- "input_message": "<prompt to execute>",
- "metadata": {{ "depends_on": [<ids>] }}
+  "type": "object",
+  "properties": {{
+    "id": {{ "type": "string", "description": "A unique kebab-case identifier for this subtask step." }},
+    "input_message": {{ "type": "string", "description": "The prompt or instruction to execute for this subtask." }},
+    "metadata": {{
+      "type": "object",
+      "properties": {{
+        "depends_on": {{ "type": "array", "items": {{ "type": "string" }}, "description": "Array of 'id's of subtasks that must complete before this one can start. Empty if no dependencies." }}
+      }},
+      "required": ["depends_on"]
+    }}
+  }},
+  "required": ["id", "input_message", "metadata"]
 }}
-• Keep ≤ 5 steps.
-• Maintain correct dependency order.
-• No extra keys."#,
+• Keep the plan to ≤ 5 steps.
+• Ensure correct dependency order.
+• Respond ONLY with the JSON array. Do not add any explanations or text outside the JSON array."#,
             latest_request, memory_text
         );
 
+        let schema_b = json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "input_message": { "type": "string" },
+                    "metadata": {
+                        "type": "object",
+                        "properties": {
+                            "depends_on": { "type": "array", "items": { "type": "string" } }
+                        },
+                        "required": ["depends_on"]
+                    }
+                },
+                "required": ["id", "input_message", "metadata"]
+            }
+        });
+
         trace!(prompt = %plan_prompt, "NP2.B: Decomposition plan prompt.");
-        let llm_response_b = self.llm.complete(&plan_prompt).await.map_err(|e| {
-            error!(error = %e, "NP2.B: LLM call failed during plan generation.");
+        let structured_response_b = self.llm.complete_structured(&plan_prompt, None, schema_b).await.map_err(|e| {
+            error!(error = %e, "NP2.B: LLM structured call failed during plan generation.");
             ServerError::Internal(format!("LLM error during plan generation: {}", e))
         })?;
-        trace!(llm_response = %llm_response_b, "NP2.B: LLM response received (raw plan JSON).");
+        trace!(?structured_response_b, "NP2.B: LLM structured response received (plan JSON).");
 
-        // Extract the JSON part from the response
-        let json_content = extract_json_from_text(&llm_response_b);
-        trace!(extracted_json = %json_content, "NP2.B: Extracted JSON from LLM response.");
-
-        // Parse the JSON plan
-        match serde_json::from_str::<Vec<SubtaskDefinition>>(&json_content) {
+        match serde_json::from_value::<Vec<SubtaskDefinition>>(structured_response_b) {
             Ok(subtasks) if !subtasks.is_empty() => {
                 info!(subtask_count = subtasks.len(), "NP2.B: Successfully parsed decomposition plan.");
-                // TODO: NP2.C - Resource Allocation per Sub-task would ideally happen here,
-                // calling decide_execution_mode recursively for each subtask.
-                // For now, we just return the plan structure. TaskService needs to handle it.
                 Ok(Some(RoutingDecision::Decompose { subtasks }))
             }
             Ok(_) => {
-                warn!(json_plan = %json_content, "NP2.B: LLM returned empty subtask list. Proceeding without decomposition.");
+                warn!(?structured_response_a, "NP2.B: LLM returned empty subtask list. Proceeding without decomposition.");
                 Ok(None)
             }
             Err(e) => {
-                warn!(error = %e, json_plan = %json_content, original_response = %llm_response_b, "NP2.B: Failed to parse decomposition plan JSON. Proceeding without decomposition.");
+                warn!(error = %e, ?structured_response_a, "NP2.B: Failed to parse decomposition plan JSON. Proceeding without decomposition.");
                 Ok(None)
             }
         }
@@ -1004,12 +1059,20 @@ Consider:
 - Is the follow-up message clear enough to proceed?
 - Could this require specific expertise or personal preferences that only the human would know?
 
-Respond with EXACTLY ONE of these options: HANDLE_DIRECTLY or NEED_HUMAN_INPUT"#,
+Respond with a JSON object matching this schema:
+{{
+  "type": "object",
+  "properties": {{
+    "decision_type": {{ "type": "string", "enum": ["HANDLE_DIRECTLY", "NEED_HUMAN_INPUT"] }}
+  }},
+  "required": ["decision_type"]
+}}
+Do not add any explanations or text outside the JSON object."#,
                             memory_text, history_text, status_message, follow_up_text
                         )
                     } else {
                         format!(
-                            r#"You are assisting with handling a returning delegated task that requires additional input.
+r#"You are assisting with handling a returning delegated task that requires additional input.
 
 TASK HISTORY:
 {}
@@ -1020,59 +1083,60 @@ REASON INPUT IS REQUIRED:
 FOLLOW-UP MESSAGE/INPUT FROM USER:
 {}
 
-You need to decide how to handle this situation:
-1. HANDLE_DIRECTLY - If you have enough information to answer the question or address the issue directly
-2. NEED_HUMAN_INPUT - If the input required is complex/specific and needs human feedback
-
+You need to decide how to handle this situation.
 Consider:
 - Do you understand what input is needed?
 - Is the follow-up message clear enough to proceed?
 - Could this require specific expertise or personal preferences that only the human would know?
 
-Respond with EXACTLY ONE of these options: HANDLE_DIRECTLY or NEED_HUMAN_INPUT"#,
+Respond with a JSON object matching this schema:
+{{
+  "type": "object",
+  "properties": {{
+    "decision_type": {{ "type": "string", "enum": ["HANDLE_DIRECTLY", "NEED_HUMAN_INPUT"] }}
+  }},
+  "required": ["decision_type"]
+}}
+Do not add any explanations or text outside the JSON object."#,
                             history_text, status_message, follow_up_text
                         )
                     };
 
-                    let decision = match llm.complete(&decision_prompt).await {
-                        Ok(decision) => decision.trim().to_uppercase(),
+                    let schema_follow_up = json!({
+                        "type": "object",
+                        "properties": {
+                            "decision_type": { "type": "string", "enum": ["HANDLE_DIRECTLY", "NEED_HUMAN_INPUT"] }
+                        },
+                        "required": ["decision_type"]
+                    });
+
+                    let structured_decision = match llm.complete_structured(&decision_prompt, None, schema_follow_up).await {
+                        Ok(val) => val,
                         Err(e) => {
-                            // LLM failed, default to needing human input
-                            warn!("LLM decision failed: {}, defaulting to needing human input", e);
-                            "NEED_HUMAN_INPUT".to_string()
+                            warn!("LLM structured decision failed for follow-up: {}, defaulting to NEED_HUMAN_INPUT", e);
+                            json!({"decision_type": "NEED_HUMAN_INPUT"})
                         }
                     };
-
-                    if decision.contains("HANDLE_DIRECTLY") {
-                        info!("LLM decided to handle the InputRequired task directly");
-                        // Pass to local LLM tool for handling
-                        return Ok(RoutingDecision::Local {
-                            tool_name: "llm".to_string(),
-                            params: json!({"text": follow_up_text})
-                        });
-                    } else if decision.contains("NEED_HUMAN_INPUT") {
-                        info!("LLM decided to request human input for the task");
-                        // This is a special case - we'll modify the returned decision to flag it as needing human input
-                        // The ToolExecutor will then handle this special case differently
-                        return Ok(RoutingDecision::Local {
-                            tool_name: "human_input".to_string(),
-                            params: json!({
-                                "text": follow_up_text,
-                                "require_human_input": true,
-                                "prompt": status_message
-                            })
-                        });
-                    } else {
-                        // Default to human input if the decision isn't clear
-                        info!("LLM decision not clear, defaulting to human input");
-                        return Ok(RoutingDecision::Local {
-                            tool_name: "human_input".to_string(),
-                            params: json!({
-                                "text": follow_up_text,
-                                "require_human_input": true,
-                                "prompt": status_message
-                            })
-                        });
+                    
+                    match structured_decision.get("decision_type").and_then(Value::as_str) {
+                        Some("HANDLE_DIRECTLY") => {
+                            info!("LLM decided to handle the InputRequired task directly");
+                            return Ok(RoutingDecision::Local {
+                                tool_name: "llm".to_string(),
+                                params: json!({"text": follow_up_text})
+                            });
+                        },
+                        Some("NEED_HUMAN_INPUT") | _ => { // Default to human input
+                            info!("LLM decided to request human input for the task (or decision was unclear).");
+                            return Ok(RoutingDecision::Local {
+                                tool_name: "human_input".to_string(),
+                                params: json!({
+                                    "text": follow_up_text,
+                                    "require_human_input": true,
+                                    "prompt": status_message
+                                })
+                            });
+                        }
                     }
                 }
             }
