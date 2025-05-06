@@ -533,12 +533,12 @@ Do not add any explanations or text outside the JSON object."#,
         })?;
         trace!(?structured_response_a, "NP2.A: LLM structured response received.");
 
-        if !structured_response_a.get("should_decompose").and_then(Value::as_bool).unwrap_or(false) {
-            debug!("NP2.A: LLM decided not to decompose. Reason: {:?}", structured_response_a.get("reason").and_then(Value::as_str));
+        if !structured_response_a.get("should_decompose").and_then(|v| v.as_bool()).unwrap_or(false) {
+            debug!("NP2.A: LLM decided not to decompose. Reason: {:?}", structured_response_a.get("reason").and_then(|v| v.as_str()));
             return Ok(None); // Don't decompose
         }
 
-        info!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan. Reason: {:?}", structured_response_a.get("reason").and_then(Value::as_str));
+        info!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan. Reason: {:?}", structured_response_a.get("reason").and_then(|v| v.as_str()));
 
         // --- NP2.B: Generate Decomposition Plan ---
         let plan_prompt = format!(
@@ -637,7 +637,7 @@ Produce a JSON array where each element is an object matching this schema:
         let remote_agents_desc = self.format_agents();
         
         // Build the routing prompt with memory context if available
-        let routing_prompt = (if has_memory {
+        let routing_prompt = if has_memory {
             format!(
 r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
 
@@ -736,7 +736,7 @@ Your response should be a JSON object matching this schema:
 Do not add any explanations or text outside the JSON object."#,
                 local_tools_desc, remote_agents_desc, history_text
             )
-        }); // Close parenthesis for the if-else expression
+        }; // Correctly end the if/else expression for routing_prompt
 
         let schema_dp2 = json!({
             "type": "object",
