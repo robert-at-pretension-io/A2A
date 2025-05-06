@@ -1,7 +1,7 @@
 //! Bidirectional Task Router Implementation
 
 use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
-use crate::bidirectional::llm_client::LlmClient;
+use crate::bidirectional::llm_client::{LlmClient, GeminiLlmClient};
 use crate::server::agent_registry::AgentRegistry;
 use crate::server::error::ServerError;
 use crate::server::repositories::task_repository::TaskRepository;
@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument, trace, warn};
 // Add regex for URL extraction
+use regex::Regex;
 
 /// Utility function to extract JSON objects from text where the LLM might add
 /// explanatory text before or after the actual JSON object.
@@ -377,7 +378,7 @@ impl BidirectionalTaskRouter {
         debug!("Attempting to extract URL from conversation history");
 
         // Define regex pattern to match URLs (simple pattern, can be improved)
-        let url_pattern = regex::Regex::new(
+        let url_pattern = Regex::new(
             r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?::\d+)?(?:/[-\w%!$&'()*+,;=:@/~]*)?",
         )
         .ok()?;
@@ -510,7 +511,7 @@ Do not add any explanations or text outside the JSON object."#,
             if clarity_str == "NEEDS_CLARIFY" {
                 if let Some(question) = decision_val.get("question").and_then(Value::as_str) {
                     if !question.is_empty() {
-                        info!(clarification_question = %question, "NP1: Task needs clarification.");
+                        debug!(clarification_question = %question, "NP1: Task needs clarification.");
                         return Ok(Some(RoutingDecision::NeedsClarification {
                             question: question.to_string(),
                         }));
@@ -644,7 +645,7 @@ Do not add any explanations or text outside the JSON object."#,
             return Ok(None); // Don't decompose
         }
 
-        info!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan. Reason: {:?}", decision_val_a.get("reason").and_then(|v| v.as_str()));
+        debug!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan. Reason: {:?}", decision_val_a.get("reason").and_then(|v| v.as_str()));
 
         // --- NP2.B: Generate Decomposition Plan ---
         let plan_prompt = format!(
@@ -695,7 +696,10 @@ Produce a JSON array where each element is an object matching this schema:
                 "required": ["id", "input_message", "metadata"]
             }
         });
-        schema_b = self.clean_schema_for_gemini(&schema_b);
+        // For Gemini support, clean the schema
+        if let Some(gemini_client) = self.llm.as_any().downcast_ref::<GeminiLlmClient>() {
+            schema_b = gemini_client.clean_schema_for_gemini(&schema_b);
+        }
 
         trace!(prompt = %plan_prompt, "NP2.B: Decomposition plan prompt.");
         let decision_val_b = self
@@ -714,7 +718,7 @@ Produce a JSON array where each element is an object matching this schema:
         match serde_json::from_value::<Vec<SubtaskDefinition>>(decision_val_b.clone()) {
             // Clone decision_val_b for logging on error
             Ok(subtasks) if !subtasks.is_empty() => {
-                info!(
+                debug!(
                     subtask_count = subtasks.len(),
                     "NP2.B: Successfully parsed decomposition plan."
                 );
@@ -876,7 +880,7 @@ Do not add any explanations or text outside the JSON object."#,
 
         trace!(prompt = %routing_prompt, "DP2: Routing prompt.");
 
-        info!("DP2: Requesting routing decision from LLM.");
+        debug!("DP2: Requesting routing decision from LLM.");
         let decision_val = match self
             .llm
             .complete_structured(&routing_prompt, None, schema_dp2.clone())
@@ -892,7 +896,7 @@ Do not add any explanations or text outside the JSON object."#,
             }
         };
 
-        info!(
+        debug!(
             ?decision_val,
             "DP2: LLM structured routing decision response received."
         );
@@ -901,7 +905,7 @@ Do not add any explanations or text outside the JSON object."#,
         match decision_val.get("decision_type").and_then(Value::as_str) {
             Some("LOCAL") => {
                 // --- DP3: Choose Local Tool & Parameters ---
-                info!("DP2 decided LOCAL. Proceeding to DP3 (Tool Selection).");
+                debug!("DP2 decided LOCAL. Proceeding to DP3 (Tool Selection).");
                 let local_tools_with_params_desc = self.format_tools(true); // Include param hints
 
                 let tool_param_prompt = if has_memory {
@@ -995,7 +999,7 @@ Do not add any explanations or text outside the JSON object."#,
                 }
                 trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
 
-                info!("DP3: Asking LLM to choose tool and extract parameters.");
+                debug!("DP3: Asking LLM to choose tool and extract parameters.");
 
                 match self
                     .llm
@@ -1009,7 +1013,7 @@ Do not add any explanations or text outside the JSON object."#,
                             json_value.get("params").cloned(), // Cloned as it's a Value
                         ) {
                             if self.enabled_tools.contains(&tool_name.to_string()) {
-                                info!(tool_name = %tool_name, ?params, "DP3: Successfully parsed tool and params.");
+                                debug!(tool_name = %tool_name, ?params, "DP3: Successfully parsed tool and params.");
                                 if tool_name == "remember_agent"
                                     && params
                                         .get("agent_base_url")
@@ -1032,7 +1036,7 @@ Do not add any explanations or text outside the JSON object."#,
                                     params,
                                 })
                             } else {
-                                warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm'.");
+                                debug!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm'.");
                                 Ok(RoutingDecision::Local {
                                     tool_name: "llm".to_string(),
                                     params: json!({"text": latest_request_text}),
@@ -1057,7 +1061,7 @@ Do not add any explanations or text outside the JSON object."#,
             }
             Some("REMOTE") => {
                 if let Some(agent_id) = decision_val.get("agent_id").and_then(Value::as_str) {
-                    info!(remote_agent_id = %agent_id, "DP2 decided REMOTE execution.");
+                    debug!(remote_agent_id = %agent_id, "DP2 decided REMOTE execution.");
                     // Exact agent ID matching logic (as before)
                     let mut actual_agent_id = None;
                     if self.agent_registry.get(agent_id).is_some() {
@@ -1068,14 +1072,14 @@ Do not add any explanations or text outside the JSON object."#,
                             if known_id.to_lowercase().contains(&agent_id.to_lowercase())
                                 || agent_id.to_lowercase().contains(&known_id.to_lowercase())
                             {
-                                info!(requested_agent = %agent_id, matched_agent = %known_id, "Found partial match for agent name");
+                                debug!(requested_agent = %agent_id, matched_agent = %known_id, "Found partial match for agent name");
                                 actual_agent_id = Some(known_id);
                                 break;
                             }
                         }
                     }
                     if let Some(actual_id) = actual_agent_id {
-                        info!(remote_agent_id = %actual_id, "DP2: Remote delegation confirmed.");
+                        debug!(remote_agent_id = %actual_id, "DP2: Remote delegation confirmed.");
                         Ok(RoutingDecision::Remote {
                             agent_id: actual_id,
                         })
@@ -1103,7 +1107,7 @@ Do not add any explanations or text outside the JSON object."#,
                     .and_then(Value::as_str)
                     .unwrap_or("No reason provided.")
                     .to_string();
-                info!(%reason, "DP2 decided REJECT.");
+                debug!(%reason, "DP2 decided REJECT.");
                 Ok(RoutingDecision::Reject { reason })
             }
             _ => {
@@ -1330,14 +1334,14 @@ Do not add any explanations or text outside the JSON object."#,
                         .and_then(Value::as_str)
                     {
                         Some("HANDLE_DIRECTLY") => {
-                            info!("LLM decided to handle the InputRequired task directly");
+                            debug!("LLM decided to handle the InputRequired task directly");
                             return Ok(RoutingDecision::Local {
                                 tool_name: "llm".to_string(),
                                 params: json!({"text": follow_up_text}),
                             });
                         }
                         Some("NEED_HUMAN_INPUT") => {
-                            info!("LLM decided to request human input for the task.");
+                            debug!("LLM decided to request human input for the task.");
                             return Ok(RoutingDecision::Local {
                                 tool_name: "human_input".to_string(),
                                 params: json!({
@@ -1349,7 +1353,7 @@ Do not add any explanations or text outside the JSON object."#,
                         }
                         _ => {
                             // Catches None or any other unexpected string value
-                            info!("LLM decision for follow-up was unclear. Defaulting to human input.");
+                            debug!("LLM decision for follow-up was unclear. Defaulting to human input.");
                             return Ok(RoutingDecision::Local {
                                 tool_name: "human_input".to_string(),
                                 params: json!({
@@ -1365,7 +1369,7 @@ Do not add any explanations or text outside the JSON object."#,
         }
 
         // Default case: Handle locally with LLM tool but include memory context
-        info!("DP1: Routing follow-up to LOCAL execution using 'llm' tool with memory context.");
+        debug!("DP1: Routing follow-up to LOCAL execution using 'llm' tool with memory context.");
 
         // Set up parameters to include memory context if available
         let mut params = json!({
@@ -1555,7 +1559,7 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
         );
         match self.check_decomposition(&task).await? {
             Some(RoutingDecision::Decompose { subtasks }) => {
-                info!(
+                debug!(
                     subtask_count = subtasks.len(),
                     "Returning decomposition plan."
                 );
