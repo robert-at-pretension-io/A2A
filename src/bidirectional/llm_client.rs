@@ -164,43 +164,6 @@ impl GeminiLlmClient {
         }
     }
     
-    /// Makes a JSON schema compatible with the Gemini API by:
-    /// 1. Removing additionalProperties fields
-    /// 2. Ensuring object types have at least one property
-    pub fn clean_schema_for_gemini(&self, schema: &Value) -> Value {
-        let mut cleaned_schema = schema.clone();
-        self.recursive_clean_schema_for_gemini(&mut cleaned_schema);
-        cleaned_schema
-    }
-
-    /// Recursively processes a JSON schema to make it compatible with Gemini
-    fn recursive_clean_schema_for_gemini(&self, value: &mut Value) {
-        if let Some(obj) = value.as_object_mut() {
-            // Remove additionalProperties
-            obj.remove("additionalProperties");
-            
-            // If this is an object type with no properties or empty properties, add a placeholder
-            if obj.get("type").and_then(Value::as_str) == Some("object") {
-                if !obj.contains_key("properties") || obj["properties"].as_object().map_or(true, |p| p.is_empty()) {
-                    obj.insert("properties".to_string(), json!({
-                        "_placeholder": {
-                            "type": "string",
-                            "description": "Placeholder property for Gemini API compatibility"
-                        }
-                    }));
-                }
-            }
-            
-            // Process all child properties
-            for (_, v) in obj {
-                self.recursive_clean_schema_for_gemini(v);
-            }
-        } else if let Some(arr) = value.as_array_mut() {
-            for v in arr {
-                self.recursive_clean_schema_for_gemini(v);
-            }
-        }
-    }
 }
 
 #[async_trait]
@@ -241,13 +204,13 @@ impl LlmClient for GeminiLlmClient {
         &self,
         prompt_text: &str,
         system_prompt_override: Option<&str>,
-        output_schema: Value,
+        _output_schema: Value, // Schema is no longer sent to the API
     ) -> Result<Value> {
         debug!("Sending request to Gemini LLM for structured (JSON) completion.");
         trace!(
             ?prompt_text,
-            ?output_schema,
-            "LLM prompt content and output schema."
+            //?output_schema, // Schema not logged as it's not used directly in the API call
+            "LLM prompt content. Expecting JSON output based on prompt."
         );
 
         let client = reqwest::Client::new();
@@ -285,7 +248,7 @@ impl LlmClient for GeminiLlmClient {
             "contents": contents,
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "responseSchema": output_schema,
+                // "responseSchema": output_schema, // Schema is no longer sent
             }
         });
         trace!(payload = %payload, "Gemini API request payload.");
