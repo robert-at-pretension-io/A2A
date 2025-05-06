@@ -792,20 +792,26 @@ AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
 CONVERSATION HISTORY (User/Agent turns):
 {}
 
-Based on the full CONVERSATION HISTORY, AGENT MEMORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request:
+Based on the full CONVERSATION HISTORY, AGENT MEMORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request.
 
-1. Handle it locally if one of YOUR LOCAL TOOLS is suitable (respond with "LOCAL").
-   - IMPORTANT: If the latest request matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution so the 'execute_command' tool can handle it. Do NOT reject these internal commands based on the history.
+Your response should be a JSON object matching this schema:
+{{
+  "type": "object",
+  "properties": {{
+    "decision_type": {{ "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] }},
+    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. Must be an exact ID from AVAILABLE REMOTE AGENTS." }},
+    "reason": {{ "type": "string", "description": "Required if decision_type is REJECT. A brief explanation." }}
+  }},
+  "required": ["decision_type"]
+}}
 
-2. Delegate to a specific remote agent if it's more appropriate (respond with "REMOTE: [agent-id]").
-   - CRITICAL: When delegating, you MUST use EXACTLY the agent ID as listed in the AVAILABLE REMOTE AGENTS section above.
-   - The agent-id must match PRECISELY, including capitalization, spaces, and any special characters.
-   - Example: If an agent is listed as "Agent Three -- can remember", you must use "REMOTE: Agent Three -- can remember", not "REMOTE: Agent Three" or any other variation.
-   - Do not abbreviate, shorten, or modify the agent ID in any way.
+IMPORTANT:
+- If the latest request matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution.
+- When delegating with REMOTE, the agent_id must match EXACTLY as listed in AVAILABLE REMOTE AGENTS.
+- The agent_id must include the exact capitalization, spaces, and any special characters.
+- Only REJECT tasks that are inappropriate, harmful, impossible, or are internal commands that cannot be handled (e.g., ':listen', ':stop', ':quit').
 
-3. Reject the task ONLY if it's inappropriate, harmful, impossible, OR if it's an internal command that cannot be handled by the 'execute_command' tool (e.g., ':listen', ':stop', ':quit'). Provide a brief explanation for rejection.
-
-Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text."#,
+Do not add any explanations or text outside the JSON object."#,
                 local_tools_desc, remote_agents_desc, memory_text, history_text
             )
         } else {
@@ -833,6 +839,13 @@ Your response should be a JSON object matching this schema:
   }},
   "required": ["decision_type"]
 }}
+
+IMPORTANT:
+- If the latest request matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution.
+- When delegating with REMOTE, the agent_id must match EXACTLY as listed in AVAILABLE REMOTE AGENTS.
+- The agent_id must include the exact capitalization, spaces, and any special characters.
+- Only REJECT tasks that are inappropriate, harmful, impossible, or are internal commands that cannot be handled (e.g., ':listen', ':stop', ':quit').
+
 Do not add any explanations or text outside the JSON object."#,
                 local_tools_desc, remote_agents_desc, history_text
             )
