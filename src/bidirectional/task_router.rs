@@ -459,8 +459,8 @@ impl BidirectionalTaskRouter {
 
         let prompt = format!(
             r#"SYSTEM:
-You are an autonomous AI agent preparing to process a user request.
-Your first task is to judge whether the request is specific and complete.{}
+You are an autonomous AI agent. Your current role is to prepare to process a user request.
+Your first specific sub-task is to judge whether the LATEST_REQUEST from the user is specific and complete enough to act upon, or if it requires clarification.{}
 
 CONVERSATION_HISTORY:
 {}
@@ -588,7 +588,7 @@ Do not add any explanations or text outside the JSON object."#,
         let agent_table = self.format_agents();
         let should_decompose_prompt = format!(
             r#"SYSTEM:
-You are an expert AI planner.
+You are an expert AI planner. Your current role is to determine if a user's request should be broken down into smaller sub-tasks or if it can be handled by a single tool/agent.
 
 REQUEST_GOAL:
 "{}"{}
@@ -649,7 +649,8 @@ Do not add any explanations or text outside the JSON object."#,
         // --- NP2.B: Generate Decomposition Plan ---
         let plan_prompt = format!(
             r#"SYSTEM:
-You chose to decompose.
+You are an expert AI planner. Your previous step determined that the user's request needs to be decomposed into multiple sub-tasks.
+Your current role is to generate that decomposition plan.
 
 GOAL:
 "{}"{}
@@ -778,78 +779,89 @@ Produce a JSON array where each element is an object matching this schema:
         // Build the routing prompt with memory context if available
         let routing_prompt = if has_memory {
             format!(
-                r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
+                r#"SYSTEM:
+You are an AI agent responsible for routing user requests. Your goal is to decide whether to handle a task locally using YOUR tools, delegate it to another available REMOTE agent, or REJECT it.
 
-YOUR LOCAL TOOLS:
-{}
+YOUR (Agent '{current_agent_id}') LOCAL TOOLS:
+{local_tools_desc}
 
-AVAILABLE REMOTE AGENTS:
-{}
+AVAILABLE REMOTE AGENTS (Potential targets for delegation):
+{remote_agents_desc}
 
-AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
-{}
+YOUR (Agent '{current_agent_id}') MEMORY OF PREVIOUS OUTGOING REQUESTS TO OTHER AGENTS:
+{memory_text}
 
-CONVERSATION HISTORY (User/Agent turns):
-{}
+CONVERSATION HISTORY (User interacting with YOU, Agent '{current_agent_id}'):
+{history_text}
 
-Based on the full CONVERSATION HISTORY, AGENT MEMORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request.
+TASK:
+Based on the LATEST user request in the CONVERSATION HISTORY, and considering YOUR MEMORY, YOUR LOCAL TOOLS, and the AVAILABLE REMOTE AGENTS, decide the best course of action.
 
-Your response should be a JSON object matching this schema:
+RESPONSE FORMAT:
+Respond with a JSON object matching this schema:
 {{
   "type": "object",
   "properties": {{
     "decision_type": {{ "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] }},
-    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. Must be an exact ID from AVAILABLE REMOTE AGENTS." }},
+    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. This MUST be the exact ID of one of the AVAILABLE REMOTE AGENTS." }},
     "reason": {{ "type": "string", "description": "Required if decision_type is REJECT. A brief explanation." }}
   }},
   "required": ["decision_type"]
 }}
 
-IMPORTANT:
-- If the latest request matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution.
-- When delegating with REMOTE, the agent_id must match EXACTLY as listed in AVAILABLE REMOTE AGENTS.
-- The agent_id must include the exact capitalization, spaces, and any special characters.
-- Only REJECT tasks that are inappropriate, harmful, impossible, or are internal commands that cannot be handled (e.g., ':listen', ':stop', ':quit').
+CRITICAL INSTRUCTIONS:
+- If the latest request is an internal command for YOU (Agent '{current_agent_id}') like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution.
+- When choosing REMOTE, the 'agent_id' field in your JSON response MUST EXACTLY match an ID from the AVAILABLE REMOTE AGENTS list (including capitalization, spaces, and special characters).
+- Only REJECT tasks that are inappropriate, harmful, impossible, or are internal commands that YOU (Agent '{current_agent_id}') cannot handle (e.g., ':listen', ':stop', ':quit').
 
 Do not add any explanations or text outside the JSON object."#,
-                local_tools_desc, remote_agents_desc, memory_text, history_text
+                current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()), // A bit of a hack to get "our" ID if available
+                local_tools_desc = local_tools_desc,
+                remote_agents_desc = remote_agents_desc,
+                memory_text = memory_text,
+                history_text = history_text
             )
         } else {
             format!(
-                r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
+                r#"SYSTEM:
+You are an AI agent responsible for routing user requests. Your goal is to decide whether to handle a task locally using YOUR tools, delegate it to another available REMOTE agent, or REJECT it.
 
-YOUR LOCAL TOOLS:
-{}
+YOUR (Agent '{current_agent_id}') LOCAL TOOLS:
+{local_tools_desc}
 
-AVAILABLE REMOTE AGENTS:
-{}
+AVAILABLE REMOTE AGENTS (Potential targets for delegation):
+{remote_agents_desc}
 
-CONVERSATION HISTORY (User/Agent turns):
-{}
+CONVERSATION HISTORY (User interacting with YOU, Agent '{current_agent_id}'):
+{history_text}
 
-Based on the full CONVERSATION HISTORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request.
+TASK:
+Based on the LATEST user request in the CONVERSATION HISTORY, and considering YOUR LOCAL TOOLS and the AVAILABLE REMOTE AGENTS, decide the best course of action.
 
-Your response should be a JSON object matching this schema:
+RESPONSE FORMAT:
+Respond with a JSON object matching this schema:
 {{
   "type": "object",
   "properties": {{
     "decision_type": {{ "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] }},
-    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. Must be an exact ID from AVAILABLE REMOTE AGENTS." }},
+    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. This MUST be the exact ID of one of the AVAILABLE REMOTE AGENTS." }},
     "reason": {{ "type": "string", "description": "Required if decision_type is REJECT. A brief explanation." }}
   }},
   "required": ["decision_type"]
 }}
 
-IMPORTANT:
-- If the latest request matches an internal command like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution.
-- When delegating with REMOTE, the agent_id must match EXACTLY as listed in AVAILABLE REMOTE AGENTS.
-- The agent_id must include the exact capitalization, spaces, and any special characters.
-- Only REJECT tasks that are inappropriate, harmful, impossible, or are internal commands that cannot be handled (e.g., ':listen', ':stop', ':quit').
+CRITICAL INSTRUCTIONS:
+- If the latest request is an internal command for YOU (Agent '{current_agent_id}') like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution.
+- When choosing REMOTE, the 'agent_id' field in your JSON response MUST EXACTLY match an ID from the AVAILABLE REMOTE AGENTS list (including capitalization, spaces, and special characters).
+- Only REJECT tasks that are inappropriate, harmful, impossible, or are internal commands that YOU (Agent '{current_agent_id}') cannot handle (e.g., ':listen', ':stop', ':quit').
 
 Do not add any explanations or text outside the JSON object."#,
-                local_tools_desc, remote_agents_desc, history_text
+                current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
+                local_tools_desc = local_tools_desc,
+                remote_agents_desc = remote_agents_desc,
+                history_text = history_text
             )
-        }; // Correctly end the if/else expression for routing_prompt
+        };
 
         let schema_dp2 = json!({
             "type": "object",
@@ -893,58 +905,79 @@ Do not add any explanations or text outside the JSON object."#,
 
                 let tool_param_prompt = if has_memory {
                     format!(
-                        r#"You have decided to handle the LATEST USER REQUEST locally:
-"{}"
+                        r#"SYSTEM:
+You are an AI agent. Your previous step decided to handle the LATEST USER REQUEST locally using one of YOUR tools.
+Your current role is to select the SINGLE most appropriate tool and extract its parameters.
 
-AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
-{}
+LATEST USER REQUEST (from human, to YOU, Agent '{current_agent_id}'):
+"{latest_request_text}"
 
-Based on the LATEST USER REQUEST, AGENT MEMORY, and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
+YOUR (Agent '{current_agent_id}') MEMORY OF PREVIOUS OUTGOING REQUESTS TO OTHER AGENTS:
+{memory_text}
 
-AVAILABLE LOCAL TOOLS:
-{}
+YOUR (Agent '{current_agent_id}') AVAILABLE LOCAL TOOLS:
+{local_tools_with_params_desc}
 
+TASK:
+Based on the LATEST USER REQUEST, YOUR MEMORY, and YOUR AVAILABLE LOCAL TOOLS, choose the SINGLE most appropriate tool and extract its required parameters.
+
+RESPONSE FORMAT:
 Respond with a JSON object matching this schema:
 {{
   "type": "object",
   "properties": {{
-    "tool_name": {{ "type": "string", "description": "The name of the chosen tool." }},
-    "params": {{ "type": "object", "description": "A JSON object containing parameters for the tool. Can be empty {{}} if no params needed." }}
+    "tool_name": {{ "type": "string", "description": "The name of the chosen tool from YOUR AVAILABLE LOCAL TOOLS." }},
+    "params": {{ "type": "object", "description": "A JSON object containing parameters for the chosen tool. Can be an empty object {{}} if no parameters are needed." }}
   }},
   "required": ["tool_name", "params"]
 }}
+
 CRITICAL INSTRUCTIONS:
-1. For agent connection tasks: If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), you MUST FIRST use the 'remember_agent' tool.
-2. For internal commands: If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), use the 'execute_command' tool.
-3. For agent management: ALWAYS use 'remember_agent' for any request that involves remembering, storing, or registering an agent URL.
+1. Agent Connection: If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), YOU MUST FIRST use YOUR 'remember_agent' tool.
+2. Internal Commands: If the LATEST USER REQUEST is an internal command for YOU (Agent '{current_agent_id}') (like connecting, listing servers, managing sessions), use YOUR 'execute_command' tool.
+3. Agent Management: ALWAYS use YOUR 'remember_agent' tool for any request that involves remembering, storing, or registering an agent URL.
+
 Do not add any explanations or text outside the JSON object."#,
-                        latest_request_text, memory_text, local_tools_with_params_desc
+                        current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
+                        latest_request_text = latest_request_text,
+                        memory_text = memory_text,
+                        local_tools_with_params_desc = local_tools_with_params_desc
                     )
                 } else {
                     format!(
-                        r#"You have decided to handle the LATEST USER REQUEST locally:
-"{}"
+                        r#"SYSTEM:
+You are an AI agent. Your previous step decided to handle the LATEST USER REQUEST locally using one of YOUR tools.
+Your current role is to select the SINGLE most appropriate tool and extract its parameters.
 
-Based on the LATEST USER REQUEST and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
+LATEST USER REQUEST (from human, to YOU, Agent '{current_agent_id}'):
+"{latest_request_text}"
 
-AVAILABLE LOCAL TOOLS:
-{}
+YOUR (Agent '{current_agent_id}') AVAILABLE LOCAL TOOLS:
+{local_tools_with_params_desc}
 
+TASK:
+Based on the LATEST USER REQUEST and YOUR AVAILABLE LOCAL TOOLS, choose the SINGLE most appropriate tool and extract its required parameters.
+
+RESPONSE FORMAT:
 Respond with a JSON object matching this schema:
 {{
   "type": "object",
   "properties": {{
-    "tool_name": {{ "type": "string", "description": "The name of the chosen tool." }},
-    "params": {{ "type": "object", "description": "A JSON object containing parameters for the tool. Can be empty {{}} if no params needed." }}
+    "tool_name": {{ "type": "string", "description": "The name of the chosen tool from YOUR AVAILABLE LOCAL TOOLS." }},
+    "params": {{ "type": "object", "description": "A JSON object containing parameters for the chosen tool. Can be an empty object {{}} if no parameters are needed." }}
   }},
   "required": ["tool_name", "params"]
 }}
+
 CRITICAL INSTRUCTIONS:
-1. For agent connection tasks: If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), you MUST FIRST use the 'remember_agent' tool.
-2. For internal commands: If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), use the 'execute_command' tool.
-3. For agent management: ALWAYS use 'remember_agent' for any request that involves remembering, storing, or registering an agent URL.
+1. Agent Connection: If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), YOU MUST FIRST use YOUR 'remember_agent' tool.
+2. Internal Commands: If the LATEST USER REQUEST is an internal command for YOU (Agent '{current_agent_id}') (like connecting, listing servers, managing sessions), use YOUR 'execute_command' tool.
+3. Agent Management: ALWAYS use YOUR 'remember_agent' tool for any request that involves remembering, storing, or registering an agent URL.
+
 Do not add any explanations or text outside the JSON object."#,
-                        latest_request_text, local_tools_with_params_desc
+                        current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
+                        latest_request_text = latest_request_text,
+                        local_tools_with_params_desc = local_tools_with_params_desc
                     )
                 };
 
@@ -1185,29 +1218,33 @@ Do not add any explanations or text outside the JSON object."#,
                     // Build the decision prompt with memory context if available
                     let decision_prompt = if has_memory {
                         format!(
-                            r#"You are assisting with handling a returning delegated task that requires additional input.
+                            r#"SYSTEM:
+You are an AI agent. A task previously delegated TO another agent has returned TO YOU because it requires additional input.
+YOUR current role is to decide how to handle this situation based on the new follow-up input from the human user.
 
-AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
-{}
+YOUR (Agent '{current_agent_id}') MEMORY OF PREVIOUS OUTGOING REQUESTS TO OTHER AGENTS:
+{memory_text}
 
-TASK HISTORY:
-{}
+ORIGINAL TASK HISTORY (leading up to delegation):
+{history_text_for_prompt}
 
-REASON INPUT IS REQUIRED:
-{}
+REASON INPUT IS REQUIRED (from the remote agent that returned the task):
+"{status_message}"
 
-FOLLOW-UP MESSAGE/INPUT FROM USER:
-{}
+NEW FOLLOW-UP MESSAGE/INPUT FROM HUMAN USER (to YOU, Agent '{current_agent_id}'):
+"{follow_up_text}"
 
-You need to decide how to handle this situation:
-1. HANDLE_DIRECTLY - If you have enough information to answer the question or address the issue directly
-2. NEED_HUMAN_INPUT - If the input required is complex/specific and needs human feedback
+TASK:
+Decide how YOU (Agent '{current_agent_id}') should handle this situation.
+1. HANDLE_DIRECTLY: If YOU (Agent '{current_agent_id}') now have enough information from the FOLLOW-UP MESSAGE to answer the original request or address the issue directly using YOUR own capabilities.
+2. NEED_HUMAN_INPUT: If the input required is still unclear, complex, or requires specific human expertise/preferences that YOU (Agent '{current_agent_id}') cannot provide.
 
 Consider:
-- Do you understand what input is needed?
-- Is the follow-up message clear enough to proceed?
-- Could this require specific expertise or personal preferences that only the human would know?
+- Do YOU (Agent '{current_agent_id}') understand what input was originally needed by the remote agent?
+- Is the new FOLLOW-UP MESSAGE clear enough for YOU (Agent '{current_agent_id}') to proceed?
+- Could this require specific expertise or personal preferences that only the human user would know?
 
+RESPONSE FORMAT:
 Respond with a JSON object matching this schema:
 {{
   "type": "object",
@@ -1217,27 +1254,38 @@ Respond with a JSON object matching this schema:
   "required": ["decision_type"]
 }}
 Do not add any explanations or text outside the JSON object."#,
-                            memory_text, history_text_for_prompt, status_message, follow_up_text
+                            current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
+                            memory_text = memory_text,
+                            history_text_for_prompt = history_text_for_prompt,
+                            status_message = status_message,
+                            follow_up_text = follow_up_text
                         )
                     } else {
                         format!(
-                            r#"You are assisting with handling a returning delegated task that requires additional input.
+                            r#"SYSTEM:
+You are an AI agent. A task previously delegated TO another agent has returned TO YOU because it requires additional input.
+YOUR current role is to decide how to handle this situation based on the new follow-up input from the human user.
 
-TASK HISTORY:
-{}
+ORIGINAL TASK HISTORY (leading up to delegation):
+{history_text_for_prompt}
 
-REASON INPUT IS REQUIRED:
-{}
+REASON INPUT IS REQUIRED (from the remote agent that returned the task):
+"{status_message}"
 
-FOLLOW-UP MESSAGE/INPUT FROM USER:
-{}
+NEW FOLLOW-UP MESSAGE/INPUT FROM HUMAN USER (to YOU, Agent '{current_agent_id}'):
+"{follow_up_text}"
 
-You need to decide how to handle this situation.
+TASK:
+Decide how YOU (Agent '{current_agent_id}') should handle this situation.
+1. HANDLE_DIRECTLY: If YOU (Agent '{current_agent_id}') now have enough information from the FOLLOW-UP MESSAGE to answer the original request or address the issue directly using YOUR own capabilities.
+2. NEED_HUMAN_INPUT: If the input required is still unclear, complex, or requires specific human expertise/preferences that YOU (Agent '{current_agent_id}') cannot provide.
+
 Consider:
-- Do you understand what input is needed?
-- Is the follow-up message clear enough to proceed?
-- Could this require specific expertise or personal preferences that only the human would know?
+- Do YOU (Agent '{current_agent_id}') understand what input was originally needed by the remote agent?
+- Is the new FOLLOW-UP MESSAGE clear enough for YOU (Agent '{current_agent_id}') to proceed?
+- Could this require specific expertise or personal preferences that only the human user would know?
 
+RESPONSE FORMAT:
 Respond with a JSON object matching this schema:
 {{
   "type": "object",
@@ -1247,7 +1295,10 @@ Respond with a JSON object matching this schema:
   "required": ["decision_type"]
 }}
 Do not add any explanations or text outside the JSON object."#,
-                            history_text_for_prompt, status_message, follow_up_text
+                            current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
+                            history_text_for_prompt = history_text_for_prompt,
+                            status_message = status_message,
+                            follow_up_text = follow_up_text
                         )
                     };
 

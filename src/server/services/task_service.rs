@@ -268,17 +268,22 @@ impl TaskService {
 
                         if !original_text.is_empty() {
                             let rewrite_prompt = format!(
-                                r#"You are helping Agent '{delegating_agent_id}' delegate a task to Agent '{remote_agent_id}'.
-Agent '{delegating_agent_id}' received the following request from a user:
+                                r#"CONTEXT:
+You are an AI assistant helping Agent '{delegating_agent_id}' (which is YOU, the rewriter) to delegate a task.
+The task will be sent TO a remote Agent named '{remote_agent_id}'.
+Agent '{delegating_agent_id}' (YOU) received the following request from a human user:
 "{original_text}"
 
-Rewrite this request as a message FROM Agent '{delegating_agent_id}' TO Agent '{remote_agent_id}'.
-The rewritten message should:
-1. Briefly introduce Agent '{delegating_agent_id}'.
-2. Explain that it's forwarding a request from a user.
-3. Clearly state the user's original request (rephrased naturally if needed, keeping the core intent).
+YOUR TASK:
+Rewrite the human user's request as a new message. This new message will be sent FROM Agent '{delegating_agent_id}' (YOU) TO Agent '{remote_agent_id}'.
 
-Respond ONLY with the rewritten message text, suitable for sending directly to Agent '{remote_agent_id}'."#
+The rewritten message MUST:
+1. Clearly state that it is from Agent '{delegating_agent_id}' (YOU).
+2. Explain that Agent '{delegating_agent_id}' (YOU) is forwarding a request on behalf of a human user.
+3. Clearly state the human user's original request. Rephrase naturally if needed, but preserve the core intent.
+
+OUTPUT FORMAT:
+Respond ONLY with the rewritten message text. This text will be sent directly to Agent '{remote_agent_id}'."#
                             );
                             trace!(prompt = %rewrite_prompt, "Sending rewrite prompt to LLM.");
 
@@ -643,16 +648,22 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
                                             if !original_text.is_empty() {
                                                 let rewrite_prompt = format!(
-                                                    r#"You are helping Agent '{delegating_agent_id}' delegate a follow-up request to Agent '{agent_id}'.
-                                                     Agent '{delegating_agent_id}' received the following follow-up message from a user:
-                                                     "{original_text}"
-                                                     
-                                                     Rewrite this as a follow-up message FROM Agent '{delegating_agent_id}' TO Agent '{agent_id}'.
-                                                     The rewritten message should:
-                                                     1. Briefly remind Agent '{agent_id}' that this is a follow-up to a previous request.
-                                                     2. Clearly state the new information or question from the user.
-                                                     
-                                                     Respond ONLY with the rewritten message text, suitable for sending directly to Agent '{agent_id}'."#
+                                                    r#"CONTEXT:
+You are an AI assistant helping Agent '{delegating_agent_id}' (which is YOU, the rewriter) to delegate a follow-up request.
+The follow-up will be sent TO a remote Agent named '{agent_id}'.
+Agent '{delegating_agent_id}' (YOU) received the following follow-up message from a human user:
+"{original_text}"
+
+YOUR TASK:
+Rewrite the human user's follow-up message as a new message. This new message will be sent FROM Agent '{delegating_agent_id}' (YOU) TO Agent '{agent_id}'.
+
+The rewritten message MUST:
+1. Clearly state that it is from Agent '{delegating_agent_id}' (YOU).
+2. Remind Agent '{agent_id}' that this is a follow-up to a previous request.
+3. Clearly state the new information or question from the human user.
+
+OUTPUT FORMAT:
+Respond ONLY with the rewritten message text. This text will be sent directly to Agent '{agent_id}'."#
                                                 );
 
                                                 match llm.complete(&rewrite_prompt, None).await {
