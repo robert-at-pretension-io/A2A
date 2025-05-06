@@ -92,7 +92,7 @@ impl LlmClient for ClaudeLlmClient {
         Ok(completion.to_string())
     }
 
-    #[instrument(skip(self, prompt_text, system_prompt_override, output_schema), fields(prompt_len = prompt_text.len()))]
+    #[instrument(skip(self, prompt_text, system_prompt_override, _output_schema), fields(prompt_len = prompt_text.len()))]
     async fn complete_structured(
         &self,
         prompt_text: &str,
