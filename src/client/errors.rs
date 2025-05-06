@@ -17,52 +17,52 @@ impl A2aError {
             data,
         }
     }
-    
+
     /// Check if this is a task not found error
     pub fn is_task_not_found(&self) -> bool {
         self.code == error_codes::ERROR_TASK_NOT_FOUND
     }
-    
+
     /// Check if this is a task not cancelable error
     pub fn is_task_not_cancelable(&self) -> bool {
         self.code == error_codes::ERROR_TASK_NOT_CANCELABLE
     }
-    
+
     /// Check if this is a push notification not supported error
     pub fn is_push_not_supported(&self) -> bool {
         self.code == error_codes::ERROR_PUSH_NOT_SUPPORTED
     }
-    
+
     /// Check if this is an unsupported operation error
     pub fn is_unsupported_operation(&self) -> bool {
         self.code == error_codes::ERROR_UNSUPPORTED_OP
     }
-    
+
     /// Check if this is an incompatible content types error
     pub fn is_incompatible_types(&self) -> bool {
         self.code == error_codes::ERROR_INCOMPATIBLE_TYPES
     }
-    
+
     /// Check if this is an invalid request error
     pub fn is_invalid_request(&self) -> bool {
         self.code == error_codes::ERROR_INVALID_REQUEST
     }
-    
+
     /// Check if this is a method not found error
     pub fn is_method_not_found(&self) -> bool {
         self.code == error_codes::ERROR_METHOD_NOT_FOUND
     }
-    
+
     /// Check if this is an invalid parameters error
     pub fn is_invalid_params(&self) -> bool {
         self.code == error_codes::ERROR_INVALID_PARAMS
     }
-    
+
     /// Check if this is an internal server error
     pub fn is_internal_error(&self) -> bool {
         self.code == error_codes::ERROR_INTERNAL
     }
-    
+
     /// Check if this is a parse error
     pub fn is_parse_error(&self) -> bool {
         self.code == error_codes::ERROR_PARSE
@@ -84,15 +84,18 @@ pub enum ClientError {
     A2aError(A2aError),
 
     /// Reqwest HTTP client error, potentially including status code
-    ReqwestError { msg: String, status_code: Option<u16> },
+    ReqwestError {
+        msg: String,
+        status_code: Option<u16>,
+    },
 
     /// JSON serialization/deserialization error
     JsonError(String),
-    
+
     /// File I/O error (note: doesn't support Clone)
     #[allow(dead_code)]
     IoError(String),
-    
+
     /// Any other error
     Other(String),
 }
@@ -168,16 +171,16 @@ impl From<&str> for ClientError {
 /// Re-export the error codes from mock_server for use in error handling
 pub mod error_codes {
     // JSON-RPC standard error codes
-    pub const ERROR_PARSE: i64 = -32700;             // "Invalid JSON payload"
-    pub const ERROR_INVALID_REQUEST: i64 = -32600;   // "Request payload validation error"
-    pub const ERROR_METHOD_NOT_FOUND: i64 = -32601;  // "Method not found"
-    pub const ERROR_INVALID_PARAMS: i64 = -32602;    // "Invalid parameters"
-    pub const ERROR_INTERNAL: i64 = -32603;          // "Internal error"
-    
+    pub const ERROR_PARSE: i64 = -32700; // "Invalid JSON payload"
+    pub const ERROR_INVALID_REQUEST: i64 = -32600; // "Request payload validation error"
+    pub const ERROR_METHOD_NOT_FOUND: i64 = -32601; // "Method not found"
+    pub const ERROR_INVALID_PARAMS: i64 = -32602; // "Invalid parameters"
+    pub const ERROR_INTERNAL: i64 = -32603; // "Internal error"
+
     // A2A-specific error codes
-    pub const ERROR_TASK_NOT_FOUND: i64 = -32001;    // "Task not found"
+    pub const ERROR_TASK_NOT_FOUND: i64 = -32001; // "Task not found"
     pub const ERROR_TASK_NOT_CANCELABLE: i64 = -32002; // "Task cannot be canceled"
     pub const ERROR_PUSH_NOT_SUPPORTED: i64 = -32003; // "Push Notification is not supported"
-    pub const ERROR_UNSUPPORTED_OP: i64 = -32004;    // "This operation is not supported"
+    pub const ERROR_UNSUPPORTED_OP: i64 = -32004; // "This operation is not supported"
     pub const ERROR_INCOMPATIBLE_TYPES: i64 = -32005; // "Incompatible content types"
 }

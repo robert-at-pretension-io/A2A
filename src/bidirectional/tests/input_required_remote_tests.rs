@@ -1,12 +1,10 @@
-use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
+use crate::bidirectional::config::BidirectionalAgentConfig;
 use crate::bidirectional::task_router::BidirectionalTaskRouter;
 use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
-use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository}; // Import TaskRepository trait
-use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision}; // Import the trait
-use crate::types::{
-    AgentCapabilities, AgentCard, Message, Part, Role, Task, TaskState, TaskStatus, TextPart,
-};
+use crate::server::agent_registry::AgentRegistry;
+use crate::server::repositories::task_repository::TaskRepository; // Import TaskRepository trait
+use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision};
+use crate::types::{Message, Part, Role, Task, TaskState, TaskStatus, TextPart};
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
@@ -94,8 +92,11 @@ impl TaskRepository for MockTaskRouterWithTasks {
 // Update the existing test to use our new mock
 #[tokio::test]
 async fn test_input_required_llm_decision_direct_handling() {
-    // Create a mock LLM client that will return "HANDLE_DIRECTLY"
-    let llm = Arc::new(MockLlmClient::new().with_default_response("HANDLE_DIRECTLY"));
+    // Mock LLM response for follow-up decision
+    let llm = Arc::new(
+        MockLlmClient::new()
+            .with_default_structured_response(json!({"decision_type": "HANDLE_DIRECTLY"})),
+    );
 
     // Create our custom task repository
     let task_repository = Arc::new(MockTaskRouterWithTasks::new());
@@ -206,8 +207,11 @@ async fn test_input_required_llm_decision_direct_handling() {
 
 #[tokio::test]
 async fn test_input_required_llm_decision_human_input_needed() {
-    // Create a mock LLM client that will return "NEED_HUMAN_INPUT"
-    let llm = Arc::new(MockLlmClient::new().with_default_response("NEED_HUMAN_INPUT"));
+    // Mock LLM response for follow-up decision
+    let llm = Arc::new(
+        MockLlmClient::new()
+            .with_default_structured_response(json!({"decision_type": "NEED_HUMAN_INPUT"})),
+    );
 
     // Create our custom task repository
     let task_repository = Arc::new(MockTaskRouterWithTasks::new());
@@ -341,8 +345,10 @@ async fn test_input_required_llm_decision_human_input_needed() {
 
 #[tokio::test]
 async fn test_input_required_non_remote_task_default_handling() {
-    // Create a mock LLM client
-    let llm = Arc::new(MockLlmClient::new().with_default_response("WHATEVER"));
+    // Mock LLM response (default will be local llm)
+    let llm = Arc::new(MockLlmClient::new().with_default_structured_response(
+        json!({"decision_type": "LOCAL", "tool_name": "llm", "params": {"text": "fallback"}}),
+    ));
 
     // Create our custom task repository
     let task_repository = Arc::new(MockTaskRouterWithTasks::new());

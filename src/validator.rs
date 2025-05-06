@@ -1,8 +1,8 @@
-use jsonschema::{JSONSchema, /* ValidationError */}; // Removed unused
+use crate::schema_utils;
+use jsonschema::{JSONSchema /* ValidationError */}; // Removed unused
 use once_cell::sync::Lazy; // Use once_cell::sync::Lazy
 use serde_json::Value;
-use std::fs;
-use crate::schema_utils; // Import the schema_utils module
+use std::fs; // Import the schema_utils module
 
 // Load the active JSON Schema lazily based on a2a_schema.config
 static ACTIVE_A2A_SCHEMA: Lazy<Result<JSONSchema, String>> = Lazy::new(|| {
@@ -10,19 +10,37 @@ static ACTIVE_A2A_SCHEMA: Lazy<Result<JSONSchema, String>> = Lazy::new(|| {
     let (_version, schema_path) = schema_utils::get_active_schema_info()
         .map_err(|e| format!("Failed to determine active schema: {}", e))?;
 
-    println!("ℹ️ Validator loading active schema: {}", schema_path.display());
+    println!(
+        "ℹ️ Validator loading active schema: {}",
+        schema_path.display()
+    );
 
     // Read the schema file content
-    let schema_str = fs::read_to_string(&schema_path)
-        .map_err(|e| format!("Failed to read schema file '{}': {}", schema_path.display(), e))?;
+    let schema_str = fs::read_to_string(&schema_path).map_err(|e| {
+        format!(
+            "Failed to read schema file '{}': {}",
+            schema_path.display(),
+            e
+        )
+    })?;
 
     // Parse the schema content
-    let schema_value: Value = serde_json::from_str(&schema_str)
-        .map_err(|e| format!("Failed to parse schema JSON from '{}': {}", schema_path.display(), e))?;
+    let schema_value: Value = serde_json::from_str(&schema_str).map_err(|e| {
+        format!(
+            "Failed to parse schema JSON from '{}': {}",
+            schema_path.display(),
+            e
+        )
+    })?;
 
     // Compile the schema
-    JSONSchema::compile(&schema_value)
-        .map_err(|e| format!("Failed to compile schema '{}': {}", schema_path.display(), e))
+    JSONSchema::compile(&schema_value).map_err(|e| {
+        format!(
+            "Failed to compile schema '{}': {}",
+            schema_path.display(),
+            e
+        )
+    })
 });
 
 /// Validate a JSON value directly against the lazily loaded active schema
@@ -40,7 +58,10 @@ pub fn validate_json(json: &Value) -> Result<(), String> {
                         .map(|e| format!("  - {}", e))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    Err(format!("Validation failed with errors:\n{}", error_messages))
+                    Err(format!(
+                        "Validation failed with errors:\n{}",
+                        error_messages
+                    ))
                 }
             }
         }
@@ -73,4 +94,3 @@ pub fn validate_file(file_path: &str) -> Result<(), String> {
 
     result
 }
-

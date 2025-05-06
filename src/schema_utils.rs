@@ -4,7 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // Constants needed by helper functions
-const REMOTE_SCHEMA_URL: &str = "https://raw.githubusercontent.com/google/A2A/refs/heads/main/specification/json/a2a.json";
+const REMOTE_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/google/A2A/refs/heads/main/specification/json/a2a.json";
 const SCHEMAS_DIR: &str = "schemas";
 const CONFIG_FILE: &str = "a2a_schema.config";
 
@@ -32,7 +33,10 @@ pub fn get_active_schema_info() -> Result<(String, PathBuf), String> {
             }
         }
     }
-    Err(format!("❌ Could not find 'active_version = \"...\"' in {}", CONFIG_FILE))
+    Err(format!(
+        "❌ Could not find 'active_version = \"...\"' in {}",
+        CONFIG_FILE
+    ))
 }
 
 // --- Helper: Fetch remote schema ---
@@ -40,25 +44,30 @@ pub fn get_active_schema_info() -> Result<(String, PathBuf), String> {
 fn fetch_remote_schema() -> Result<String, String> {
     println!("ℹ️ Fetching remote schema from {}...", REMOTE_SCHEMA_URL);
     let response = reqwest::blocking::get(REMOTE_SCHEMA_URL)
-         // Use map_err for reqwest errors
+        // Use map_err for reqwest errors
         .map_err(|e| format!("Network error fetching schema: {}", e))?;
 
     if !response.status().is_success() {
         return Err(format!("HTTP error fetching schema: {}", response.status()));
     }
 
-    response.text().map_err(|e| format!("Error reading schema response body: {}", e))
+    response
+        .text()
+        .map_err(|e| format!("Error reading schema response body: {}", e))
 }
-
 
 // --- Helper: Determine next version string (e.g., v1 -> v2) ---
 // (Keep this function private to the module)
 fn get_next_version(current_version: &str) -> Result<String, String> {
     if !current_version.starts_with('v') {
-        return Err(format!("Invalid version format: '{}'. Expected 'vN'.", current_version));
+        return Err(format!(
+            "Invalid version format: '{}'. Expected 'vN'.",
+            current_version
+        ));
     }
     let num_part = &current_version[1..];
-    let current_num: u32 = num_part.parse()
+    let current_num: u32 = num_part
+        .parse()
         .map_err(|_| format!("Could not parse version number from '{}'", current_version))?;
     Ok(format!("v{}", current_num + 1))
 }
@@ -74,8 +83,13 @@ fn save_schema(path: &Path, content: &str) -> Result<(), String> {
 
     // Ensure schemas directory exists
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create schemas directory '{}': {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create schemas directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
     }
 
     fs::write(path, pretty_content)
@@ -115,14 +129,20 @@ pub fn check_and_download_remote_schema() -> Result<SchemaCheckResult, String> {
         Ok(v) => v,
         Err(e) => {
             // If local schema is invalid, treat it as different to force saving the valid remote one
-            println!("⚠️ Warning: Failed to parse local schema JSON: {}. Assuming difference.", e);
+            println!(
+                "⚠️ Warning: Failed to parse local schema JSON: {}. Assuming difference.",
+                e
+            );
             serde_json::Value::Null // Use Null which won't equal the remote value
         }
     };
 
     // Compare the parsed JSON values
     if remote_value != local_value {
-        println!("💡 Remote schema differs semantically from active local schema (version '{}').", active_version);
+        println!(
+            "💡 Remote schema differs semantically from active local schema (version '{}').",
+            active_version
+        );
         let next_version_str = get_next_version(&active_version)?;
         let new_filename = format!("a2a_schema_{}.json", next_version_str);
         let new_path = Path::new(SCHEMAS_DIR).join(&new_filename);
@@ -132,7 +152,10 @@ pub fn check_and_download_remote_schema() -> Result<SchemaCheckResult, String> {
         println!("✅ Saved new schema version as '{}'.", new_version_path_str);
         Ok(SchemaCheckResult::NewVersionSaved(new_version_path_str))
     } else {
-        println!("✅ Remote schema matches active local schema (version '{}').", active_version);
+        println!(
+            "✅ Remote schema matches active local schema (version '{}').",
+            active_version
+        );
         Ok(SchemaCheckResult::NoChange)
     }
 }

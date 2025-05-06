@@ -1,13 +1,12 @@
-use crate::types::{Task, PushNotificationConfig};
 use crate::server::ServerError;
+use crate::types::{PushNotificationConfig, Task};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::Mutex;
-use dashmap::DashMap; // Use DashMap for concurrent side-tables
+use tokio::sync::Mutex; // Use DashMap for concurrent side-tables
 
 // Import new types conditionally
-
 
 /// Information about the origin of a task
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,7 +33,6 @@ pub enum TaskOrigin {
     },
 }
 
-
 /// Relationships between tasks in a workflow
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskRelationships {
@@ -46,7 +44,6 @@ pub struct TaskRelationships {
     pub related_task_ids: HashMap<String, String>,
 }
 
-
 /// Task repository trait for storing and retrieving tasks
 ///
 /// Note: This trait cannot be used with dyn pointers due to async fn in traits.
@@ -56,8 +53,15 @@ pub trait TaskRepository: Send + Sync + 'static {
     async fn get_task(&self, id: &str) -> Result<Option<Task>, ServerError>;
     async fn save_task(&self, task: &Task) -> Result<(), ServerError>;
     async fn delete_task(&self, id: &str) -> Result<(), ServerError>;
-    async fn get_push_notification_config(&self, task_id: &str) -> Result<Option<PushNotificationConfig>, ServerError>;
-    async fn save_push_notification_config(&self, task_id: &str, config: &PushNotificationConfig) -> Result<(), ServerError>;
+    async fn get_push_notification_config(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<PushNotificationConfig>, ServerError>;
+    async fn save_push_notification_config(
+        &self,
+        task_id: &str,
+        config: &PushNotificationConfig,
+    ) -> Result<(), ServerError>;
     async fn get_state_history(&self, task_id: &str) -> Result<Vec<Task>, ServerError>;
     async fn save_state_history(&self, task_id: &str, task: &Task) -> Result<(), ServerError>;
 }
@@ -70,10 +74,15 @@ pub struct InMemoryTaskRepository {
     state_history: Arc<Mutex<HashMap<String, Vec<Task>>>>,
 
     // Use DashMap for side-tables accessed frequently and concurrently by bidirectional agent
-    
     task_origins: Arc<DashMap<String, TaskOrigin>>,
-    
+
     task_relationships: Arc<DashMap<String, TaskRelationships>>,
+}
+
+impl Default for InMemoryTaskRepository {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InMemoryTaskRepository {
@@ -83,9 +92,8 @@ impl InMemoryTaskRepository {
             push_configs: Arc::new(Mutex::new(HashMap::new())),
             state_history: Arc::new(Mutex::new(HashMap::new())),
             // Initialize side-tables only if feature is enabled
-            
             task_origins: Arc::new(DashMap::new()),
-            
+
             task_relationships: Arc::new(DashMap::new()),
         }
     }
@@ -97,25 +105,32 @@ impl TaskRepository for InMemoryTaskRepository {
         let tasks = self.tasks.lock().await;
         Ok(tasks.get(id).cloned())
     }
-    
+
     async fn save_task(&self, task: &Task) -> Result<(), ServerError> {
         let mut tasks = self.tasks.lock().await;
         tasks.insert(task.id.clone(), task.clone());
         Ok(())
     }
-    
+
     async fn delete_task(&self, id: &str) -> Result<(), ServerError> {
         let mut tasks = self.tasks.lock().await;
         tasks.remove(id);
         Ok(())
     }
-    
-    async fn get_push_notification_config(&self, task_id: &str) -> Result<Option<PushNotificationConfig>, ServerError> {
+
+    async fn get_push_notification_config(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<PushNotificationConfig>, ServerError> {
         let push_configs = self.push_configs.lock().await;
         Ok(push_configs.get(task_id).cloned())
     }
-    
-    async fn save_push_notification_config(&self, task_id: &str, config: &PushNotificationConfig) -> Result<(), ServerError> {
+
+    async fn save_push_notification_config(
+        &self,
+        task_id: &str,
+        config: &PushNotificationConfig,
+    ) -> Result<(), ServerError> {
         let mut push_configs = self.push_configs.lock().await;
         push_configs.insert(task_id.to_string(), config.clone());
         Ok(())

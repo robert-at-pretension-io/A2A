@@ -1,16 +1,21 @@
-use crate::bidirectional::BidirectionalAgent;
-use crate::bidirectional::config::{BidirectionalAgentConfig, ServerConfig, ClientConfig, LlmConfig, ModeConfig};
+use crate::bidirectional::config::{
+    BidirectionalAgentConfig, ClientConfig, LlmConfig, ModeConfig, ServerConfig,
+};
 use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::server::repositories::task_repository::{TaskRepository, InMemoryTaskRepository};
+use crate::bidirectional::BidirectionalAgent;
+use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository};
 use crate::server::services::task_service::TaskService;
-use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, TaskSendParams, TaskQueryParams, TaskIdParams};
-use std::sync::Arc;
-use std::collections::HashMap;
-use serde_json::json;
-use std::env;
-use uuid::Uuid;
+use crate::types::{
+    Message, Part, Role, Task, TaskIdParams, TaskQueryParams, TaskSendParams, TaskState,
+    TaskStatus, TextPart,
+};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
-use anyhow::{Result, anyhow};
+use serde_json::json;
+use std::collections::HashMap;
+use std::env;
+use std::sync::Arc;
+use uuid::Uuid;
 
 // This struct helps us test the InputRequired handling
 struct TestAgentWithInputRequired {
@@ -24,7 +29,7 @@ impl TestAgentWithInputRequired {
     fn new() -> Self {
         let task_repository = Arc::new(InMemoryTaskRepository::new());
         let task_service = Arc::new(TaskService::standalone(task_repository.clone()));
-        
+
         Self {
             task_service,
             task_repository,
@@ -32,14 +37,14 @@ impl TestAgentWithInputRequired {
             session_tasks: HashMap::new(),
         }
     }
-    
+
     fn create_new_session(&mut self) -> String {
         let session_id = format!("session-{}", Uuid::new_v4());
         self.current_session_id = Some(session_id.clone());
         self.session_tasks.insert(session_id.clone(), Vec::new());
         session_id
     }
-    
+
     async fn save_task_to_history(&mut self, task: Task) -> Result<()> {
         if let Some(session_id) = &self.current_session_id {
             if let Some(tasks) = self.session_tasks.get_mut(session_id) {
@@ -48,12 +53,12 @@ impl TestAgentWithInputRequired {
         }
         Ok(())
     }
-    
+
     // Implementation that handles InputRequired state
     async fn process_message_directly(&mut self, message_text: &str) -> Result<String> {
         // Check if we're continuing an existing task that is in InputRequired state
         let mut continue_task_id = None;
-        
+
         if let Some(session_id) = &self.current_session_id {
             if let Some(task_ids) = self.session_tasks.get(session_id) {
                 // Check the last task in the session
@@ -64,7 +69,7 @@ impl TestAgentWithInputRequired {
                         history_length: None,
                         metadata: None,
                     };
-                    
+
                     if let Ok(task) = self.task_service.get_task(params).await {
                         if task.status.state == TaskState::InputRequired {
                             // We should continue this task instead of creating a new one
@@ -74,14 +79,14 @@ impl TestAgentWithInputRequired {
                 }
             }
         }
-        
+
         // Create a new task ID if we're not continuing an existing task
         let task_id = if let Some(id) = continue_task_id {
             id
         } else {
             Uuid::new_v4().to_string()
         };
-        
+
         // Create the message
         let initial_message = Message {
             role: Role::User,
@@ -92,7 +97,7 @@ impl TestAgentWithInputRequired {
             })],
             metadata: None,
         };
-        
+
         // Create TaskSendParams
         let params = TaskSendParams {
             id: task_id.clone(),
@@ -102,46 +107,49 @@ impl TestAgentWithInputRequired {
             history_length: None,
             push_notification: None,
         };
-        
+
         // Use task_service to process the task
         let task = self.task_service.process_task(params).await?;
-        
+
         // Save task to history
         self.save_task_to_history(task.clone()).await?;
-        
+
         // Extract response from task
         let mut response = self.extract_text_from_task(&task);
-        
+
         // Test fix - don't add input-required indicator to response
         // The indicator was causing failures in tests that expect it to be absent after follow-up
         // Original behavior:
         // if task.status.state == TaskState::InputRequired {
         //     response.push_str("\n\n[The agent needs more information. Your next message will continue this task.]");
         // }
-        
+
         Ok(response)
     }
-    
+
     // Helper to extract text from task
     fn extract_text_from_task(&self, task: &Task) -> String {
         // First check the status message
         if let Some(ref message) = task.status.message {
-            let text = message.parts.iter()
+            let text = message
+                .parts
+                .iter()
                 .filter_map(|p| match p {
                     Part::TextPart(tp) => Some(tp.text.clone()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            
+
             if !text.is_empty() {
                 return text;
             }
         }
-        
+
         // Then check history if available
         if let Some(history) = &task.history {
-            let agent_messages = history.iter()
+            let agent_messages = history
+                .iter()
                 .filter(|m| m.role == Role::Agent)
                 .flat_map(|m| m.parts.iter())
                 .filter_map(|p| match p {
@@ -150,21 +158,21 @@ impl TestAgentWithInputRequired {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            
+
             if !agent_messages.is_empty() {
                 return agent_messages;
             }
         }
-        
+
         // Fallback
         "No response text available.".to_string()
     }
-    
+
     // Helper to create a task that will require input
     async fn create_input_required_task(&mut self, message_text: &str) -> Result<Task> {
         // Create a unique task ID
         let task_id = Uuid::new_v4().to_string();
-        
+
         // Create the message
         let initial_message = Message {
             role: Role::User,
@@ -175,23 +183,28 @@ impl TestAgentWithInputRequired {
             })],
             metadata: None,
         };
-        
+
         // Create TaskSendParams with special metadata to trigger InputRequired
         let params = TaskSendParams {
             id: task_id.clone(),
             message: initial_message,
             session_id: self.current_session_id.clone(),
-            metadata: Some(json!({"_mock_require_input": true}).as_object().unwrap().clone()),
+            metadata: Some(
+                json!({"_mock_require_input": true})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
             history_length: None,
             push_notification: None,
         };
-        
+
         // Use task_service to process the task
         let task = self.task_service.process_task(params).await?;
-        
+
         // Save task to history
         self.save_task_to_history(task.clone()).await?;
-        
+
         Ok(task)
     }
 }
@@ -200,19 +213,25 @@ impl TestAgentWithInputRequired {
 async fn test_input_required_detection() {
     // Create test agent
     let mut agent = TestAgentWithInputRequired::new();
-    
+
     // Create a session
     let session_id = agent.create_new_session();
-    
+
     // Create a task that will require input
-    let task = agent.create_input_required_task("Tell me more about this").await.unwrap();
-    
+    let task = agent
+        .create_input_required_task("Tell me more about this")
+        .await
+        .unwrap();
+
     // Verify the task is in InputRequired state
     assert_eq!(task.status.state, TaskState::InputRequired);
-    
+
     // Process a message that should continue the task
-    let response = agent.process_message_directly("Here's more information").await.unwrap();
-    
+    let response = agent
+        .process_message_directly("Here's more information")
+        .await
+        .unwrap();
+
     // Response format has changed to use a more general format that doesn't contain "Follow-up task completed"
     // Now we only check that we do get a successful response without input-required indicator
     assert!(!response.contains("[The agent needs more information"));
@@ -222,13 +241,13 @@ async fn test_input_required_detection() {
 async fn test_normal_task_no_input_required() {
     // Create test agent
     let mut agent = TestAgentWithInputRequired::new();
-    
+
     // Create a session
     let session_id = agent.create_new_session();
-    
+
     // Process a normal message that should not require input
     let response = agent.process_message_directly("Hello world").await.unwrap();
-    
+
     // Verify the response doesn't include InputRequired indicator
     assert!(!response.contains("[The agent needs more information"));
 }
@@ -237,19 +256,28 @@ async fn test_normal_task_no_input_required() {
 async fn test_input_required_indicator() {
     // Create test agent
     let mut agent = TestAgentWithInputRequired::new();
-    
+
     // Create a session
     let session_id = agent.create_new_session();
-    
+
     // Create a task that will require input
-    let task = agent.create_input_required_task("Tell me more about this").await.unwrap();
-    
+    let task = agent
+        .create_input_required_task("Tell me more about this")
+        .await
+        .unwrap();
+
     // Extract response as would be shown to user
     let response = agent.extract_text_from_task(&task);
-    assert_eq!(response, "Please provide additional information to continue.");
-    
+    assert_eq!(
+        response,
+        "Please provide additional information to continue."
+    );
+
     // If we added our indicator to the response:
-    let response_with_indicator = format!("{}\n\n[The agent needs more information. Your next message will continue this task.]", response);
+    let response_with_indicator = format!(
+        "{}\n\n[The agent needs more information. Your next message will continue this task.]",
+        response
+    );
     assert!(response_with_indicator.contains("[The agent needs more information"));
 }
 
@@ -257,23 +285,29 @@ async fn test_input_required_indicator() {
 async fn test_multiple_input_required_tasks() {
     // Create test agent
     let mut agent = TestAgentWithInputRequired::new();
-    
+
     // Create a session
     let session_id = agent.create_new_session();
-    
+
     // Create first task that requires input
-    let task1 = agent.create_input_required_task("Question 1").await.unwrap();
+    let task1 = agent
+        .create_input_required_task("Question 1")
+        .await
+        .unwrap();
     assert_eq!(task1.status.state, TaskState::InputRequired);
-    
+
     // Provide follow-up and complete the first task
     let response1 = agent.process_message_directly("Answer 1").await.unwrap();
     // Response format changed - verify it doesn't contain input-required indicator
     assert!(!response1.contains("[The agent needs more information"));
-    
+
     // Create second task that requires input
-    let task2 = agent.create_input_required_task("Question 2").await.unwrap();
+    let task2 = agent
+        .create_input_required_task("Question 2")
+        .await
+        .unwrap();
     assert_eq!(task2.status.state, TaskState::InputRequired);
-    
+
     // Provide follow-up and complete the second task
     let response2 = agent.process_message_directly("Answer 2").await.unwrap();
     // Response format changed - verify it doesn't contain input-required indicator
@@ -284,49 +318,71 @@ async fn test_multiple_input_required_tasks() {
 async fn test_follow_up_processing_end_to_end() {
     // Create test agent
     let mut agent = TestAgentWithInputRequired::new();
-    
+
     // Create a session
     let session_id = agent.create_new_session();
-    
+
     // Create a task that will require input
-    let task = agent.create_input_required_task("I need help with something but will provide details later").await.unwrap();
-    
+    let task = agent
+        .create_input_required_task("I need help with something but will provide details later")
+        .await
+        .unwrap();
+
     // Verify the task is in InputRequired state
     assert_eq!(task.status.state, TaskState::InputRequired);
-    
+
     // Get task ID for follow-up check
     let task_id = task.id.clone();
-    
+
     // Provide follow-up information
-    let follow_up_response = agent.process_message_directly("Here are the details: I need to analyze sales data").await.unwrap();
-    
+    let follow_up_response = agent
+        .process_message_directly("Here are the details: I need to analyze sales data")
+        .await
+        .unwrap();
+
     // Response format changed - verify it doesn't contain input-required indicator
-    assert!(!follow_up_response.contains("[The agent needs more information"),
-           "Response should NOT contain input-required indicator: {}", follow_up_response);
-    
+    assert!(
+        !follow_up_response.contains("[The agent needs more information"),
+        "Response should NOT contain input-required indicator: {}",
+        follow_up_response
+    );
+
     // Check that the task state was updated (from InputRequired to Completed)
     let params = TaskQueryParams {
         id: task_id,
         history_length: None,
         metadata: None,
     };
-    
+
     let updated_task = agent.task_service.get_task(params).await.unwrap();
     // Due to changes in the implementation, the task may remain in InputRequired state after follow-up
     // This is different from the original expectation but matches current behavior
-    println!("Task state after follow-up: {:?}", updated_task.status.state);
+    println!(
+        "Task state after follow-up: {:?}",
+        updated_task.status.state
+    );
     // Uncomment to re-enable assertion when fixed:
-    // assert_ne!(updated_task.status.state, TaskState::InputRequired, 
+    // assert_ne!(updated_task.status.state, TaskState::InputRequired,
     //           "Task should no longer be in InputRequired state after follow-up");
-    
+
     // Check state history to verify the state transition happened
-    let state_history = agent.task_repository.get_state_history(&updated_task.id).await.unwrap();
-    
+    let state_history = agent
+        .task_repository
+        .get_state_history(&updated_task.id)
+        .await
+        .unwrap();
+
     // Should have at least 3 states: Submitted -> InputRequired -> Working/Completed
-    assert!(state_history.len() >= 3, 
-           "Task should have at least 3 state history entries (found {})", state_history.len());
-    
+    assert!(
+        state_history.len() >= 3,
+        "Task should have at least 3 state history entries (found {})",
+        state_history.len()
+    );
+
     // Last entry should match the current state
-    assert_eq!(state_history.last().unwrap().status.state, updated_task.status.state,
-              "Last state in history should match current task state");
+    assert_eq!(
+        state_history.last().unwrap().status.state,
+        updated_task.status.state,
+        "Last state in history should match current task state"
+    );
 }

@@ -3,10 +3,10 @@
 // from the REPL implementation for better testability
 
 use crate::bidirectional::config::{
-    BidirectionalAgentConfig, ServerConfig, ClientConfig, LlmConfig, ModeConfig
+    BidirectionalAgentConfig, ClientConfig, LlmConfig, ModeConfig, ServerConfig,
 };
-use std::sync::Arc;
 use std::io::Cursor;
+use std::sync::Arc;
 
 // Helper functions that would be useful for testing the REPL
 
@@ -14,11 +14,11 @@ fn parse_repl_command(cmd: &str) -> (&str, Option<&str>) {
     if !cmd.starts_with(':') {
         return ("message", Some(cmd));
     }
-    
+
     let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
     let command = parts[0].trim_start_matches(':');
     let args = parts.get(1).map(|&s| s);
-    
+
     (command, args)
 }
 
@@ -28,32 +28,32 @@ fn test_parse_repl_command() {
     let (cmd, args) = parse_repl_command(":help");
     assert_eq!(cmd, "help");
     assert_eq!(args, None);
-    
+
     // Test card command
     let (cmd, args) = parse_repl_command(":card");
     assert_eq!(cmd, "card");
     assert_eq!(args, None);
-    
+
     // Test connect command with URL
     let (cmd, args) = parse_repl_command(":connect http://example.com");
     assert_eq!(cmd, "connect");
     assert_eq!(args, Some("http://example.com"));
-    
+
     // Test remote command with message
     let (cmd, args) = parse_repl_command(":remote Hello world");
     assert_eq!(cmd, "remote");
     assert_eq!(args, Some("Hello world"));
-    
+
     // Test tool command
     let (cmd, args) = parse_repl_command(":tool list_agents");
     assert_eq!(cmd, "tool");
     assert_eq!(args, Some("list_agents"));
-    
+
     // Test tool command with JSON params
     let (cmd, args) = parse_repl_command(":tool list_agents {\"format\":\"simple\"}");
     assert_eq!(cmd, "tool");
     assert_eq!(args, Some("list_agents {\"format\":\"simple\"}"));
-    
+
     // Test direct message (not a command)
     let (cmd, args) = parse_repl_command("What is the capital of France?");
     assert_eq!(cmd, "message");
@@ -81,7 +81,7 @@ fn test_server_commands() {
     let (cmd, args) = parse_repl_command(":listen 8080");
     assert_eq!(cmd, "listen");
     assert_eq!(args, Some("8080"));
-    
+
     // Test stop command parsing
     let (cmd, args) = parse_repl_command(":stop");
     assert_eq!(cmd, "stop");
@@ -94,7 +94,7 @@ fn test_server_management_commands() {
     let (cmd, args) = parse_repl_command(":servers");
     assert_eq!(cmd, "servers");
     assert_eq!(args, None);
-    
+
     // Test disconnect command parsing
     let (cmd, args) = parse_repl_command(":disconnect");
     assert_eq!(cmd, "disconnect");
@@ -107,7 +107,7 @@ fn test_connect_variations() {
     let (cmd, args) = parse_repl_command(":connect http://example.com");
     assert_eq!(cmd, "connect");
     assert_eq!(args, Some("http://example.com"));
-    
+
     // Test connect with number
     let (cmd, args) = parse_repl_command(":connect 1");
     assert_eq!(cmd, "connect");

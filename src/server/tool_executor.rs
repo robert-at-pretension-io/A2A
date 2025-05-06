@@ -1,21 +1,31 @@
 //! Executes local tools with standard A2A protocol-compliant types and artifacts.
 
-use crate::server::error::ServerError;
 use crate::bidirectional::llm_client::LlmClient; // <-- Update import path
-use crate::types::{
-    Task, TaskStatus, TaskState, Message, Role, Part, TextPart, DataPart, Artifact, AgentCard, AgentCapabilities // <-- Import AgentCapabilities
-};
 use crate::client::A2aClient; // <-- Import A2aClient
+use crate::server::error::ServerError;
+use crate::types::{
+    AgentCapabilities, // <-- Import AgentCapabilities
+    AgentCard,
+    Artifact,
+    DataPart,
+    Message,
+    Part,
+    Role,
+    Task,
+    TaskState,
+    TaskStatus,
+    TextPart,
+};
 use anyhow; // Import anyhow for error handling in new tools
 use dashmap::DashMap; // For known_servers sync
 use uuid::Uuid; // <-- Import Uuid
 
+use async_trait::async_trait;
+use chrono::Utc;
 use serde_json::{json, Value};
-use tracing::{instrument, debug, info, warn}; // <-- Import warn macro
 use std::collections::HashMap;
 use std::sync::Arc;
-use chrono::Utc;
-use async_trait::async_trait;
+use tracing::{debug, info, instrument, warn}; // <-- Import warn macro
 
 /// Error type specific to tool execution.
 #[derive(thiserror::Error, Debug, Clone)]
@@ -44,7 +54,8 @@ pub enum ToolError {
 
 // Implement conversion from std::io::Error
 impl From<std::io::Error> for ToolError {
-    fn from(e: std::io::Error) -> Self { // Corrected parameter type
+    fn from(e: std::io::Error) -> Self {
+        // Corrected parameter type
         ToolError::IoError(e.to_string()) // Use IoError variant
     }
 }
@@ -64,25 +75,39 @@ impl From<anyhow::Error> for ToolError {
     }
 }
 
-
 // Implement conversion to ServerError
 impl From<ToolError> for ServerError {
     fn from(error: ToolError) -> Self {
         match error {
-            ToolError::NotFound(tool) => 
-                ServerError::UnsupportedOperation(format!("Tool '{}' not found", tool)),
-            ToolError::InvalidParams(tool, msg) => 
-                ServerError::InvalidParameters(format!("Invalid parameters for tool '{}': {}", tool, msg)),
-            ToolError::ExecutionFailed(tool, msg) => 
-                ServerError::ServerTaskExecutionFailed(format!("Tool '{}' execution failed: {}", tool, msg)),
-            ToolError::ConfigError(tool, msg) =>
-                ServerError::ConfigError(format!("Tool '{}' configuration error: {}", tool, msg)),
-            ToolError::IoError(msg) =>
-                ServerError::ServerTaskExecutionFailed(format!("I/O error during tool execution: {}", msg)),
-            ToolError::ExternalError(msg) =>
-                ServerError::ServerTaskExecutionFailed(format!("External error during tool execution: {}", msg)),
-            ToolError::UnsupportedOperation(tool, op) => // <-- Handle new variant
-                ServerError::UnsupportedOperation(format!("Operation '{}' not supported by tool '{}'", op, tool)),
+            ToolError::NotFound(tool) => {
+                ServerError::UnsupportedOperation(format!("Tool '{}' not found", tool))
+            }
+            ToolError::InvalidParams(tool, msg) => ServerError::InvalidParameters(format!(
+                "Invalid parameters for tool '{}': {}",
+                tool, msg
+            )),
+            ToolError::ExecutionFailed(tool, msg) => ServerError::ServerTaskExecutionFailed(
+                format!("Tool '{}' execution failed: {}", tool, msg),
+            ),
+            ToolError::ConfigError(tool, msg) => {
+                ServerError::ConfigError(format!("Tool '{}' configuration error: {}", tool, msg))
+            }
+            ToolError::IoError(msg) => ServerError::ServerTaskExecutionFailed(format!(
+                "I/O error during tool execution: {}",
+                msg
+            )),
+            ToolError::ExternalError(msg) => ServerError::ServerTaskExecutionFailed(format!(
+                "External error during tool execution: {}",
+                msg
+            )),
+            ToolError::UnsupportedOperation(tool, op) =>
+            // <-- Handle new variant
+            {
+                ServerError::UnsupportedOperation(format!(
+                    "Operation '{}' not supported by tool '{}'",
+                    op, tool
+                ))
+            }
         }
     }
 }
@@ -92,13 +117,13 @@ impl From<ToolError> for ServerError {
 pub trait Tool: Send + Sync {
     /// Returns the name of the tool
     fn name(&self) -> &str;
-    
+
     /// Returns a description of the tool
     fn description(&self) -> &str;
-    
+
     /// Executes the tool with the given parameters
     async fn execute(&self, params: Value) -> Result<Value, ToolError>;
-    
+
     /// Returns a list of capability tags for the tool
     fn capabilities(&self) -> &[&'static str];
 }
@@ -108,21 +133,29 @@ pub struct EchoTool;
 
 #[async_trait]
 impl Tool for EchoTool {
-    fn name(&self) -> &str { "echo" }
-    
-    fn description(&self) -> &str { "Echoes back the input text" }
-    
+    fn name(&self) -> &str {
+        "echo"
+    }
+
+    fn description(&self) -> &str {
+        "Echoes back the input text"
+    }
+
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
         if let Some(text) = params.get("text").and_then(|v| v.as_str()) {
             Ok(json!(format!("Echo: {}", text)))
         } else {
-            Err(ToolError::InvalidParams("echo".to_string(), "Missing 'text' parameter".to_string()))
+            Err(ToolError::InvalidParams(
+                "echo".to_string(),
+                "Missing 'text' parameter".to_string(),
+            ))
         }
     }
-    
-    fn capabilities(&self) -> &[&'static str] { &["echo", "text_manipulation"] }
-}
 
+    fn capabilities(&self) -> &[&'static str] {
+        &["echo", "text_manipulation"]
+    }
+}
 
 // --- New Tools ---
 
@@ -140,26 +173,31 @@ impl ListAgentsTool {
 
 #[async_trait]
 impl Tool for ListAgentsTool {
-    fn name(&self) -> &str { "list_agents" }
-    
-    fn description(&self) -> &str { "Lists all known agents and their capabilities" }
-    
+    fn name(&self) -> &str {
+        "list_agents"
+    }
+
+    fn description(&self) -> &str {
+        "Lists all known agents and their capabilities"
+    }
+
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
         // Get format parameter if provided (default to "detailed")
-        let format = params.get("format")
+        let format = params
+            .get("format")
             .and_then(|v| v.as_str())
             .unwrap_or("detailed");
-        
+
         // Get all agents from the canonical registry
         let all_agents = self.agent_registry.list_all_agents(); // Use registry method
-        
+
         if all_agents.is_empty() {
             return Ok(json!({
                 "count": 0,
                 "message": "No agents found in the directory"
             }));
         }
-        
+
         match format {
             "simple" => {
                 // Just return agent IDs and names
@@ -172,28 +210,28 @@ impl Tool for ListAgentsTool {
                         map
                     })
                     .collect();
-                
+
                 Ok(json!({
                     "count": simple_list.len(),
                     "agents": simple_list
                 }))
-            },
+            }
             "detailed" | _ => {
                 // Return full agent details
                 let detailed_list: Vec<serde_json::Value> = all_agents
                     .iter()
                     .map(|(id, card)| {
                         let mut agent_obj = serde_json::to_value(card).unwrap_or(json!({}));
-                        
+
                         // Add the ID since it's not part of the card
                         if let Some(obj) = agent_obj.as_object_mut() {
                             obj.insert("id".to_string(), json!(id));
                         }
-                        
+
                         agent_obj
                     })
                     .collect();
-                
+
                 Ok(json!({
                     "count": detailed_list.len(),
                     "agents": detailed_list
@@ -201,49 +239,87 @@ impl Tool for ListAgentsTool {
             }
         }
     }
-    
-    fn capabilities(&self) -> &[&'static str] { &["agent_directory", "agent_discovery"] }
+
+    fn capabilities(&self) -> &[&'static str] {
+        &["agent_directory", "agent_discovery"]
+    }
 }
 
 /// Tool that directly uses the LLM based on input text
-pub struct LlmTool { llm: Arc<dyn LlmClient> }
-impl LlmTool { pub fn new(llm: Arc<dyn LlmClient>) -> Self { Self { llm } } }
+pub struct LlmTool {
+    llm: Arc<dyn LlmClient>,
+}
+impl LlmTool {
+    pub fn new(llm: Arc<dyn LlmClient>) -> Self {
+        Self { llm }
+    }
+}
 
 #[async_trait]
 impl Tool for LlmTool {
-    fn name(&self) -> &str { "llm" }
-    fn description(&self) -> &str { "Ask the LLM directly using the provided text as a prompt" }
+    fn name(&self) -> &str {
+        "llm"
+    }
+    fn description(&self) -> &str {
+        "Ask the LLM directly using the provided text as a prompt"
+    }
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
-        let prompt = params.get("text").and_then(|v| v.as_str()).unwrap_or_default();
+        let prompt = params
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         if prompt.is_empty() {
-            return Err(ToolError::InvalidParams("llm".to_string(), "'text' parameter cannot be empty".to_string()));
+            return Err(ToolError::InvalidParams(
+                "llm".to_string(),
+                "'text' parameter cannot be empty".to_string(),
+            ));
         }
         // Use ? to propagate anyhow::Error, which will be converted by From<anyhow::Error> for ToolError
         let result = self.llm.complete(prompt, None).await?;
         Ok(json!(result))
     }
-    fn capabilities(&self) -> &[&'static str] { &["llm", "chat", "general_purpose"] }
+    fn capabilities(&self) -> &[&'static str] {
+        &["llm", "chat", "general_purpose"]
+    }
 }
 
 /// Tool that asks the LLM to summarize the input text
-pub struct SummarizeTool { llm: Arc<dyn LlmClient> }
-impl SummarizeTool { pub fn new(llm: Arc<dyn LlmClient>) -> Self { Self { llm } } }
+pub struct SummarizeTool {
+    llm: Arc<dyn LlmClient>,
+}
+impl SummarizeTool {
+    pub fn new(llm: Arc<dyn LlmClient>) -> Self {
+        Self { llm }
+    }
+}
 
 #[async_trait]
 impl Tool for SummarizeTool {
-    fn name(&self) -> &str { "summarize" }
-    fn description(&self) -> &str { "Summarize the received text using the LLM" }
+    fn name(&self) -> &str {
+        "summarize"
+    }
+    fn description(&self) -> &str {
+        "Summarize the received text using the LLM"
+    }
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
-        let text = params.get("text").and_then(|v| v.as_str()).unwrap_or_default();
-         if text.is_empty() {
-            return Err(ToolError::InvalidParams("summarize".to_string(), "'text' parameter cannot be empty".to_string()));
+        let text = params
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if text.is_empty() {
+            return Err(ToolError::InvalidParams(
+                "summarize".to_string(),
+                "'text' parameter cannot be empty".to_string(),
+            ));
         }
         let prompt = format!("Briefly summarize the following text:\n\n{}", text);
         // Use ? to propagate anyhow::Error
         let result = self.llm.complete(&prompt, None).await?;
         Ok(json!(result))
     }
-    fn capabilities(&self) -> &[&'static str] { &["summarize", "text_manipulation"] }
+    fn capabilities(&self) -> &[&'static str] {
+        &["summarize", "text_manipulation"]
+    }
 }
 
 /// Tool to remember another agent by storing its card in the canonical AgentRegistry
@@ -259,9 +335,9 @@ impl RememberAgentTool {
     // Constructor requires the AgentRegistry and optionally the known_servers map
     pub fn new(
         agent_registry: Arc<crate::server::agent_registry::AgentRegistry>,
-        known_servers: Option<Arc<DashMap<String, String>>>
+        known_servers: Option<Arc<DashMap<String, String>>>,
     ) -> Self {
-        Self { 
+        Self {
             agent_registry,
             known_servers,
         }
@@ -270,44 +346,58 @@ impl RememberAgentTool {
 
 #[async_trait]
 impl Tool for RememberAgentTool {
-    fn name(&self) -> &str { "remember_agent" }
+    fn name(&self) -> &str {
+        "remember_agent"
+    }
 
-    fn description(&self) -> &str { "Discovers and stores/updates another agent's information in the registry using its base URL, and automatically connects to it." }
+    fn description(&self) -> &str {
+        "Discovers and stores/updates another agent's information in the registry using its base URL, and automatically connects to it."
+    }
 
-    #[instrument(skip(self, params), name="tool_remember_agent")]
+    #[instrument(skip(self, params), name = "tool_remember_agent")]
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
         debug!("Executing 'remember_agent' tool."); // Changed to debug
         tracing::trace!(?params, "Tool parameters received.");
 
         // Extract the agent_base_url parameter
         tracing::debug!("Extracting 'agent_base_url' parameter.");
-        let agent_url = params.get("agent_base_url")
+        let agent_url = params
+            .get("agent_base_url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
                 tracing::warn!("Missing or invalid 'agent_base_url' parameter.");
-                ToolError::InvalidParams(self.name().to_string(), "Missing or invalid string parameter: 'agent_base_url'".to_string())
+                ToolError::InvalidParams(
+                    self.name().to_string(),
+                    "Missing or invalid string parameter: 'agent_base_url'".to_string(),
+                )
             })?
             .trim(); // Trim whitespace
 
         if agent_url.is_empty() {
-             tracing::warn!("'agent_base_url' parameter is empty.");
-             return Err(ToolError::InvalidParams(self.name().to_string(), "'agent_base_url' cannot be empty".to_string()));
+            tracing::warn!("'agent_base_url' parameter is empty.");
+            return Err(ToolError::InvalidParams(
+                self.name().to_string(),
+                "'agent_base_url' cannot be empty".to_string(),
+            ));
         }
         // Basic URL validation (can be enhanced)
         if !agent_url.starts_with("http://") && !agent_url.starts_with("https://") {
             tracing::warn!(%agent_url, "Invalid URL format for 'agent_base_url'.");
-            return Err(ToolError::InvalidParams(self.name().to_string(), "'agent_base_url' must start with http:// or https://".to_string()));
+            return Err(ToolError::InvalidParams(
+                self.name().to_string(),
+                "'agent_base_url' must start with http:// or https://".to_string(),
+            ));
         }
         tracing::debug!(%agent_url, "Agent base URL extracted and validated.");
 
         // Use the registry's discover method. This verifies the agent is reachable
         // and fetches the latest card from the source URL before storing/updating.
         debug!(%agent_url, "Attempting to discover and register/update agent via AgentRegistry."); // Changed to debug
-        
+
         // Use ? to propagate ServerError, which will be converted to ToolError::ExternalError
         // The discover method now returns the agent name/ID on success
         let agent_name = self.agent_registry.discover(agent_url).await?;
-        
+
         // If we have known_servers, update it with the agent name returned by discover
         if let Some(known_servers) = &self.known_servers {
             debug!(%agent_url, %agent_name, "Updating known_servers map to keep in sync with agent registry."); // Changed to debug
@@ -317,14 +407,15 @@ impl Tool for RememberAgentTool {
         // Simulate a connection to provide connection feedback
         debug!(%agent_url, %agent_name, "Auto-connecting to agent after remembering it");
         let client = A2aClient::new(agent_url);
-        
+
         // Try to connect and get more detailed connection info
         let connection_result = match client.get_agent_card().await {
             Ok(card) => {
-                let connection_message = format!("✅ Successfully connected to agent: {}", card.name);
+                let connection_message =
+                    format!("✅ Successfully connected to agent: {}", card.name);
                 debug!(%agent_url, agent_name = %card.name, "Successfully connected to remembered agent");
                 connection_message
-            },
+            }
             Err(e) => {
                 warn!(error = %e, %agent_url, "Connection attempt after remembering agent failed");
                 format!("⚠️ Agent remembered but connection failed: {}", e)
@@ -336,12 +427,14 @@ impl Tool for RememberAgentTool {
             "🔄 Agent Operations Complete:\n\n✅ Successfully discovered and remembered agent from URL '{}'.\n\n{}",
             agent_url, connection_result
         );
-        
+
         info!(%response_text); // Keep info for successful remembering
         Ok(json!(response_text)) // Return comprehensive text confirmation
     }
 
-    fn capabilities(&self) -> &[&'static str] { &["agent_registry", "agent_discovery", "agent_management"] }
+    fn capabilities(&self) -> &[&'static str] {
+        &["agent_registry", "agent_discovery", "agent_management"]
+    }
 }
 
 /// Tool that handles tasks requiring human input
@@ -351,17 +444,25 @@ pub struct HumanInputTool;
 
 #[async_trait]
 impl Tool for HumanInputTool {
-    fn name(&self) -> &str { "human_input" }
-    
-    fn description(&self) -> &str { 
-        "Handles tasks that require human input through the REPL interface. Used for returning tasks in InputRequired state that need human expertise." 
+    fn name(&self) -> &str {
+        "human_input"
     }
-    
+
+    fn description(&self) -> &str {
+        "Handles tasks that require human input through the REPL interface. Used for returning tasks in InputRequired state that need human expertise."
+    }
+
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
         // Extract text and prompt from parameters
-        let text = params.get("text").and_then(|v| v.as_str()).unwrap_or_default();
-        let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap_or("Additional input required.");
-        
+        let text = params
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let prompt = params
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Additional input required.");
+
         // Generate a message informing the user about the required input
         let human_prompt = format!(
             "🔄 This task requires human input.\n\n\
@@ -370,12 +471,14 @@ impl Tool for HumanInputTool {
             Please provide the required information through the REPL interface.",
             text, prompt
         );
-        
+
         // Return the message as result - this will get displayed to the user
         Ok(json!(human_prompt))
     }
-    
-    fn capabilities(&self) -> &[&'static str] { &["human_interaction", "input_required"] }
+
+    fn capabilities(&self) -> &[&'static str] {
+        &["human_interaction", "input_required"]
+    }
 }
 
 /// Tool to execute internal agent commands based on natural language requests.
@@ -433,7 +536,9 @@ impl ExecuteCommandTool {
             Ok("📡 No known servers found.".to_string())
         } else {
             let mut output = String::from("\n📡 Known Servers:\n");
-            let mut server_list: Vec<(String, String)> = self.known_servers.iter()
+            let mut server_list: Vec<(String, String)> = self
+                .known_servers
+                .iter()
                 .map(|entry| (entry.value().clone(), entry.key().clone()))
                 .collect();
             server_list.sort_by(|a, b| a.0.cmp(&b.0));
@@ -448,15 +553,22 @@ impl ExecuteCommandTool {
     async fn handle_connect_logic(&self, target: &str) -> Result<String, ToolError> {
         debug!(target = %target, "Handling connect command logic within tool.");
         // Simplified: Only handle URL connection attempts for now
-        let target_url = target.split_whitespace()
+        let target_url = target
+            .split_whitespace()
             .find(|s| s.starts_with("http://") || s.starts_with("https://"))
-            .map(|s| s.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '/').to_string());
+            .map(|s| {
+                s.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '/')
+                    .to_string()
+            });
 
         if target_url.is_none() || target_url.as_deref() == Some("") {
-            return Err(ToolError::InvalidParams("execute_command(connect)".to_string(), "No valid URL found in arguments.".to_string()));
+            return Err(ToolError::InvalidParams(
+                "execute_command(connect)".to_string(),
+                "No valid URL found in arguments.".to_string(),
+            ));
         }
         let url = target_url.unwrap();
-        
+
         // First, check if this agent is already in the registry
         let mut agent_in_registry = false;
         for (_, agent_card) in self.agent_registry.list_all_agents() {
@@ -465,7 +577,7 @@ impl ExecuteCommandTool {
                 break;
             }
         }
-        
+
         // If the agent is not in the registry, suggest using remember_agent first
         if !agent_in_registry {
             let remember_suggestion = format!(
@@ -473,7 +585,7 @@ impl ExecuteCommandTool {
                  Before connecting, please first remember this agent with: \n\n\
                  :tool remember_agent {{\n  \"agent_base_url\": \"{}\"\n}}\n\n\
                  Then try connecting again with:\n\
-                 :connect {}", 
+                 :connect {}",
                 url, url, url
             );
             return Ok(remember_suggestion);
@@ -488,21 +600,25 @@ impl ExecuteCommandTool {
                 // Update registry (also safe)
                 match self.agent_registry.discover(&url).await {
                     Ok(discovered_id) => {
-                         if discovered_id != name {
-                             self.known_servers.insert(url.clone(), discovered_id);
-                         }
-                    },
+                        if discovered_id != name {
+                            self.known_servers.insert(url.clone(), discovered_id);
+                        }
+                    }
                     Err(e) => warn!("Failed to update registry during connect tool logic: {}", e),
                 }
                 // Cannot update self.client here
                 Ok(format!("✅ Connection attempt to '{}' ({}) successful. Agent card retrieved. Use ':connect {}' in REPL to make it the active connection.", name, url, url))
-            },
+            }
             Err(e) => {
-                 // Add to known servers even on failure
-                 if !self.known_servers.contains_key(&url) {
-                     self.known_servers.insert(url.clone(), "Unknown Agent".to_string());
-                 }
-                 Err(ToolError::ExecutionFailed("execute_command(connect)".to_string(), format!("Failed to connect to agent at {}: {}", url, e)))
+                // Add to known servers even on failure
+                if !self.known_servers.contains_key(&url) {
+                    self.known_servers
+                        .insert(url.clone(), "Unknown Agent".to_string());
+                }
+                Err(ToolError::ExecutionFailed(
+                    "execute_command(connect)".to_string(),
+                    format!("Failed to connect to agent at {}: {}", url, e),
+                ))
             }
         }
     }
@@ -515,18 +631,23 @@ impl ExecuteCommandTool {
     fn handle_new_session_logic(&self) -> Result<String, ToolError> {
         // Can generate an ID but cannot set it as current
         let session_id = format!("session-{}", Uuid::new_v4());
-        Ok(format!("✅ Generated new session ID: {}. Use ':session new' in REPL to activate it.", session_id))
+        Ok(format!(
+            "✅ Generated new session ID: {}. Use ':session new' in REPL to activate it.",
+            session_id
+        ))
     }
 
     fn handle_show_session_logic(&self) -> Result<String, ToolError> {
         // Cannot access current session ID
-         Ok("⚠️ Cannot show current session via tool. Use ':session show' in REPL.".to_string())
+        Ok("⚠️ Cannot show current session via tool. Use ':session show' in REPL.".to_string())
     }
 
     fn handle_show_card_logic(&self) -> Result<String, ToolError> {
         // Recreate card based on stored agent info
-         let capabilities = AgentCapabilities {
-            push_notifications: true, state_transition_history: true, streaming: true,
+        let capabilities = AgentCapabilities {
+            push_notifications: true,
+            state_transition_history: true,
+            streaming: true,
         };
         let card = AgentCard {
             name: self.agent_name.clone(),
@@ -534,8 +655,12 @@ impl ExecuteCommandTool {
             version: self.agent_version.clone(), // <-- Use stored version
             url: format!("http://{}:{}", self.bind_address, self.port),
             capabilities,
-            authentication: None, default_input_modes: vec!["text".to_string()], default_output_modes: vec!["text".to_string()],
-            documentation_url: None, provider: None, skills: vec![],
+            authentication: None,
+            default_input_modes: vec!["text".to_string()],
+            default_output_modes: vec!["text".to_string()],
+            documentation_url: None,
+            provider: None,
+            skills: vec![],
         };
         let mut output = String::from("\n📇 Agent Card (via tool):\n");
         output.push_str(&format!("  Name: {}\n", card.name));
@@ -547,10 +672,11 @@ impl ExecuteCommandTool {
     // Commands interacting with TaskService (history, tasks, task, artifacts, cancelTask) are omitted for now.
 }
 
-
 #[async_trait]
 impl Tool for ExecuteCommandTool {
-    fn name(&self) -> &str { "execute_command" }
+    fn name(&self) -> &str {
+        "execute_command"
+    }
 
     fn description(&self) -> &str {
         "Executes internal agent commands like connect, disconnect, list_servers, session new, card. \
@@ -558,18 +684,25 @@ impl Tool for ExecuteCommandTool {
          Expects parameters: {\"command\": \"command_name\", \"args\": \"arguments_string\"}"
     }
 
-    #[instrument(skip(self, params), name="tool_execute_command")]
+    #[instrument(skip(self, params), name = "tool_execute_command")]
     async fn execute(&self, params: Value) -> Result<Value, ToolError> {
         debug!("Executing 'execute_command' tool.");
         tracing::trace!(?params, "Tool parameters received.");
 
-        let command = params.get("command")
+        let command = params
+            .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParams(self.name().to_string(), "Missing 'command' string parameter".to_string()))?
+            .ok_or_else(|| {
+                ToolError::InvalidParams(
+                    self.name().to_string(),
+                    "Missing 'command' string parameter".to_string(),
+                )
+            })?
             .trim()
             .to_lowercase();
 
-        let args = params.get("args")
+        let args = params
+            .get("args")
             .and_then(|v| v.as_str())
             .unwrap_or("") // Default to empty string if args are missing or not a string
             .trim();
@@ -586,16 +719,29 @@ impl Tool for ExecuteCommandTool {
             // Add other command handlers here
             // Omit task-related commands for now
             "history" | "tasks" | "task" | "artifacts" | "cancelTask" => {
-                 Err(ToolError::UnsupportedOperation("execute_command".to_string(), format!("Task-related command '{}' not supported via tool yet.", command)))
+                Err(ToolError::UnsupportedOperation(
+                    "execute_command".to_string(),
+                    format!(
+                        "Task-related command '{}' not supported via tool yet.",
+                        command
+                    ),
+                ))
             }
             "remote" => {
-                 // Requires LLM and potentially client state - too complex for now
-                 Err(ToolError::UnsupportedOperation("execute_command".to_string(), "'remote' command not supported via tool.".to_string()))
+                // Requires LLM and potentially client state - too complex for now
+                Err(ToolError::UnsupportedOperation(
+                    "execute_command".to_string(),
+                    "'remote' command not supported via tool.".to_string(),
+                ))
             }
-             "tool" => {
-                 Err(ToolError::UnsupportedOperation("execute_command".to_string(), "Cannot call ':tool' from within execute_command tool.".to_string()))
-            }
-            _ => Err(ToolError::InvalidParams(self.name().to_string(), format!("Unknown internal command: '{}'", command))),
+            "tool" => Err(ToolError::UnsupportedOperation(
+                "execute_command".to_string(),
+                "Cannot call ':tool' from within execute_command tool.".to_string(),
+            )),
+            _ => Err(ToolError::InvalidParams(
+                self.name().to_string(),
+                format!("Unknown internal command: '{}'", command),
+            )),
         };
 
         // Convert String result/error into JSON Value result/error
@@ -605,12 +751,12 @@ impl Tool for ExecuteCommandTool {
         }
     }
 
-    fn capabilities(&self) -> &[&'static str] { &["agent_control", "meta"] }
+    fn capabilities(&self) -> &[&'static str] {
+        &["agent_control", "meta"]
+    }
 }
 
-
 // --- End New Tools ---
-
 
 /// Manages and executes available local tools using standard A2A types.
 #[derive(Clone)]
@@ -626,15 +772,21 @@ pub struct ToolExecutor {
     llm: Option<Arc<dyn LlmClient>>,
 }
 
+impl Default for ToolExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolExecutor {
     /// Creates a new ToolExecutor with just the basic echo tool.
     pub fn new() -> Self {
         let mut tools: HashMap<String, Box<dyn Tool>> = HashMap::new();
-        
+
         // Register the echo tool
         let echo_tool = EchoTool;
         tools.insert(echo_tool.name().to_string(), Box::new(echo_tool));
-        
+
         Self {
             tools: Arc::new(tools),
             agent_registry: None, // Initialize new fields
@@ -663,7 +815,7 @@ impl ToolExecutor {
         // Always register the echo tool as a fallback
         map.insert("echo".into(), Box::new(EchoTool));
         tracing::debug!("Tool 'echo' registered.");
-        
+
         // Always register the human_input tool as it's essential for InputRequired handling
         map.insert("human_input".into(), Box::new(HumanInputTool));
         tracing::debug!("Tool 'human_input' registered.");
@@ -673,7 +825,8 @@ impl ToolExecutor {
                 "llm" => {
                     if !map.contains_key("llm") {
                         // Check if llm Option is Some before unwrapping
-                        if let Some(llm_client) = llm.clone() { // Clone the Option<Arc<...>>
+                        if let Some(llm_client) = llm.clone() {
+                            // Clone the Option<Arc<...>>
                             map.insert("llm".into(), Box::new(LlmTool::new(llm_client))); // Pass the Arc directly
                             tracing::debug!("Tool 'llm' registered.");
                         } else {
@@ -682,13 +835,19 @@ impl ToolExecutor {
                     }
                 }
                 "summarize" => {
-                     if !map.contains_key("summarize") {
+                    if !map.contains_key("summarize") {
                         // Check if llm Option is Some before unwrapping
-                        if let Some(llm_client) = llm.clone() { // Clone the Option<Arc<...>>
-                            map.insert("summarize".into(), Box::new(SummarizeTool::new(llm_client))); // Pass the Arc directly
+                        if let Some(llm_client) = llm.clone() {
+                            // Clone the Option<Arc<...>>
+                            map.insert(
+                                "summarize".into(),
+                                Box::new(SummarizeTool::new(llm_client)),
+                            ); // Pass the Arc directly
                             tracing::debug!("Tool 'summarize' registered.");
                         } else {
-                            tracing::warn!("Cannot register 'summarize' tool: LLM client not provided.");
+                            tracing::warn!(
+                                "Cannot register 'summarize' tool: LLM client not provided."
+                            );
                         }
                     }
                 }
@@ -699,37 +858,47 @@ impl ToolExecutor {
                             map.insert("list_agents".into(), Box::new(ListAgentsTool::new(reg))); // Pass registry
                             tracing::debug!("Tool 'list_agents' registered.");
                         } else {
-                            tracing::warn!("Cannot register 'list_agents' tool: agent_registry not provided.");
+                            tracing::warn!(
+                                "Cannot register 'list_agents' tool: agent_registry not provided."
+                            );
                         }
                     }
                 }
-                "remember_agent" => { // <-- Register the new tool
+                "remember_agent" => {
+                    // <-- Register the new tool
                     if !map.contains_key("remember_agent") {
                         if let Some(reg) = agent_registry.clone() {
-                            // Pass both agent_registry and known_servers to the tool                            
-                            map.insert("remember_agent".into(), Box::new(RememberAgentTool::new(reg, known_servers.clone())));
+                            // Pass both agent_registry and known_servers to the tool
+                            map.insert(
+                                "remember_agent".into(),
+                                Box::new(RememberAgentTool::new(reg, known_servers.clone())),
+                            );
                             tracing::debug!("Tool 'remember_agent' registered.");
                         } else {
                             tracing::warn!("Cannot register 'remember_agent' tool: agent_registry not provided.");
                         }
                     }
                 }
-                 "execute_command" => { // <-- Register the new command tool
+                "execute_command" => {
+                    // <-- Register the new command tool
                     if !map.contains_key("execute_command") {
                         if let Some(reg) = agent_registry.clone() {
                             if let Some(ks) = known_servers.clone() {
                                 // Pass registry, known_servers, and agent's own info
-                                map.insert("execute_command".into(), Box::new(ExecuteCommandTool::new(
-                                    reg,
-                                    ks,
-                                    agent_id.to_string(),
-                                    agent_name.to_string(),
-                                    agent_version.to_string(), // <-- Pass agent_version
-                                    bind_address.to_string(),
-                                    port,
-                                    llm.clone(), // Pass LLM if available
-                                    // task_service.clone(), // Omit TaskService for now
-                                )));
+                                map.insert(
+                                    "execute_command".into(),
+                                    Box::new(ExecuteCommandTool::new(
+                                        reg,
+                                        ks,
+                                        agent_id.to_string(),
+                                        agent_name.to_string(),
+                                        agent_version.to_string(), // <-- Pass agent_version
+                                        bind_address.to_string(),
+                                        port,
+                                        llm.clone(), // Pass LLM if available
+                                                     // task_service.clone(), // Omit TaskService for now
+                                    )),
+                                );
                                 tracing::debug!("Tool 'execute_command' registered.");
                             } else {
                                 tracing::warn!("Cannot register 'execute_command' tool: known_servers map not provided.");
@@ -741,21 +910,23 @@ impl ToolExecutor {
                 }
                 "echo" => { /* already registered */ }
                 unknown => {
-                    tracing::warn!("Unknown tool '{}' in config [tools].enabled, ignoring.", unknown);
+                    tracing::warn!(
+                        "Unknown tool '{}' in config [tools].enabled, ignoring.",
+                        unknown
+                    );
                 }
             }
         }
-        
+
         tracing::info!("ToolExecutor initialized with tools: {:?}", map.keys());
         Self {
             tools: Arc::new(map),
             agent_registry, // Store the registry
             // REMOVED agent_directory storage
             known_servers, // Store the known_servers map
-            llm, // Store the LLM client
+            llm,           // Store the LLM client
         }
     }
-
 
     /// Executes a specific tool by name with the given JSON parameters.
     #[instrument(skip(self, params), fields(tool_name))] // Add tracing span
@@ -770,25 +941,29 @@ impl ToolExecutor {
                     Ok(v) => {
                         tracing::info!("Tool execution successful."); // Add tracing
                         tracing::trace!(output = %v, "Tool output value."); // Add tracing
-                    },
+                    }
                     Err(e) => {
                         tracing::error!(error = %e, "Tool execution failed."); // Add tracing
                     }
                 }
                 result
-            },
+            }
             None => {
                 tracing::warn!("Tool not found in registered tools."); // Add tracing
                 Err(ToolError::NotFound(tool_name.to_string()))
-            },
+            }
         }
     }
-
 
     /// Executes a task locally using the specified tool and pre-extracted parameters.
     /// Updates the task state and artifacts based on the tool execution result.
     #[instrument(skip(self, task, params), fields(task_id = %task.id, tool_name))] // Add tracing span
-    pub async fn execute_task_locally(&self, task: &mut Task, tool_name: &str, params: Value) -> Result<(), ServerError> {
+    pub async fn execute_task_locally(
+        &self,
+        task: &mut Task,
+        tool_name: &str,
+        params: Value,
+    ) -> Result<(), ServerError> {
         debug!("Executing task locally with pre-extracted parameters."); // Changed to debug
         tracing::trace!(?params, "Parameters received for tool execution."); // Add tracing
 
@@ -797,7 +972,10 @@ impl ToolExecutor {
         if !self.tools.contains_key(tool_name) {
             tracing::warn!(requested_tool = %tool_name, "Requested tool not found or not registered in ToolExecutor.");
             // Add a warning message to the task history
-            let warning_msg = format!("Tool '{}' not found or not enabled for this agent.", tool_name);
+            let warning_msg = format!(
+                "Tool '{}' not found or not enabled for this agent.",
+                tool_name
+            );
             task.history.get_or_insert_with(Vec::new).push(Message {
                 role: Role::Agent,
                 parts: vec![Part::TextPart(TextPart {
@@ -810,7 +988,7 @@ impl ToolExecutor {
             // Return an error instead of falling back to echo
             return Err(ToolError::NotFound(tool_name.to_string()).into());
         }
-        
+
         // Execute the tool using the provided parameters
         debug!("Executing tool '{}'.", tool_name); // Changed to debug
         match self.execute_tool(tool_name, params).await {
@@ -832,28 +1010,29 @@ impl ToolExecutor {
 
                 // If the result is a JSON object or array, add a DataPart
                 if result_value.is_object() || result_value.is_array() {
-                     // Attempt to convert the Value directly into a Map<String, Value>
-                     // This might fail if it's not an object, handle gracefully
-                     let data_map = match result_value.as_object() {
-                         Some(obj) => obj.clone(),
-                         None => {
-                             // If it's not an object (e.g., array or primitive), wrap it
-                             let mut map = serde_json::Map::new();
-                             map.insert("result".to_string(), result_value.clone());
-                             map
-                         }
-                     };
+                    // Attempt to convert the Value directly into a Map<String, Value>
+                    // This might fail if it's not an object, handle gracefully
+                    let data_map = match result_value.as_object() {
+                        Some(obj) => obj.clone(),
+                        None => {
+                            // If it's not an object (e.g., array or primitive), wrap it
+                            let mut map = serde_json::Map::new();
+                            map.insert("result".to_string(), result_value.clone());
+                            map
+                        }
+                    };
 
-                     result_parts.push(Part::DataPart(DataPart {
-                         type_: "json".to_string(), // Assuming JSON data
-                         data: data_map,
-                         metadata: None,
-                     }));
-                     tracing::debug!("Created DataPart for tool result."); // Add tracing
+                    result_parts.push(Part::DataPart(DataPart {
+                        type_: "json".to_string(), // Assuming JSON data
+                        data: data_map,
+                        metadata: None,
+                    }));
+                    tracing::debug!("Created DataPart for tool result."); // Add tracing
                 } else {
-                    tracing::trace!("Tool result is not JSON object/array, skipping DataPart creation."); // Add tracing
+                    tracing::trace!(
+                        "Tool result is not JSON object/array, skipping DataPart creation."
+                    ); // Add tracing
                 }
-
 
                 // Create an artifact from the result parts
                 let artifact_index = task.artifacts.as_ref().map_or(0, |a| a.len()) as i64;
@@ -922,25 +1101,38 @@ impl ToolExecutor {
             }
         }
     }
-    
+
     /// Process a follow-up message using a default tool (e.g., echo).
     /// This is a simplified approach; real follow-up might involve more complex logic or routing.
     #[instrument(skip(self, task, message), fields(task_id = %task.id))] // Add tracing span
-    pub async fn process_follow_up(&self, task: &mut Task, message: Message) -> Result<(), ServerError> {
+    pub async fn process_follow_up(
+        &self,
+        task: &mut Task,
+        message: Message,
+    ) -> Result<(), ServerError> {
         debug!("Processing follow-up message for task."); // Changed to debug
-        // Default to echo tool for simple follow-up processing
+                                                          // Default to echo tool for simple follow-up processing
         let tool_name = "echo";
         tracing::debug!(%tool_name, "Using default tool for follow-up."); // Add tracing
- 
+
         // Extract parameters from the follow-up message
         tracing::debug!("Creating simple parameters for follow-up message."); // Add tracing
-        // Create simple {"text": ...} params for the echo tool
-        let follow_up_text = message.parts.iter()
-            .filter_map(|p| match p { Part::TextPart(tp) => Some(tp.text.as_str()), _ => None })
-            .collect::<Vec<_>>().join("\n");
+                                                                              // Create simple {"text": ...} params for the echo tool
+        let follow_up_text = message
+            .parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::TextPart(tp) => Some(tp.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         let params = json!({"text": follow_up_text});
-        tracing::trace!(?params, "Parameters extracted for follow-up tool execution."); // Add tracing
- 
+        tracing::trace!(
+            ?params,
+            "Parameters extracted for follow-up tool execution."
+        ); // Add tracing
+
         // Execute the tool
         debug!("Executing follow-up tool '{}'.", tool_name); // Changed to debug
         match self.execute_tool(tool_name, params).await {
@@ -996,7 +1188,7 @@ impl ToolExecutor {
             }
             Err(tool_error) => {
                 tracing::error!(error = %tool_error, "Follow-up tool execution failed."); // Add tracing
-                // Update Task Status to Failed
+                                                                                          // Update Task Status to Failed
                 task.status = TaskStatus {
                     state: TaskState::Failed,
                     timestamp: Some(Utc::now()),
@@ -1016,5 +1208,4 @@ impl ToolExecutor {
             }
         }
     }
-    
 }

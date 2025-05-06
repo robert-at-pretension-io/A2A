@@ -1,14 +1,5 @@
-use crate::bidirectional::config::{
-    BidirectionalAgentConfig, ClientConfig, LlmConfig, ModeConfig, ServerConfig,
-};
-use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::bidirectional::BidirectionalAgent;
-use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository};
-use crate::server::services::task_service::TaskService;
-use crate::types::{Message, Part, Role, Task, TaskState, TaskStatus, TextPart};
-use chrono::Utc;
+use crate::bidirectional::bidirectional_agent::BidirectionalAgent; // Corrected import
 use std::collections::HashMap;
-use std::sync::Arc;
 use uuid::Uuid;
 
 // Helper function to parse REPL commands (copied from repl_tests.rs)
@@ -217,7 +208,7 @@ impl ReplCommandProcessor {
                     }
 
                     let file_path = parts[0];
-                    let message = parts[1];
+                    let _message = parts[1]; // Prefix unused
 
                     return format!("📤 Sending message with file: {}", file_path);
                 } else {
@@ -238,7 +229,7 @@ impl ReplCommandProcessor {
                     }
 
                     let json_str = parts[0];
-                    let message = parts[1];
+                    let _message = parts[1]; // Prefix unused
 
                     // In a real implementation, we'd validate the JSON here
 

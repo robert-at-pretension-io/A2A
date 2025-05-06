@@ -1,20 +1,14 @@
-use crate::bidirectional::config::{
-    BidirectionalAgentConfig, ClientConfig, LlmConfig, ModeConfig, ServerConfig,
-};
-use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::bidirectional::BidirectionalAgent;
-use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository};
+use crate::bidirectional::bidirectional_agent::BidirectionalAgent; // Corrected import
+use crate::server::repositories::task_repository::InMemoryTaskRepository;
 use crate::server::services::task_service::TaskService;
 use crate::types::{
-    Artifact, DataPart, FileContent, FilePart, Message, Part, Role, Task, TaskSendParams,
-    TaskState, TaskStatus, TextPart,
+    Artifact, DataPart, FileContent, FilePart, Message, Part, Role, Task, TaskSendParams, TextPart,
 };
-use anyhow::{anyhow, Result};
-use base64;
-use chrono::Utc;
+use anyhow::Result;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::env;
 use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -79,7 +73,7 @@ impl TestAgentWithArtifacts {
             file: FileContent {
                 name: Some(file_name),
                 mime_type: None,
-                bytes: Some(base64::encode(&file_content)),
+                bytes: Some(BASE64_STANDARD.encode(&file_content)),
                 uri: None,
             },
             metadata: None,
@@ -276,10 +270,9 @@ impl TestAgentWithArtifacts {
                                 .name
                                 .clone()
                                 .unwrap_or_else(|| "unnamed".to_string()),
-                            fp.file.bytes.as_ref().map(|b| b.len()).unwrap_or(0) / 4 * 3
+                            fp.file.bytes.as_ref().map(|b| BASE64_STANDARD.decode(b).unwrap_or_default().len()).unwrap_or(0)
                         ));
-                    }
-                    _ => result.push_str("\n     Unknown part type"),
+                    } // Removed unreachable _ pattern as Part enum is exhaustive here
                 }
             }
         }
@@ -294,7 +287,7 @@ async fn test_process_message_with_file() {
     let mut agent = TestAgentWithArtifacts::new();
 
     // Create a session
-    let session_id = agent.create_new_session();
+    let _session_id = agent.create_new_session(); // Prefix unused
 
     // Process a message with a file
     let message = "Here's a file";
@@ -320,7 +313,7 @@ async fn test_process_message_with_data() {
     let mut agent = TestAgentWithArtifacts::new();
 
     // Create a session
-    let session_id = agent.create_new_session();
+    let _session_id = agent.create_new_session(); // Prefix unused
 
     // Create some JSON data
     let mut data_map = Map::new();
@@ -345,7 +338,7 @@ async fn test_process_message_with_data() {
 #[tokio::test]
 async fn test_format_artifact_details() {
     // Create test agent
-    let mut agent = TestAgentWithArtifacts::new();
+    let agent = TestAgentWithArtifacts::new(); // Removed mut
 
     // Create a task ID
     let task_id = Uuid::new_v4().to_string();
@@ -372,7 +365,7 @@ async fn test_format_artifact_details() {
         file: FileContent {
             name: Some("test.txt".to_string()),
             mime_type: None,
-            bytes: Some(base64::encode(b"This is test file content")),
+            bytes: Some(BASE64_STANDARD.encode(b"This is test file content")),
             uri: None,
         },
         metadata: None,

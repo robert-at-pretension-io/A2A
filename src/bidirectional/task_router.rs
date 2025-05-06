@@ -736,8 +736,25 @@ Produce a JSON array where each element is an object matching this schema:
         debug!("DP2/DP3: Performing simple routing decision (Local/Remote/Reject + Tool Choice).");
         let history_text = self.format_history(task.history.as_ref());
 
-        if history_text.is_empty() {
-            warn!("Extracted conversation history is empty. Falling back to local 'echo'.");
+        let latest_request_text = task
+            .history
+            .as_ref()
+            .and_then(|h| h.last())
+            .map(|m| {
+                m.parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        Part::TextPart(tp) => Some(tp.text.as_str()),
+                        _ => None, // Ignore other part types for the main request text
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+
+
+        if latest_request_text.is_empty() {
+            warn!("Latest request text is empty. Falling back to local 'echo'.");
             return Ok(RoutingDecision::Local {
                 tool_name: "echo".to_string(),
                 params: json!({}),
@@ -844,7 +861,7 @@ Do not add any explanations or text outside the JSON object."#,
                 error!(error = %e, "DP2: LLM structured routing decision failed. Falling back to local 'llm'.");
                 return Ok(RoutingDecision::Local {
                     tool_name: "llm".to_string(),
-                    params: json!({"text": history_text}),
+                    params: json!({"text": latest_request_text}),
                 });
             }
         };
@@ -863,13 +880,13 @@ Do not add any explanations or text outside the JSON object."#,
 
                 let tool_param_prompt = if has_memory {
                     format!(
-                        r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
-{}
+                        r#"You have decided to handle the LATEST USER REQUEST locally:
+"{}"
 
 AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
 {}
 
-Based on the CONVERSATION HISTORY (especially the latest request), AGENT MEMORY, and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
+Based on the LATEST USER REQUEST, AGENT MEMORY, and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
 
 AVAILABLE LOCAL TOOLS:
 {}
@@ -888,14 +905,14 @@ CRITICAL INSTRUCTIONS:
 2. For internal commands: If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), use the 'execute_command' tool.
 3. For agent management: ALWAYS use 'remember_agent' for any request that involves remembering, storing, or registering an agent URL.
 Do not add any explanations or text outside the JSON object."#,
-                        history_text, memory_text, local_tools_with_params_desc
+                        latest_request_text, memory_text, local_tools_with_params_desc
                     )
                 } else {
                     format!(
-                        r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
-{}
+                        r#"You have decided to handle the LATEST USER REQUEST locally:
+"{}"
 
-Based on the CONVERSATION HISTORY (especially the latest request) and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
+Based on the LATEST USER REQUEST and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
 
 AVAILABLE LOCAL TOOLS:
 {}
@@ -914,7 +931,7 @@ CRITICAL INSTRUCTIONS:
 2. For internal commands: If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), use the 'execute_command' tool.
 3. For agent management: ALWAYS use 'remember_agent' for any request that involves remembering, storing, or registering an agent URL.
 Do not add any explanations or text outside the JSON object."#,
-                        history_text, local_tools_with_params_desc
+                        latest_request_text, local_tools_with_params_desc
                     )
                 };
 
@@ -950,7 +967,7 @@ Do not add any explanations or text outside the JSON object."#,
                                         .is_none()
                                 {
                                     debug!("remember_agent chosen but no URL in params, trying to extract from history.");
-                                    if let Some(url) = self.extract_url_from_history(&history_text)
+                                    if let Some(url) = self.extract_url_from_history(&latest_request_text) // Use latest_request_text
                                     {
                                         debug!(extracted_url = %url, "Found URL in history for remember_agent.");
                                         let enhanced_params = json!({"agent_base_url": url});
@@ -968,14 +985,14 @@ Do not add any explanations or text outside the JSON object."#,
                                 warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm'.");
                                 Ok(RoutingDecision::Local {
                                     tool_name: "llm".to_string(),
-                                    params: json!({"text": history_text}),
+                                    params: json!({"text": latest_request_text}),
                                 })
                             }
                         } else {
                             warn!(?json_value, "DP3: LLM JSON missing 'tool_name' or 'params'. Falling back to 'llm'.");
                             Ok(RoutingDecision::Local {
                                 tool_name: "llm".to_string(),
-                                params: json!({"text": history_text}),
+                                params: json!({"text": latest_request_text}),
                             })
                         }
                     }
@@ -983,7 +1000,7 @@ Do not add any explanations or text outside the JSON object."#,
                         warn!(error = %e, "DP3: LLM failed to choose tool/extract params. Falling back to 'llm'.");
                         Ok(RoutingDecision::Local {
                             tool_name: "llm".to_string(),
-                            params: json!({"text": history_text}),
+                            params: json!({"text": latest_request_text}),
                         })
                     }
                 }
@@ -1016,7 +1033,7 @@ Do not add any explanations or text outside the JSON object."#,
                         warn!(remote_agent_id = %agent_id, "DP2: LLM delegated to unknown agent. Falling back to local 'llm'.");
                         Ok(RoutingDecision::Local {
                             tool_name: "llm".to_string(),
-                            params: json!({"text": history_text}),
+                            params: json!({"text": latest_request_text}),
                         })
                     }
                 } else {
@@ -1026,7 +1043,7 @@ Do not add any explanations or text outside the JSON object."#,
                     );
                     Ok(RoutingDecision::Local {
                         tool_name: "llm".to_string(),
-                        params: json!({"text": history_text}),
+                        params: json!({"text": latest_request_text}),
                     })
                 }
             }
@@ -1043,7 +1060,7 @@ Do not add any explanations or text outside the JSON object."#,
                 warn!(?decision_val, "DP2: LLM routing decision_type unclear or missing. Falling back to local 'llm'.");
                 Ok(RoutingDecision::Local {
                     tool_name: "llm".to_string(),
-                    params: json!({"text": history_text}),
+                    params: json!({"text": latest_request_text}),
                 })
             }
         }

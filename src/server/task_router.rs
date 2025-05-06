@@ -2,11 +2,10 @@
 ///
 /// This module defines the interfaces and base implementations for routing tasks
 /// to the appropriate execution methods (local tools, remote agents, etc.)
-
 use async_trait::async_trait; // Keep only one
-// use serde::{Deserialize, Serialize}; // Unused
-use serde_json::{Value, json}; // Keep json macro import
-// use std::sync::Arc; // Unused
+                              // use serde::{Deserialize, Serialize}; // Unused
+use serde_json::{json, Value}; // Keep json macro import
+                               // use std::sync::Arc; // Unused
 use uuid::Uuid;
 
 use crate::server::error::ServerError;
@@ -19,7 +18,7 @@ use std::collections::HashMap; // Add HashMap for metadata
 pub struct SubtaskDefinition {
     /// Unique ID for the subtask (e.g., kebab-case identifier)
     pub id: String,
-    
+
     /// Input message/prompt for the subtask
     pub input_message: String,
 
@@ -50,7 +49,7 @@ impl SubtaskDefinition {
             id: format!("subtask-{}", Uuid::new_v4()),
             input_message,
             metadata: Some(HashMap::new()), // Use HashMap instead of serde_json::Map
-            routing_decision: None, // Initialize the missing field
+            routing_decision: None,         // Initialize the missing field
         }
     }
 }
@@ -71,7 +70,7 @@ pub enum RoutingDecision {
         /// ID of the agent to delegate to
         agent_id: String,
     },
-    
+
     /// Break the task down into subtasks
     Decompose {
         /// Subtasks to decompose the task into
@@ -85,7 +84,6 @@ pub enum RoutingDecision {
     },
 
     // --- New Decisions ---
-
     /// Task requires clarification before proceeding
     NeedsClarification {
         /// The question to ask the user for clarification
@@ -98,18 +96,25 @@ pub enum RoutingDecision {
 pub trait LlmTaskRouterTrait: Send + Sync {
     /// Determines the routing strategy for a task
     async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError>;
-    
+
     /// Processes a follow-up message for a task
-    async fn process_follow_up(&self, task_id: &str, message: &Message) -> Result<RoutingDecision, ServerError>;
-    
+    async fn process_follow_up(
+        &self,
+        task_id: &str,
+        message: &Message,
+    ) -> Result<RoutingDecision, ServerError>;
+
     /// Determines the routing decision for a task
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError>;
-    
+
     /// Determines if a task should be decomposed
     async fn should_decompose(&self, params: &TaskSendParams) -> Result<bool, ServerError>;
-    
+
     /// Decomposes a task into subtasks
-    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, ServerError>;
+    async fn decompose_task(
+        &self,
+        params: &TaskSendParams,
+    ) -> Result<Vec<SubtaskDefinition>, ServerError>;
 }
 
 /// Basic implementation of a task router
@@ -123,13 +128,17 @@ impl TaskRouter {
     pub fn new(tools: Vec<String>) -> Self {
         Self { tools }
     }
-    
+
     /// Route a task based on a simple heuristic
     pub fn route(&self, _params: &TaskSendParams) -> RoutingDecision {
         // Simple implementation: always use local tools
         RoutingDecision::Local {
             // Use the first tool as the tool_name, provide empty params
-            tool_name: self.tools.first().cloned().unwrap_or_else(|| "echo".to_string()),
+            tool_name: self
+                .tools
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "echo".to_string()),
             params: json!({}),
         }
     }
@@ -141,27 +150,38 @@ impl LlmTaskRouterTrait for TaskRouter {
         // Simple implementation that always routes to local tools
         Ok(self.route(params))
     }
-    
-    async fn process_follow_up(&self, _task_id: &str, _message: &Message) -> Result<RoutingDecision, ServerError> {
+
+    async fn process_follow_up(
+        &self,
+        _task_id: &str,
+        _message: &Message,
+    ) -> Result<RoutingDecision, ServerError> {
         // Simple implementation that always routes to local tools
         Ok(RoutingDecision::Local {
             // Use the first tool as the tool_name, provide empty params
-            tool_name: self.tools.first().cloned().unwrap_or_else(|| "echo".to_string()),
+            tool_name: self
+                .tools
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "echo".to_string()),
             params: json!({}),
         })
     }
- 
+
     async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, ServerError> {
         // Simple implementation that always routes to local tools
         Ok(self.route(params))
     }
-    
+
     async fn should_decompose(&self, _params: &TaskSendParams) -> Result<bool, ServerError> {
         // Simple implementation that never decomposes tasks
         Ok(false)
     }
-    
-    async fn decompose_task(&self, _params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, ServerError> {
+
+    async fn decompose_task(
+        &self,
+        _params: &TaskSendParams,
+    ) -> Result<Vec<SubtaskDefinition>, ServerError> {
         // Simple implementation that returns an empty list (no decomposition)
         Ok(Vec::new())
     }

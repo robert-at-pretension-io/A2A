@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use std::io::{self, BufRead, Write};
-use tokio::{self, /* sync::oneshot, time::sleep */}; // Removed unused
+use tokio::{self /* sync::oneshot, time::sleep */}; // Removed unused
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, trace, warn};
 
@@ -23,7 +23,8 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
 
     // --- Spawn Background Task for Initial Connection ---
     debug!("Checking if background connection task should be spawned.");
-    if let Some(initial_url) = agent_helpers::client_url(agent) { // Call helper
+    if let Some(initial_url) = agent_helpers::client_url(agent) {
+        // Call helper
         debug!(url = %initial_url, "Spawning background task for initial connection attempt."); // Changed to debug
         println!(
             "⏳ Configured target URL: {}. Attempting connection in background...",
@@ -56,10 +57,13 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
 
                 // Create a *new* client instance specifically for this background task
                 debug!("Creating A2aClient for background connection.");
-                let mut bg_client = crate::client::A2aClient::new(&initial_url); // Use full path
+                let bg_client = crate::client::A2aClient::new(&initial_url); // Use full path
 
                 for attempt in 1..=max_retries {
-                    debug!(attempt, max_retries, "Attempting to get agent card in background.");
+                    debug!(
+                        attempt,
+                        max_retries, "Attempting to get agent card in background."
+                    );
                     match bg_client.get_agent_card().await {
                         Ok(card) => {
                             let remote_agent_name = card.name.clone();
@@ -97,7 +101,10 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                                 debug!(delay_seconds = %retry_delay.as_secs(), "Retrying background connection..."); // Changed to debug
                                 tokio::time::sleep(retry_delay).await;
                             } else {
-                                error!(attempt, max_retries, "Final background connection attempt failed.");
+                                error!(
+                                    attempt,
+                                    max_retries, "Final background connection attempt failed."
+                                );
                             }
                         }
                     }
@@ -110,7 +117,8 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                         initial_url, max_retries
                     ); // Print final failure to console
                 } else {
-                    debug!("Background connection task finished successfully."); // Changed to debug
+                    debug!("Background connection task finished successfully.");
+                    // Changed to debug
                 }
             }, // Background task ends here
         );
@@ -220,7 +228,8 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                     "✅ Server started on http://{}:{}",
                     agent.bind_address, agent.port
                 );
-                println!("   (Server will run until you exit the REPL or send :stop)"); // Indented for clarity
+                println!("   (Server will run until you exit the REPL or send :stop)");
+                // Indented for clarity
             }
             Ok(Ok(Err(e))) => {
                 error!(bind_address = %agent.bind_address, port = %agent.port, error = %e, "Error reported during auto-start server initialization.");
@@ -258,7 +267,8 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
 
     loop {
         // Display prompt (with connected agent information if available)
-        let prompt = if let Some(url) = agent_helpers::client_url(agent) { // Call helper
+        let prompt = if let Some(url) = agent_helpers::client_url(agent) {
+            // Call helper
             format!("agent@{} > ", url)
         } else {
             "agent > ".to_string()
@@ -273,8 +283,8 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
             // EOF reached (e.g., Ctrl+D)
             info!("EOF detected on stdin. Exiting REPL.");
             println!("\nEOF detected. Exiting REPL."); // Add newline for cleaner exit
-                                                      // Perform cleanup similar to :quit
-                                                      // REMOVED agent directory saving on exit
+                                                       // Perform cleanup similar to :quit
+                                                       // REMOVED agent directory saving on exit
 
             if let Some(token) = server_shutdown_token.take() {
                 info!("Shutting down server due to EOF.");
@@ -334,8 +344,8 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                         let streaming_service = agent.streaming_service.clone();
                         let notification_service = agent.notification_service.clone();
                         let bind_address = agent.bind_address.clone();
-                        let agent_card =
-                            serde_json::to_value(agent.create_agent_card()).unwrap_or_else(|e| {
+                        let agent_card = serde_json::to_value(agent.create_agent_card())
+                            .unwrap_or_else(|e| {
                                 warn!("Failed to serialize agent card: {}", e);
                                 serde_json::json!({})
                             });
@@ -381,7 +391,9 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                                     "✅ Server started on http://{}:{}",
                                     agent.bind_address, port
                                 );
-                                println!("   (Server will run until you exit the REPL or send :stop)");
+                                println!(
+                                    "   (Server will run until you exit the REPL or send :stop)"
+                                );
                             }
                             Ok(Ok(Err(e))) => {
                                 error!(%port, error = %e, "Error starting server via REPL command.");
@@ -391,7 +403,9 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                             }
                             Ok(Err(channel_err)) => {
                                 error!(%port, error = %channel_err, "Server init channel error via REPL command.");
-                                println!("❌ Error: Server initialization failed due to channel error");
+                                println!(
+                                    "❌ Error: Server initialization failed due to channel error"
+                                );
                                 server_shutdown_token = None; // Clean up token
                             }
                             Err(timeout_err) => {

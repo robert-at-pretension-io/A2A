@@ -5,7 +5,7 @@
 //!
 //! ## Configuration
 //!
-//! The agent is configured using a TOML file. A sample configuration file 
+//! The agent is configured using a TOML file. A sample configuration file
 //! (bidirectional_agent.toml) is included in the root of the project.
 //!
 //! ```toml
@@ -81,72 +81,70 @@
 //! and automatically enters REPL mode for interactive use.
 
 // Import from other modules in the crate
-use crate::client::{
-    A2aClient,
-    // errors::ClientError, // Unused
-    streaming::{/* StreamingResponse, StreamingResponseStream */}, // Unused
-};
+use crate::client::A2aClient;
 
 use crate::bidirectional::agent_helpers::RollingMemory;
 
 use crate::server::{
-    repositories::task_repository::{TaskRepository, InMemoryTaskRepository},
-    services::{
-        task_service::TaskService,
-        streaming_service::StreamingService,
-        notification_service::NotificationService,
-    },
-    // Use the canonical TaskRouter and ToolExecutor from the server module
-    task_router::{LlmTaskRouterTrait, /* RoutingDecision */}, // Import LlmTaskRouterTrait // Removed unused RoutingDecision
-    tool_executor::ToolExecutor, // Import ToolExecutor
     // Use the canonical AgentRegistry and ClientManager
     agent_registry::AgentRegistry,
     client_manager::ClientManager,
-    run_server,
     // error::ServerError, // Unused
+    repositories::task_repository::{InMemoryTaskRepository, TaskRepository},
+    services::{
+        notification_service::NotificationService, streaming_service::StreamingService,
+        task_service::TaskService,
+    },
+    // Use the canonical TaskRouter and ToolExecutor from the server module
+    task_router::{LlmTaskRouterTrait /* RoutingDecision */}, // Import LlmTaskRouterTrait // Removed unused RoutingDecision
+    tool_executor::ToolExecutor,                             // Import ToolExecutor
 };
 
 use crate::types::{
-    Task, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities,
-    TaskSendParams, TaskQueryParams, /* TaskIdParams, PushNotificationConfig, */ // Unused
+    AgentCard,
+    Message,
+    Part,
+    Role,
+    Task,
+    TaskQueryParams, /* TaskIdParams, PushNotificationConfig, */
+    // Unused
     /* DataPart, FilePart, TaskStatus, */ // Unused
+    TaskSendParams,
+    TaskState,
+    TextPart,
 };
 
-
 use anyhow::{anyhow, /* Context, */ Result}; // Removed unused Context
-// use async_trait::async_trait; // Unused
-use chrono::{/* DateTime, */ Utc}; // Removed unused DateTime
+                                             // use async_trait::async_trait; // Unused
+                                             // Removed unused DateTime
 use dashmap::DashMap;
-use futures_util::{StreamExt, /* TryStreamExt */}; // Removed unused TryStreamExt
-// use reqwest; // Unused
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value, Map}; // Import json macro for serialization
+use futures_util::{StreamExt /* TryStreamExt */}; // Removed unused TryStreamExt
+                                                  // use reqwest; // Unused
+use serde_json::json; // Import json macro for serialization
 use std::{
-    sync::Arc,
+    io::{self /* Write, BufRead */}, // Removed unused Write, BufRead
     // error::Error as StdError, // Unused
     // fs, // Unused
     path::Path,
-    io::{self, /* Write, BufRead */}, // Removed unused Write, BufRead
     path::PathBuf, // Import PathBuf
     // collections::HashMap, // Unused
+    sync::Arc,
 }; // Import StdError for error mapping and IO
-use tokio::{
-    // fs::OpenOptions, // Unused
-    // io::AsyncWriteExt, // Unused
-    // time::sleep, // Unused
-};
-use tokio_util::sync::CancellationToken;
-// use toml; // Unused
-use tracing::{debug, error, info, trace, warn, instrument, /* Level, */ Instrument}; // Removed unused Level
-use tracing_subscriber::{fmt::{self, format::FmtSpan}, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, /* filter */}; // Removed unused filter
+   // use toml; // Unused
+use tracing::{debug, error, info, instrument, trace, warn, /* Level, */ Instrument}; // Removed unused Level
+use tracing_subscriber::{
+    fmt::{self, format::FmtSpan},
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+    EnvFilter, Layer, /* filter */
+}; // Removed unused filter
 use uuid::Uuid;
 
 // Use items from the new config module (relative to parent mod.rs)
 use super::agent_helpers;
 use super::config::*;
-use super::llm_client::{LlmClient, ClaudeLlmClient, GeminiLlmClient}; // Added GeminiLlmClient
-use super::task_router::ExecutionMode;
-// Import the router struct
+use super::llm_client::{ClaudeLlmClient, GeminiLlmClient, LlmClient}; // Added GeminiLlmClient
+                                                                      // Import the router struct
 use crate::bidirectional::BidirectionalTaskRouter;
 
 // REMOVED AgentLogContext struct and impl block
@@ -161,7 +159,6 @@ pub const AGENT_VERSION: &str = "1.0.0";
 // REMOVED AgentDirectoryEntry struct definition
 // REMOVED AgentDirectory struct definition and impl block
 
-
 // REMOVED Local AgentRegistry definition
 // REMOVED Local ClientManager definition
 
@@ -172,7 +169,7 @@ pub const AGENT_VERSION: &str = "1.0.0";
 // REMOVED BidirectionalTaskRouter struct definition
 
 // REMOVED BidirectionalTaskRouter impl block
- 
+
 // REMOVED impl LlmTaskRouterTrait for BidirectionalTaskRouter block
 
 // REMOVED Local ToolExecutor definition
@@ -180,7 +177,6 @@ pub const AGENT_VERSION: &str = "1.0.0";
 // Define a struct that implements the server's ToolExecutorTrait
 // We'll use the provided ToolExecutor from the server module
 // instead of implementing our own ToolExecutorTrait
-
 
 /// Main bidirectional agent implementation
 pub struct BidirectionalAgent {
@@ -201,8 +197,8 @@ pub struct BidirectionalAgent {
     // Server configuration
     pub port: u16,
     pub bind_address: String,
-    pub agent_id: String, // Keep agent_id for internal identification
-    pub agent_name: String, // Name used for the agent card
+    pub agent_id: String,            // Keep agent_id for internal identification
+    pub agent_name: String,          // Name used for the agent card
     pub client_config: ClientConfig, // Store client config for URL access
 
     // A2A client for making outbound requests to other agents
@@ -218,7 +214,7 @@ pub struct BidirectionalAgent {
 
     // Known servers discovered/connected to (URL -> Name) - Shared for background updates
     pub known_servers: Arc<DashMap<String, String>>,
-    
+
     // Rolling memory for outgoing requests and responses
     pub rolling_memory: RollingMemory,
 }
@@ -230,9 +226,11 @@ impl BidirectionalAgent {
         // The task_service is not an Option, so we can use it directly
         self.task_service.set_router(router);
     }
-    
+
     /// Access the task service for testing purposes
-    pub fn get_task_service(&self) -> Option<Arc<crate::server::services::task_service::TaskService>> {
+    pub fn get_task_service(
+        &self,
+    ) -> Option<Arc<crate::server::services::task_service::TaskService>> {
         // Wrap in Some since we're returning an Option but task_service is not optional
         Some(self.task_service.clone())
     }
@@ -260,7 +258,9 @@ impl BidirectionalAgent {
             ))
         } else {
             error!("No LLM configuration provided. Set GEMINI_API_KEY or CLAUDE_API_KEY environment variable, or add corresponding keys to config file.");
-            return Err(anyhow!("No LLM configuration provided. Cannot proceed without LLM client."));
+            return Err(anyhow!(
+                "No LLM configuration provided. Cannot proceed without LLM client."
+            ));
         };
         trace!(system_prompt = %config.llm.system_prompt, "LLM client created.");
 
@@ -289,16 +289,20 @@ impl BidirectionalAgent {
 
         // Get agent's own info needed for ExecuteCommandTool
         let agent_id_for_tool = config.server.agent_id.clone();
-        let agent_name_for_tool = config.server.agent_name.clone().unwrap_or_else(|| agent_id_for_tool.clone());
+        let agent_name_for_tool = config
+            .server
+            .agent_name
+            .clone()
+            .unwrap_or_else(|| agent_id_for_tool.clone());
         let agent_version_for_tool = AGENT_VERSION; // <-- Get agent version from constant
         let bind_address_for_tool = config.server.bind_address.clone();
         let port_for_tool = config.server.port;
 
         let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
-            &config.tools.enabled,            // Pass slice of enabled tool names
-            Some(llm.clone()),                // Pass LLM client (as Option)
-            Some(agent_registry.clone()),     // Pass canonical AgentRegistry (as Option)
-            Some(known_servers.clone()),      // Pass known_servers map for synchronization
+            &config.tools.enabled,        // Pass slice of enabled tool names
+            Some(llm.clone()),            // Pass LLM client (as Option)
+            Some(agent_registry.clone()), // Pass canonical AgentRegistry (as Option)
+            Some(known_servers.clone()),  // Pass known_servers map for synchronization
             // Pass agent's own info
             &agent_id_for_tool,
             &agent_name_for_tool,
@@ -355,7 +359,11 @@ impl BidirectionalAgent {
         trace!(client_initialized = client.is_some(), "A2A client status.");
 
         // Store agent directory path if provided
-        let agent_directory_path = config.tools.agent_directory_path.as_ref().map(PathBuf::from);
+        let agent_directory_path = config
+            .tools
+            .agent_directory_path
+            .as_ref()
+            .map(PathBuf::from);
         trace!(?agent_directory_path, "Agent directory path stored.");
 
         debug!("Constructing BidirectionalAgent struct.");
@@ -377,12 +385,15 @@ impl BidirectionalAgent {
             bind_address: config.server.bind_address.clone(),
             agent_id: config.server.agent_id.clone(),
             // Use configured agent_name, or fall back to agent_id
-            agent_name: config.server.agent_name.unwrap_or_else(|| config.server.agent_id.clone()),
+            agent_name: config
+                .server
+                .agent_name
+                .unwrap_or_else(|| config.server.agent_id.clone()),
             client_config: config.client.clone(), // Store the client config
 
             // Store the A2A client (if configured)
             client,
-            
+
             // Initialize session management
             current_session_id: None,
             session_tasks: Arc::new(DashMap::new()),
@@ -391,12 +402,12 @@ impl BidirectionalAgent {
             repl_log_file: config.mode.repl_log_file.map(std::path::PathBuf::from),
 
             // Initialize known servers map with the one we already passed to ToolExecutor
-            known_servers: known_servers,
-            
+            known_servers,
+
             // Initialize rolling memory with default settings
             rolling_memory: RollingMemory::new(),
         };
-        
+
         // REMOVED periodic agent directory saving logic
 
         // Logging initialization happens in main() now.
@@ -407,7 +418,6 @@ impl BidirectionalAgent {
     }
 
     // ensure_session moved to agent_helpers.rs
-
 
     /// Process a message locally (e.g., from REPL input that isn't a command)
     #[instrument(skip(self, message_text), fields(agent_id = %self.agent_id, message_len = message_text.len()))]
@@ -435,12 +445,18 @@ impl BidirectionalAgent {
             info!(command = %command, args_len = args.len(), "Input matches command keyword. Handling directly.");
             // Call the central command handler from the repl module
             // We need to pass the *original* arguments string, not the potentially empty one
-            let full_args = if command == trimmed_text.to_lowercase() { "" } else { trimmed_text.split_once(' ').map_or("", |(_, a)| a) };
+            let full_args = if command == trimmed_text.to_lowercase() {
+                ""
+            } else {
+                trimmed_text.split_once(' ').map_or("", |(_, a)| a)
+            };
             // Call the function directly, passing the mutable agent reference
-            return crate::bidirectional::repl::commands::handle_repl_command(self, &command, full_args).await;
+            return crate::bidirectional::repl::commands::handle_repl_command(
+                self, &command, full_args,
+            )
+            .await;
         }
         // --- End Command Interception ---
-
 
         // --- Original Logic (if not intercepted as a command) ---
         debug!("Input does not match command keyword. Proceeding with standard task processing.");
@@ -472,14 +488,14 @@ impl BidirectionalAgent {
                             trace!(task_id = %task.id, state = ?task.status.state, "Got last task state.");
                             if task.status.state == TaskState::InputRequired {
                                 debug!(task_id = %last_task_id, "Found task in InputRequired state. Continuing this task."); // Changed to debug
-                                // We should continue this task instead of creating a new one
+                                                                                                                             // We should continue this task instead of creating a new one
                                 continue_task_id = Some(last_task_id.clone());
                             } else {
                                 debug!(task_id = %last_task_id, state = ?task.status.state, "Last task not in InputRequired state.");
                             }
                         }
                         Err(e) => {
-                             warn!(task_id = %last_task_id, error = %e, "Failed to get last task to check state.");
+                            warn!(task_id = %last_task_id, error = %e, "Failed to get last task to check state.");
                         }
                     }
                 } else {
@@ -526,49 +542,51 @@ impl BidirectionalAgent {
             id: task_id.clone(),
             message: initial_message,
             session_id: self.current_session_id.clone(),
-            metadata: None, // Add metadata if needed from REPL context
-            history_length: None, // Request history if needed
+            metadata: None,          // Add metadata if needed from REPL context
+            history_length: None,    // Request history if needed
             push_notification: None, // Set push config if needed
         };
         trace!(?params, "TaskSendParams created.");
 
         debug!(task_id = %task_id, "Calling task_service.process_task."); // Changed to debug
-        
+
         // Get the rolling memory tasks for context enhancement
         let rolling_memory_tasks = self.rolling_memory.get_tasks_chronological();
         debug!(rolling_memory_count = %rolling_memory_tasks.len(), "Retrieved rolling memory tasks for context");
-        
+
         // Before regular task processing, temporarily add rolling memory to the task metadata
         // This will allow the task router to access it without changing the task router interface
         let mut enhanced_params = params.clone();
         if !rolling_memory_tasks.is_empty() {
             // Create or get existing metadata
-            let mut metadata = enhanced_params.metadata.unwrap_or_else(|| serde_json::Map::new());
-            
+            let mut metadata = enhanced_params.metadata.unwrap_or_default();
+
             // Serialize up to 5 most recent tasks from rolling memory (to avoid token limits)
             // We're only going to include the task IDs, as the full tasks would be too large
             let memory_task_ids: Vec<String> = if rolling_memory_tasks.len() > 5 {
-                rolling_memory_tasks[rolling_memory_tasks.len() - 5..].iter()
+                rolling_memory_tasks[rolling_memory_tasks.len() - 5..]
+                    .iter()
                     .map(|task| task.id.clone())
                     .collect()
             } else {
-                rolling_memory_tasks.iter()
+                rolling_memory_tasks
+                    .iter()
                     .map(|task| task.id.clone())
                     .collect()
             };
-            
+
             // Store in metadata for router to access
             metadata.insert("_rolling_memory".to_string(), json!(memory_task_ids));
             enhanced_params.metadata = Some(metadata);
-            
+
             debug!(memory_task_count = %memory_task_ids.len(), "Added rolling memory task IDs to task metadata");
         }
-        
+
         // Use task_service to process the task
         // Instrument the call to task_service
-        let task_result = async {
-            self.task_service.process_task(enhanced_params).await
-        }.instrument(tracing::info_span!("task_service_process", task_id = %task_id_clone)).await;
+        let task_result = async { self.task_service.process_task(enhanced_params).await }
+            .instrument(tracing::info_span!("task_service_process", task_id = %task_id_clone))
+            .await;
 
         let task = match task_result {
             Ok(t) => {
@@ -639,7 +657,6 @@ impl BidirectionalAgent {
     }
 }
 
-
 // REMOVED Config Structs (ServerConfig, ClientConfig, LlmConfig, ToolsConfig, ModeConfig, BidirectionalAgentConfig)
 // REMOVED Default implementations for Config Structs
 // REMOVED Default helper functions (default_port, default_bind_address, default_agent_id, default_system_prompt)
@@ -664,10 +681,10 @@ pub async fn main() -> Result<()> {
     eprintln!("[PRE-LOG] Checking for CLAUDE_API_KEY env var...");
     if config.llm.claude_api_key.is_none() {
         if let Ok(env_key) = std::env::var("CLAUDE_API_KEY") {
-             eprintln!("[PRE-LOG] Found CLAUDE_API_KEY in environment.");
-             config.llm.claude_api_key = Some(env_key);
+            eprintln!("[PRE-LOG] Found CLAUDE_API_KEY in environment.");
+            config.llm.claude_api_key = Some(env_key);
         } else {
-             eprintln!("[PRE-LOG] CLAUDE_API_KEY not found in environment.");
+            eprintln!("[PRE-LOG] CLAUDE_API_KEY not found in environment.");
         }
     }
 
@@ -682,25 +699,38 @@ pub async fn main() -> Result<()> {
             eprintln!("[PRE-LOG] Found --listen flag.");
             config.mode.auto_listen = true;
             std::env::set_var("AUTO_LISTEN", "true"); // Keep env var for REPL auto-start check
-            // Check for optional port after --listen
-            if i + 1 < args.len() && !args[i + 1].starts_with('-') && !args[i + 1].ends_with(".toml") {
+                                                      // Check for optional port after --listen
+            if i + 1 < args.len()
+                && !args[i + 1].starts_with('-')
+                && !args[i + 1].ends_with(".toml")
+            {
                 if let Ok(port) = args[i + 1].parse::<u16>() {
-                    eprintln!("[PRE-LOG] Overriding server port from arg after --listen: {}", port);
+                    eprintln!(
+                        "[PRE-LOG] Overriding server port from arg after --listen: {}",
+                        port
+                    );
                     config.server.port = port;
                     i += 1; // Consume the port argument
                 } else {
-                     eprintln!("[PRE-LOG] WARN: Argument after --listen ('{}') is not a valid port. Ignoring.", args[i+1]);
+                    eprintln!("[PRE-LOG] WARN: Argument after --listen ('{}') is not a valid port. Ignoring.", args[i+1]);
                 }
             }
         } else if arg.starts_with("--port=") {
-             let port_str = arg.trim_start_matches("--port=");
+            let port_str = arg.trim_start_matches("--port=");
             if let Ok(port) = port_str.parse::<u16>() {
-                eprintln!("[PRE-LOG] Overriding server port from --port= arg: {}", port);
+                eprintln!(
+                    "[PRE-LOG] Overriding server port from --port= arg: {}",
+                    port
+                );
                 config.server.port = port;
             } else {
-                 eprintln!("[PRE-LOG] WARN: Invalid port format in '{}'. Ignoring.", arg);
+                eprintln!(
+                    "[PRE-LOG] WARN: Invalid port format in '{}'. Ignoring.",
+                    arg
+                );
             }
-        } else if arg.contains(':') && !arg.starts_with(":") && !Path::new(arg).exists() { // Heuristic: host:port vs file path
+        } else if arg.contains(':') && !arg.starts_with(":") && !Path::new(arg).exists() {
+            // Heuristic: host:port vs file path
             eprintln!("[PRE-LOG] Argument '{}' looks like host:port.", arg);
             let parts: Vec<&str> = arg.split(':').collect();
             if parts.len() == 2 {
@@ -710,16 +740,25 @@ pub async fn main() -> Result<()> {
                     eprintln!("[PRE-LOG] Setting client target_url from arg: {}", url);
                     config.client.target_url = Some(url);
                 } else {
-                    eprintln!("[PRE-LOG] WARN: Invalid port in '{}'. Treating as config file path.", arg);
+                    eprintln!(
+                        "[PRE-LOG] WARN: Invalid port in '{}'. Treating as config file path.",
+                        arg
+                    );
                     load_config_from_path(&mut config, arg)?; // Fallback to config file
                 }
             } else {
-                 eprintln!("[PRE-LOG] WARN: Invalid host:port format '{}'. Treating as config file path.", arg);
-                 load_config_from_path(&mut config, arg)?; // Fallback to config file
+                eprintln!(
+                    "[PRE-LOG] WARN: Invalid host:port format '{}'. Treating as config file path.",
+                    arg
+                );
+                load_config_from_path(&mut config, arg)?; // Fallback to config file
             }
         } else {
             // Assume it's a config file path
-            eprintln!("[PRE-LOG] Argument '{}' assumed to be config file path.", arg);
+            eprintln!(
+                "[PRE-LOG] Argument '{}' assumed to be config file path.",
+                arg
+            );
             load_config_from_path(&mut config, arg)?;
         }
         i += 1;
@@ -729,11 +768,13 @@ pub async fn main() -> Result<()> {
     // --- Initialize Logging ---
     eprintln!("[PRE-LOG] Initializing logging subsystem...");
     // Determine log level (e.g., from RUST_LOG env var, default to info)
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|e| {
-            eprintln!("[PRE-LOG] WARN: Failed to parse RUST_LOG ('{}'). Using default 'info'.", e);
-            EnvFilter::new("info") // Default to info if RUST_LOG not set or invalid
-        });
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|e| {
+        eprintln!(
+            "[PRE-LOG] WARN: Failed to parse RUST_LOG ('{}'). Using default 'info'.",
+            e
+        );
+        EnvFilter::new("info") // Default to info if RUST_LOG not set or invalid
+    });
     eprintln!("[PRE-LOG] Log filter determined: {:?}", env_filter);
 
     // Setup console logging layer
@@ -752,7 +793,10 @@ pub async fn main() -> Result<()> {
 
         // 1. Validate path and create directory, resulting in Option<PathBuf>
         let maybe_valid_path = if let Some(parent_dir) = log_path.parent() {
-            eprintln!("[PRE-LOG] Checking/creating parent directory: {}", parent_dir.display());
+            eprintln!(
+                "[PRE-LOG] Checking/creating parent directory: {}",
+                parent_dir.display()
+            );
             if !parent_dir.exists() {
                 match std::fs::create_dir_all(parent_dir) {
                     Ok(_) => {
@@ -760,29 +804,45 @@ pub async fn main() -> Result<()> {
                         Some(log_path) // Dir created, path is valid
                     }
                     Err(e) => {
-                        eprintln!("[PRE-LOG] ERROR: Failed to create log directory '{}': {}", parent_dir.display(), e);
+                        eprintln!(
+                            "[PRE-LOG] ERROR: Failed to create log directory '{}': {}",
+                            parent_dir.display(),
+                            e
+                        );
                         None // Dir creation failed, path is invalid
                     }
                 }
             } else {
-                 eprintln!("[PRE-LOG] Log directory already exists: {}", parent_dir.display());
+                eprintln!(
+                    "[PRE-LOG] Log directory already exists: {}",
+                    parent_dir.display()
+                );
                 Some(log_path) // Dir already exists, path is valid
             }
         } else {
-             eprintln!("[PRE-LOG] Log path has no parent directory (relative path?). Assuming valid.");
+            eprintln!(
+                "[PRE-LOG] Log path has no parent directory (relative path?). Assuming valid."
+            );
             Some(log_path) // No parent dir (e.g., relative path), assume valid
         };
 
         // 2. If path is valid, attempt to create the file appender layer
         if let Some(path) = maybe_valid_path {
-            eprintln!("[PRE-LOG] Attempting to open/create log file: {}", path.display());
+            eprintln!(
+                "[PRE-LOG] Attempting to open/create log file: {}",
+                path.display()
+            );
             // Use a non-rolling file appender that opens the file in append mode
             let file = match std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&path) {
+                .open(&path)
+            {
                 Ok(file) => {
-                    eprintln!("[PRE-LOG] File appender created successfully for {}", path.display());
+                    eprintln!(
+                        "[PRE-LOG] File appender created successfully for {}",
+                        path.display()
+                    );
                     // Create a more straightforward approach using tracing fields
                     let agent_id_for_log = config.server.agent_id.clone(); // Clone for the layer
 
@@ -796,19 +856,23 @@ pub async fn main() -> Result<()> {
                         .with_ansi(false) // No colors in file
                         .compact(); // Use compact format
 
-                   // Simpler file logger layer without custom field mapping for now
-                   let file_layer = fmt::layer()
-                       .with_writer(file) // Use the opened file
-                       .with_ansi(false) // No colors in file
-                       .event_format(format) // Use the compact format
-                       .with_span_events(FmtSpan::NONE) // Don't include span events like enter/exit
-                       .with_target(true) // Keep target (module path)
-                       .with_level(true); // Keep log level
+                    // Simpler file logger layer without custom field mapping for now
+                    let file_layer = fmt::layer()
+                        .with_writer(file) // Use the opened file
+                        .with_ansi(false) // No colors in file
+                        .event_format(format) // Use the compact format
+                        .with_span_events(FmtSpan::NONE) // Don't include span events like enter/exit
+                        .with_target(true) // Keep target (module path)
+                        .with_level(true); // Keep log level
 
-                   Some(file_layer.boxed()) // Box the layer
-                },
+                    Some(file_layer.boxed()) // Box the layer
+                }
                 Err(e) => {
-                    eprintln!("[PRE-LOG] ERROR: Failed to open log file '{}': {}", path.display(), e);
+                    eprintln!(
+                        "[PRE-LOG] ERROR: Failed to open log file '{}': {}",
+                        path.display(),
+                        e
+                    );
                     None
                 }
             };
@@ -823,7 +887,6 @@ pub async fn main() -> Result<()> {
         None // No log file path configured
     };
 
-
     // Combine layers and initialize the global subscriber
     eprintln!("[PRE-LOG] Combining logging layers and initializing subscriber.");
     let subscriber_builder = tracing_subscriber::registry()
@@ -832,11 +895,11 @@ pub async fn main() -> Result<()> {
 
     // Initialize differently based on whether file_layer is Some or None
     if let Some(file_layer) = file_layer {
-         eprintln!("[PRE-LOG] Initializing logging with console and file layers.");
-         subscriber_builder.with(file_layer).init(); // Pass the unwrapped Box<dyn Layer...>
+        eprintln!("[PRE-LOG] Initializing logging with console and file layers.");
+        subscriber_builder.with(file_layer).init(); // Pass the unwrapped Box<dyn Layer...>
     } else {
-         eprintln!("[PRE-LOG] Initializing logging with console layer only.");
-         subscriber_builder.init(); // Initialize without the file layer
+        eprintln!("[PRE-LOG] Initializing logging with console layer only.");
+        subscriber_builder.init(); // Initialize without the file layer
     }
     eprintln!("[PRE-LOG] Logging initialization complete.");
 
@@ -846,7 +909,11 @@ pub async fn main() -> Result<()> {
 
     // Log a prominent line with agent info for better separation in shared logs
     let agent_id = config.server.agent_id.clone();
-    let agent_name = config.server.agent_name.clone().unwrap_or_else(|| "Unnamed Agent".to_string());
+    let agent_name = config
+        .server
+        .agent_name
+        .clone()
+        .unwrap_or_else(|| "Unnamed Agent".to_string());
     info!(agent_id = %agent_id, agent_name = %agent_name, port = %config.server.port, "AGENT_STARTED"); // Keep this prominent
 
     // Log the final effective configuration *after* logging is initialized
@@ -866,7 +933,6 @@ pub async fn main() -> Result<()> {
         "Key configuration values" // Keep this info log
     );
 
-
     // Determine final mode (logic remains similar, but logging works now)
     debug!("Determining final execution mode.");
     if config.mode.message.is_none()
@@ -876,17 +942,22 @@ pub async fn main() -> Result<()> {
     {
         // No specific mode set in config or args, default to REPL
         if args.len() <= 1 {
-             debug!("No arguments provided and no mode set in config. Defaulting to REPL mode."); // Changed to debug
-             config.mode.repl = true;
+            debug!("No arguments provided and no mode set in config. Defaulting to REPL mode."); // Changed to debug
+            config.mode.repl = true;
         } else {
-             // Args were provided, but didn't set a mode (e.g., just a config file path)
-             debug!("Arguments provided but no specific action mode requested. Defaulting to REPL mode."); // Changed to debug
-             config.mode.repl = true;
+            // Args were provided, but didn't set a mode (e.g., just a config file path)
+            debug!("Arguments provided but no specific action mode requested. Defaulting to REPL mode."); // Changed to debug
+            config.mode.repl = true;
         }
-    } else if args.len() <= 1 && !config.mode.repl && config.mode.message.is_none() && config.mode.remote_task.is_none() && !config.mode.get_agent_card {
-         // Handles case where only a config file was specified, and it didn't set any mode
-         debug!("Config file loaded but no specific mode set. Defaulting to REPL mode."); // Changed to debug
-         config.mode.repl = true;
+    } else if args.len() <= 1
+        && !config.mode.repl
+        && config.mode.message.is_none()
+        && config.mode.remote_task.is_none()
+        && !config.mode.get_agent_card
+    {
+        // Handles case where only a config file was specified, and it didn't set any mode
+        debug!("Config file loaded but no specific mode set. Defaulting to REPL mode."); // Changed to debug
+        config.mode.repl = true;
     }
     debug!(?config.mode, "Final execution mode determined.");
 
@@ -894,12 +965,15 @@ pub async fn main() -> Result<()> {
     if config.mode.repl {
         info!("Starting agent in REPL mode."); // Keep info for mode start
         let mut agent = BidirectionalAgent::new(config.clone())?; // new() logs internally
-        // Call the run_repl function from the new module
+                                                                  // Call the run_repl function from the new module
         crate::bidirectional::repl::run_repl(&mut agent).await
     }
     // Process a single message
     else if let Some(message) = &config.mode.message {
-        info!(message_len = message.len(), "Starting agent to process single message."); // Keep info for mode start
+        info!(
+            message_len = message.len(),
+            "Starting agent to process single message."
+        ); // Keep info for mode start
         let mut agent = BidirectionalAgent::new(config.clone())?;
         println!("💬 Processing message: '{}'", message); // Added emoji
         let response = agent.process_message_locally(message).await?; // Logs internally
@@ -913,20 +987,26 @@ pub async fn main() -> Result<()> {
             error!("Cannot send remote task: No target URL configured.");
             return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file or provide via argument."));
         }
-        info!(message_len = task_message.len(), "Starting agent to send remote task."); // Keep info for mode start
+        info!(
+            message_len = task_message.len(),
+            "Starting agent to send remote task."
+        ); // Keep info for mode start
         let mut agent = BidirectionalAgent::new(config.clone())?;
         println!("📤 Sending task to remote agent: '{}'", task_message); // Added emoji
         let task = agent.send_task_to_remote(task_message).await?; // Logs internally
         println!("✅ Task sent successfully!"); // Added emoji
         println!("   Task ID: {}", task.id); // Indented
-        println!("   Initial state reported by remote: {:?}", task.status.state); // Indented
+        println!(
+            "   Initial state reported by remote: {:?}",
+            task.status.state
+        ); // Indented
         info!("Finished sending remote task."); // Keep info for mode end
         Ok(())
     }
     // Get remote agent card
     else if config.mode.get_agent_card {
         if config.client.target_url.is_none() {
-             error!("Cannot get remote card: No target URL configured.");
+            error!("Cannot get remote card: No target URL configured.");
             return Err(anyhow!("No target URL configured. Add target_url to the [client] section in config file or provide via argument."));
         }
         info!("Starting agent to get remote agent card."); // Keep info for mode start
@@ -936,7 +1016,10 @@ pub async fn main() -> Result<()> {
         println!("📇 Remote Agent Card:"); // Added emoji
         println!("  Name: {}", card.name);
         println!("  Version: {}", card.version);
-        println!("  Description: {}", card.description.as_deref().unwrap_or("None"));
+        println!(
+            "  Description: {}",
+            card.description.as_deref().unwrap_or("None")
+        );
         println!("  URL: {}", card.url);
         // TODO: Print more card details if needed
         println!("  Capabilities: {:?}", card.capabilities);

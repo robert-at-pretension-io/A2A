@@ -1,12 +1,14 @@
+use crate::bidirectional::llm_client::LlmClient;
+use crate::client::{errors::ClientError, A2aClient};
+use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision};
+use crate::types::{
+    AgentCapabilities, AgentCard, Message, Task, TaskSendParams, TaskState, TaskStatus,
+};
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
-use crate::bidirectional::llm_client::LlmClient;
-use crate::client::{A2aClient, errors::ClientError};
-use crate::types::{Task, AgentCard, AgentCapabilities, TaskStatus, TaskState, TaskSendParams, Message};
-use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
 use chrono::Utc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
@@ -31,7 +33,10 @@ impl MockLlmClient {
     }
 
     pub fn with_text_response(mut self, prompt_substring: &str, response: &str) -> Self {
-        self.text_responses.lock().unwrap().insert(prompt_substring.to_string(), response.to_string());
+        self.text_responses
+            .lock()
+            .unwrap()
+            .insert(prompt_substring.to_string(), response.to_string());
         self
     }
 
@@ -41,7 +46,10 @@ impl MockLlmClient {
     }
 
     pub fn with_structured_response(mut self, prompt_substring: &str, response: Value) -> Self {
-        self.structured_responses.lock().unwrap().insert(prompt_substring.to_string(), response);
+        self.structured_responses
+            .lock()
+            .unwrap()
+            .insert(prompt_substring.to_string(), response);
         self
     }
 
@@ -53,10 +61,17 @@ impl MockLlmClient {
 
 #[async_trait]
 impl LlmClient for MockLlmClient {
-    async fn complete(&self, prompt_text: &str, _system_prompt_override: Option<&str>) -> Result<String> {
+    async fn complete(
+        &self,
+        prompt_text: &str,
+        _system_prompt_override: Option<&str>,
+    ) -> Result<String> {
         // Record the call
-        self.calls.lock().unwrap().push((prompt_text.to_string(), None));
-        
+        self.calls
+            .lock()
+            .unwrap()
+            .push((prompt_text.to_string(), None));
+
         // Check if we have a specific response for this prompt
         let text_responses = self.text_responses.lock().unwrap();
         for (key, value) in text_responses.iter() {
@@ -64,7 +79,7 @@ impl LlmClient for MockLlmClient {
                 return Ok(value.clone());
             }
         }
-        
+
         // Return default response
         Ok(self.default_text_response.clone())
     }
@@ -76,7 +91,10 @@ impl LlmClient for MockLlmClient {
         output_schema: Value,
     ) -> Result<Value> {
         // Record the call
-        self.calls.lock().unwrap().push((prompt_text.to_string(), Some(output_schema)));
+        self.calls
+            .lock()
+            .unwrap()
+            .push((prompt_text.to_string(), Some(output_schema)));
 
         // Check if we have a specific response for this prompt
         let structured_responses = self.structured_responses.lock().unwrap();
@@ -85,7 +103,7 @@ impl LlmClient for MockLlmClient {
                 return Ok(value.clone());
             }
         }
-        
+
         // Return default structured response
         Ok(self.default_structured_response.clone())
     }
@@ -130,20 +148,33 @@ impl MockA2aClient {
             metadata: None,
             session_id: None,
         };
-        
-        self.tasks.lock().unwrap().insert(task_id.clone(), task.clone());
+
+        self.tasks
+            .lock()
+            .unwrap()
+            .insert(task_id.clone(), task.clone());
         task
     }
 
     // Mock methods that match A2aClient functionality
     pub async fn send_task(&self, message: &str) -> Result<Task, ClientError> {
-        self.send_task_calls.lock().unwrap().push(message.to_string());
+        self.send_task_calls
+            .lock()
+            .unwrap()
+            .push(message.to_string());
         let task = self.generate_task(message);
         Ok(task)
     }
 
-    pub async fn send_task_with_metadata(&self, message: &str, _metadata: Option<&str>) -> Result<Task, ClientError> {
-        self.send_task_calls.lock().unwrap().push(message.to_string());
+    pub async fn send_task_with_metadata(
+        &self,
+        message: &str,
+        _metadata: Option<&str>,
+    ) -> Result<Task, ClientError> {
+        self.send_task_calls
+            .lock()
+            .unwrap()
+            .push(message.to_string());
         let task = self.generate_task(message);
         Ok(task)
     }
@@ -156,7 +187,7 @@ impl MockA2aClient {
             let a2a_error = crate::client::errors::A2aError::new(
                 crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND,
                 "Task not found",
-                None
+                None,
             );
             Err(ClientError::A2aError(a2a_error))
         }
@@ -165,7 +196,7 @@ impl MockA2aClient {
     pub async fn get_agent_card(&self) -> Result<AgentCard, ClientError> {
         let mut calls = self.get_agent_card_calls.lock().unwrap();
         *calls += 1;
-        
+
         if let Some(card) = self.agent_card.lock().unwrap().clone() {
             Ok(card)
         } else {
@@ -204,7 +235,7 @@ impl MockRouter {
             calls: Mutex::new(Vec::new()),
         }
     }
-    
+
     pub fn get_calls(&self) -> Vec<TaskSendParams> {
         self.calls.lock().unwrap().clone()
     }
@@ -212,33 +243,50 @@ impl MockRouter {
 
 #[async_trait]
 impl LlmTaskRouterTrait for MockRouter {
-    async fn route_task(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::server::ServerError> {
+    async fn route_task(
+        &self,
+        params: &TaskSendParams,
+    ) -> Result<RoutingDecision, crate::server::ServerError> {
         // Record the call
         self.calls.lock().unwrap().push(params.clone());
-        
+
         // Return the predefined decision
         Ok(self.decision.clone())
     }
-    
-    async fn decide(&self, params: &TaskSendParams) -> Result<RoutingDecision, crate::server::ServerError> {
+
+    async fn decide(
+        &self,
+        params: &TaskSendParams,
+    ) -> Result<RoutingDecision, crate::server::ServerError> {
         // Record the call
         self.calls.lock().unwrap().push(params.clone());
-        
+
         // Return the predefined decision
         Ok(self.decision.clone())
     }
-    
-    async fn process_follow_up(&self, _task_id: &str, _message: &Message) -> Result<RoutingDecision, crate::server::ServerError> {
+
+    async fn process_follow_up(
+        &self,
+        _task_id: &str,
+        _message: &Message,
+    ) -> Result<RoutingDecision, crate::server::ServerError> {
         // For follow-up messages, just return the same decision
         Ok(self.decision.clone())
     }
-    
-    async fn should_decompose(&self, _params: &TaskSendParams) -> Result<bool, crate::server::ServerError> {
+
+    async fn should_decompose(
+        &self,
+        _params: &TaskSendParams,
+    ) -> Result<bool, crate::server::ServerError> {
         // By default, don't decompose tasks
         Ok(false)
     }
-    
-    async fn decompose_task(&self, _params: &TaskSendParams) -> Result<Vec<crate::server::task_router::SubtaskDefinition>, crate::server::ServerError> {
+
+    async fn decompose_task(
+        &self,
+        _params: &TaskSendParams,
+    ) -> Result<Vec<crate::server::task_router::SubtaskDefinition>, crate::server::ServerError>
+    {
         // Return empty subtasks list
         Ok(Vec::new())
     }

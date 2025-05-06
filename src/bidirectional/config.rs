@@ -1,7 +1,7 @@
 //! Configuration structures and loading logic for the Bidirectional Agent.
 
 use anyhow::{anyhow, Result};
-use serde::{Deserialize}; // Removed Serialize
+use serde::Deserialize; // Removed Serialize
 use std::fs;
 use std::path::Path;
 use toml;
@@ -35,7 +35,7 @@ pub struct ServerConfig {
 }
 
 /// Client configuration section
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct ClientConfig {
     pub target_url: Option<String>,
 }
@@ -68,7 +68,7 @@ pub struct ToolsConfig {
 }
 
 /// Configuration for the bidirectional agent
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct BidirectionalAgentConfig {
     #[serde(default)]
     pub server: ServerConfig,
@@ -169,14 +169,6 @@ impl Default for ServerConfig {
     }
 }
 
-impl Default for ClientConfig {
-    fn default() -> Self {
-        Self {
-            target_url: None,
-        }
-    }
-}
-
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
@@ -185,19 +177,6 @@ impl Default for LlmConfig {
             gemini_api_key: None,
             gemini_model_id: default_gemini_model_id(),
             gemini_api_endpoint: default_gemini_api_endpoint(),
-        }
-    }
-}
-
-impl Default for BidirectionalAgentConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            client: ClientConfig::default(),
-            llm: LlmConfig::default(),
-            tools: ToolsConfig::default(), // <-- new
-            mode: ModeConfig::default(),
-            config_file_path: None,
         }
     }
 }
@@ -256,52 +235,78 @@ impl BidirectionalAgentConfig {
 
 /// Helper function to load config from path, used in main arg parsing.
 /// Logs using eprintln because tracing might not be initialized yet.
-pub fn load_config_from_path(config: &mut BidirectionalAgentConfig, config_path: &str) -> Result<()> {
-    eprintln!("[PRE-LOG] Attempting to load configuration from path: {}", config_path);
-    match BidirectionalAgentConfig::from_file(config_path) { // from_file now uses debug/trace internally if logging is up
+pub fn load_config_from_path(
+    config: &mut BidirectionalAgentConfig,
+    config_path: &str,
+) -> Result<()> {
+    eprintln!(
+        "[PRE-LOG] Attempting to load configuration from path: {}",
+        config_path
+    );
+    match BidirectionalAgentConfig::from_file(config_path) {
+        // from_file now uses debug/trace internally if logging is up
         Ok(mut loaded_config) => {
             eprintln!("[PRE-LOG] Config file '{}' loaded successfully. Merging with existing/default config.", config_path);
             // Preserve env var API keys if they were set and config file doesn't have them
             if config.llm.claude_api_key.is_some() && loaded_config.llm.claude_api_key.is_none() {
-                eprintln!("[PRE-LOG] Preserving Claude API key from environment or previous config.");
+                eprintln!(
+                    "[PRE-LOG] Preserving Claude API key from environment or previous config."
+                );
                 loaded_config.llm.claude_api_key = config.llm.claude_api_key.clone();
             }
             if config.llm.gemini_api_key.is_some() && loaded_config.llm.gemini_api_key.is_none() {
-                eprintln!("[PRE-LOG] Preserving Gemini API key from environment or previous config.");
+                eprintln!(
+                    "[PRE-LOG] Preserving Gemini API key from environment or previous config."
+                );
                 loaded_config.llm.gemini_api_key = config.llm.gemini_api_key.clone();
             }
 
             // Preserve command-line overrides if they were set before loading the file
             // Example: Preserve port if set via --port= or --listen before the config file path
-             if config.server.port != default_port() && loaded_config.server.port == default_port() {
-                 eprintln!("[PRE-LOG] Preserving server port override ({}) from command line over config file.", config.server.port);
-                 loaded_config.server.port = config.server.port;
-             }
-             // Example: Preserve target_url if set via host:port before the config file path
-             if config.client.target_url.is_some() && loaded_config.client.target_url.is_none() {
-                 eprintln!("[PRE-LOG] Preserving target URL override ('{}') from command line over config file.", config.client.target_url.as_deref().unwrap_or("N/A"));
-                 loaded_config.client.target_url = config.client.target_url.clone();
-             }
-             // Example: Preserve auto_listen if set via --listen before the config file path
-             if config.mode.auto_listen && !loaded_config.mode.auto_listen {
-                 eprintln!("[PRE-LOG] Preserving auto-listen override from command line over config file.");
-                 loaded_config.mode.auto_listen = true;
-             }
-             // Preserve REPL log file if set via command line? (Less common, maybe not needed)
+            if config.server.port != default_port() && loaded_config.server.port == default_port() {
+                eprintln!("[PRE-LOG] Preserving server port override ({}) from command line over config file.", config.server.port);
+                loaded_config.server.port = config.server.port;
+            }
+            // Example: Preserve target_url if set via host:port before the config file path
+            if config.client.target_url.is_some() && loaded_config.client.target_url.is_none() {
+                eprintln!("[PRE-LOG] Preserving target URL override ('{}') from command line over config file.", config.client.target_url.as_deref().unwrap_or("N/A"));
+                loaded_config.client.target_url = config.client.target_url.clone();
+            }
+            // Example: Preserve auto_listen if set via --listen before the config file path
+            if config.mode.auto_listen && !loaded_config.mode.auto_listen {
+                eprintln!(
+                    "[PRE-LOG] Preserving auto-listen override from command line over config file."
+                );
+                loaded_config.mode.auto_listen = true;
+            }
+            // Preserve REPL log file if set via command line? (Less common, maybe not needed)
 
             // Preserve the config file path itself
             loaded_config.config_file_path = Some(config_path.to_string());
-            eprintln!("[PRE-LOG] Setting config_file_path reference to: {}", config_path);
+            eprintln!(
+                "[PRE-LOG] Setting config_file_path reference to: {}",
+                config_path
+            );
 
             *config = loaded_config; // Overwrite existing config with loaded, potentially merged, config
-            eprintln!("[PRE-LOG] Successfully loaded and applied configuration from {}", config_path);
-        },
+            eprintln!(
+                "[PRE-LOG] Successfully loaded and applied configuration from {}",
+                config_path
+            );
+        }
         Err(e) => {
             // If a config file was specified but failed to load, it's a fatal error.
-            eprintln!("[PRE-LOG] ERROR: Failed to load configuration from '{}': {}", config_path, e);
+            eprintln!(
+                "[PRE-LOG] ERROR: Failed to load configuration from '{}': {}",
+                config_path, e
+            );
             eprintln!("[PRE-LOG] Please check the configuration file path and syntax.");
             // Use context to chain the error
-            return Err(anyhow!("Configuration file loading failed for path: {}", config_path).context(e));
+            return Err(anyhow!(
+                "Configuration file loading failed for path: {}",
+                config_path
+            )
+            .context(e));
         }
     }
     Ok(())

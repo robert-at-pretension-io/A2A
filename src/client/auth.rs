@@ -11,8 +11,10 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::client::A2aClient;
     use crate::types::{AgentAuthentication, AgentCapabilities, AgentCard}; // Import necessary types
+    use mockito::Server;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_agent_card_with_auth_requirements() {

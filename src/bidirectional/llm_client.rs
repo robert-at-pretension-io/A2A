@@ -96,7 +96,7 @@ impl LlmClient for ClaudeLlmClient {
         trace!(response_json = %response_json, "Parsed Claude API response.");
 
         // Extract the completion
-        trace!("Extracting completion text from response.");
+        trace!("Extracting completion text https://www.reddit.com/r/ArtificialInteligence/comments/1kfhh13/free_will_alignment_prompt/from response.");
         let completion = response_json["content"][0]["text"]
             .as_str()
             .ok_or_else(|| anyhow!("Failed to extract completion from response"))?;

@@ -13,45 +13,34 @@ pub mod tool_executor;
 
 pub mod error; // Make the error module public
 
-use crate::types;
-use hyper::{Body, Request, Response, Server, StatusCode, header};
 use hyper::service::{make_service_fn, service_fn};
+use hyper::{header, Body, Request, Response, Server, StatusCode};
+use serde_json::json;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use serde_json::{json, Value};
-use uuid::Uuid;
 
-pub use error::ServerError;
 use crate::server::handlers::jsonrpc_handler;
-use crate::server::repositories::task_repository::InMemoryTaskRepository;
-use crate::server::services::task_service::TaskService;
-use crate::server::services::streaming_service::StreamingService;
 use crate::server::services::notification_service::NotificationService;
+use crate::server::services::streaming_service::StreamingService;
+use crate::server::services::task_service::TaskService;
+pub use error::ServerError;
 use tokio::task::JoinHandle; // Add JoinHandle import
 use tokio_util::sync::CancellationToken; // Add CancellationToken import
 
 // Use our local component types
-use crate::server::{
-    task_router::TaskRouter,
-    tool_executor::ToolExecutor,
-    client_manager::ClientManager,
-    agent_registry::AgentRegistry,
-};
-
 
 /// Runs the A2A server on the specified port, accepting pre-built services.
 /// Returns a JoinHandle for the server task.
 pub async fn run_server(
     port: u16,
-    bind_address: &str, // Add bind address parameter
-    task_service: Arc<TaskService>, // Accept pre-built TaskService
-    streaming_service: Arc<StreamingService>, // Accept pre-built StreamingService
+    bind_address: &str,                             // Add bind address parameter
+    task_service: Arc<TaskService>,                 // Accept pre-built TaskService
+    streaming_service: Arc<StreamingService>,       // Accept pre-built StreamingService
     notification_service: Arc<NotificationService>, // Accept pre-built NotificationService
-    shutdown_token: CancellationToken, // Add shutdown token
-    agent_card: Option<serde_json::Value>, // Optional custom agent card
+    shutdown_token: CancellationToken,              // Add shutdown token
+    agent_card: Option<serde_json::Value>,          // Optional custom agent card
 ) -> Result<JoinHandle<()>, Box<dyn std::error::Error + Send + Sync>> {
-
     // Create service function using the provided services
     let service = make_service_fn(move |_| {
         let task_svc = task_service.clone();
@@ -59,31 +48,28 @@ pub async fn run_server(
         let notif_svc = notification_service.clone();
         // Clone the custom agent card or use the default
         let agent_card_clone = agent_card.clone();
-        
+
         async move {
             Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
                 let task_svc = task_svc.clone();
                 let stream_svc = stream_svc.clone();
                 let notif_svc = notif_svc.clone();
                 let card = agent_card_clone.clone();
-                
+
                 async move {
                     // For agent card requests, check if we have a custom one first
                     if req.uri().path() == "/.well-known/agent.json" && card.is_some() {
                         return Ok(Response::builder()
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "application/json")
-                            .body(Body::from(serde_json::to_string(&card.as_ref().unwrap()).unwrap()))
+                            .body(Body::from(
+                                serde_json::to_string(&card.as_ref().unwrap()).unwrap(),
+                            ))
                             .unwrap());
                     }
-                    
+
                     // Otherwise, use the standard handler
-                    jsonrpc_handler(
-                        req,
-                        task_svc,
-                        stream_svc,
-                        notif_svc
-                    ).await
+                    jsonrpc_handler(req, task_svc, stream_svc, notif_svc).await
                 }
             }))
         }
@@ -91,7 +77,8 @@ pub async fn run_server(
 
     // Create the server address
     let addr_str = format!("{}:{}", bind_address, port);
-    let addr: SocketAddr = addr_str.parse()
+    let addr: SocketAddr = addr_str
+        .parse()
         .map_err(|e| format!("Invalid bind address '{}': {}", addr_str, e))?;
 
     // Create the server with graceful shutdown
@@ -113,7 +100,6 @@ pub async fn run_server(
 
     Ok(handle)
 }
-
 
 /// Creates and returns the agent card for this server
 // TODO: This should likely move or accept config to generate dynamic URL/skills

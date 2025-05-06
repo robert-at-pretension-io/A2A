@@ -1,13 +1,13 @@
-mod validator;
-mod property_tests;
-mod mock_server;
-mod fuzzer;
-mod types;
-mod client;
-mod schema_utils;
-mod runner;
-mod server;
 mod bidirectional;
+mod client;
+mod fuzzer;
+mod mock_server;
+mod property_tests;
+mod runner;
+mod schema_utils;
+mod server;
+mod types;
+mod validator;
 
 // Note: The bidirectional agent is available as a separate binary.
 // To run it, use: cargo run --bin bidirectional-agent [server:port | config_file]
@@ -15,15 +15,14 @@ mod bidirectional;
 #[cfg(test)]
 mod client_tests;
 
-use std::time::Duration; // Add Duration import
 use clap::{Parser, Subcommand};
-use futures_util::StreamExt;
+use sha2::{Digest, Sha256};
 use std::fs; // Add this
 use std::io::{self, BufRead, Write}; // Add this
 use std::path::{Path, PathBuf}; // Add this
-use std::sync::Arc; // For reference server
 use std::process::Command; // Keep this for now
-use sha2::{Digest, Sha256}; // For hash calculation
+use std::sync::Arc; // For reference server
+use std::time::Duration; // Add Duration import // For hash calculation
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -81,7 +80,7 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
-    }
+    },
 }
 
 #[derive(Subcommand)]
@@ -101,7 +100,6 @@ enum ConfigCommands {
         force: bool,
     },
 }
-
 
 #[derive(Subcommand)]
 enum AgentTesterCommands {
@@ -139,7 +137,6 @@ enum AgentTesterCommands {
     },
 }
 
-
 fn main() {
     let cli = Cli::parse();
 
@@ -164,26 +161,33 @@ fn main() {
         }
         Commands::ReferenceServer { port } => {
             println!("Starting reference A2A server on port {}...", port);
-            
+
             // Create a runtime for the async server
             let rt = tokio::runtime::Runtime::new().unwrap();
             if let Err(e) = rt.block_on(async {
                 // Use default settings for the reference server
                 let bind_address = "127.0.0.1";
-                let task_repo = Arc::new(server::repositories::task_repository::InMemoryTaskRepository::new());
-                
+                let task_repo =
+                    Arc::new(server::repositories::task_repository::InMemoryTaskRepository::new());
+
                 // Create services
-                let task_service = Arc::new(server::services::task_service::TaskService::standalone(task_repo.clone()));
-                let streaming_service = Arc::new(server::services::streaming_service::StreamingService::new(task_repo.clone()));
-                let notification_service = Arc::new(server::services::notification_service::NotificationService::new(task_repo));
-                
+                let task_service = Arc::new(
+                    server::services::task_service::TaskService::standalone(task_repo.clone()),
+                );
+                let streaming_service = Arc::new(
+                    server::services::streaming_service::StreamingService::new(task_repo.clone()),
+                );
+                let notification_service = Arc::new(
+                    server::services::notification_service::NotificationService::new(task_repo),
+                );
+
                 // Create cancellation token for graceful shutdown
                 let shutdown_token = tokio_util::sync::CancellationToken::new();
-                
+
                 // Start the server
                 // Create agent card for the server
                 let agent_card = Some(server::create_agent_card());
-                
+
                 server::run_server(
                     *port,
                     bind_address,
@@ -191,8 +195,9 @@ fn main() {
                     streaming_service,
                     notification_service,
                     shutdown_token,
-                    agent_card
-                ).await
+                    agent_card,
+                )
+                .await
             }) {
                 eprintln!("Server error: {}", e);
                 std::process::exit(1);
@@ -203,7 +208,8 @@ fn main() {
             // Call fuzzing module
             fuzzer::run_fuzzer(target, *time);
         }
-        Commands::RunTests { url, timeout } => { // Removed run_unofficial
+        Commands::RunTests { url, timeout } => {
+            // Removed run_unofficial
             // Create a runtime for the async test runner
             let rt = tokio::runtime::Runtime::new().unwrap();
             let config = runner::TestRunnerConfig {
@@ -234,26 +240,28 @@ fn main() {
                             std::process::exit(1);
                         }
                     }
-                },
+                }
                 ConfigCommands::CheckSchema => {
                     println!("🔎 Checking remote schema...");
                     match schema_utils::check_and_download_remote_schema() {
                         Ok(schema_utils::SchemaCheckResult::NewVersionSaved(path)) => {
-                             println!("\n======================================================================");
-                             println!("🚀 A new version of the A2A schema was detected and saved to:");
-                             println!("   {}", path);
-                             println!("👉 To use this new version, update 'a2a_schema.config' and run 'cargo run -- config generate-types'.");
-                             println!("======================================================================\n");
-                        },
+                            println!("\n======================================================================");
+                            println!(
+                                "🚀 A new version of the A2A schema was detected and saved to:"
+                            );
+                            println!("   {}", path);
+                            println!("👉 To use this new version, update 'a2a_schema.config' and run 'cargo run -- config generate-types'.");
+                            println!("======================================================================\n");
+                        }
                         Ok(schema_utils::SchemaCheckResult::NoChange) => {
                             println!("✅ Remote schema matches the active local version. No changes needed.");
-                        },
+                        }
                         Err(e) => {
                             eprintln!("❌ Error checking remote schema: {}", e);
                             std::process::exit(1);
                         }
                     }
-                },
+                }
                 ConfigCommands::GenerateTypes { force } => {
                     if let Err(e) = generate_types_from_schema(*force) {
                         eprintln!("❌ Error generating types: {}", e);
@@ -264,7 +272,6 @@ fn main() {
         }
     }
 }
-
 
 // Constants used for schema handling
 const SCHEMAS_DIR: &str = "schemas";
@@ -297,48 +304,68 @@ fn get_active_schema_info() -> Result<(String, PathBuf), String> {
             }
         }
     }
-    Err(format!("Could not find 'active_version = \"...\"' in {}", CONFIG_FILE))
+    Err(format!(
+        "Could not find 'active_version = \"...\"' in {}",
+        CONFIG_FILE
+    ))
 }
 
 /// Generate Rust types from the active schema
 fn generate_types_from_schema(force: bool) -> Result<(), String> {
     // 1. Determine active schema
     let (active_version, active_schema_path) = get_active_schema_info()?;
-    
+
     // 2. Check if schema file exists
     if !active_schema_path.exists() {
-        return Err(format!("Active schema file not found: {}", active_schema_path.display()));
+        return Err(format!(
+            "Active schema file not found: {}",
+            active_schema_path.display()
+        ));
     }
-    
+
     // 3. Read schema content
-    let schema_content = fs::read_to_string(&active_schema_path)
-        .map_err(|e| format!("Failed to read active schema '{}': {}", active_schema_path.display(), e))?;
-    
+    let schema_content = fs::read_to_string(&active_schema_path).map_err(|e| {
+        format!(
+            "Failed to read active schema '{}': {}",
+            active_schema_path.display(),
+            e
+        )
+    })?;
+
     // 4. Determine if regeneration is needed
     let current_hash = calculate_hash(&schema_content);
     let output_path = Path::new(OUTPUT_PATH);
     let output_exists = output_path.exists();
-    
+
     // Store hashes in current directory for simpler management
     let hash_dir = Path::new(".");
     let hash_file_name = format!("{}{}_hash.txt", HASH_FILE_NAME_PREFIX, active_version);
     let hash_file_path = hash_dir.join(hash_file_name);
-    
+
     let previous_hash = fs::read_to_string(&hash_file_path).ok();
-    let needs_regeneration = force || !output_exists || previous_hash.map_or(true, |ph| ph != current_hash);
-    
+    let needs_regeneration =
+        force || !output_exists || previous_hash.is_none_or(|ph| ph != current_hash);
+
     if needs_regeneration {
-        println!("💡 Generating types from active schema (version '{}', path: {})...",
-                 active_version, active_schema_path.display());
-        
+        println!(
+            "💡 Generating types from active schema (version '{}', path: {})...",
+            active_version,
+            active_schema_path.display()
+        );
+
         // Ensure the output directory exists
         if let Some(parent) = output_path.parent() {
             if !parent.exists() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create output directory '{}': {}", parent.display(), e))?;
+                fs::create_dir_all(parent).map_err(|e| {
+                    format!(
+                        "Failed to create output directory '{}': {}",
+                        parent.display(),
+                        e
+                    )
+                })?;
             }
         }
-        
+
         // Run cargo typify
         let typify_status = Command::new("cargo")
             .args([
@@ -348,8 +375,13 @@ fn generate_types_from_schema(force: bool) -> Result<(), String> {
                 &active_schema_path.to_string_lossy(),
             ])
             .status()
-            .map_err(|e| format!("Failed to execute cargo-typify command: {}. Is it installed?", e))?;
-        
+            .map_err(|e| {
+                format!(
+                    "Failed to execute cargo-typify command: {}. Is it installed?",
+                    e
+                )
+            })?;
+
         if !typify_status.success() {
             return Err(format!(
                 "Failed to run 'cargo typify' for schema '{}'. Is cargo-typify installed (`cargo install cargo-typify`) and in your PATH? Exit status: {}",
@@ -357,16 +389,24 @@ fn generate_types_from_schema(force: bool) -> Result<(), String> {
                 typify_status
             ));
         }
-        
+
         // Write new hash
-        fs::write(&hash_file_path, &current_hash)
-            .map_err(|e| format!("Warning: Failed to write new schema hash to '{}': {}", hash_file_path.display(), e))?;
-        
-        println!("✅ Successfully generated types into '{}' using schema version '{}'", OUTPUT_PATH, active_version);
+        fs::write(&hash_file_path, &current_hash).map_err(|e| {
+            format!(
+                "Warning: Failed to write new schema hash to '{}': {}",
+                hash_file_path.display(),
+                e
+            )
+        })?;
+
+        println!(
+            "✅ Successfully generated types into '{}' using schema version '{}'",
+            OUTPUT_PATH, active_version
+        );
     } else {
         println!("✅ Schema hash matches for active version '{}' and output exists. Skipping type generation. Use --force to regenerate.", active_version);
     }
-    
+
     Ok(())
 }
 
@@ -378,7 +418,7 @@ fn set_active_schema_version(new_version: &str) -> io::Result<()> {
 
     // Read the existing file line by line
     if config_path.exists() {
-        let file = fs::File::open(&config_path)?;
+        let file = fs::File::open(config_path)?;
         let reader = io::BufReader::new(file);
 
         for line in reader.lines() {
@@ -399,12 +439,15 @@ fn set_active_schema_version(new_version: &str) -> io::Result<()> {
         new_lines.push(format!("active_version = \"{}\"", new_version));
         // Add a comment if the file was empty or didn't have the line
         if new_lines.len() == 1 {
-             new_lines.insert(0, "# Specifies the schema version to use for generating src/types.rs".to_string());
+            new_lines.insert(
+                0,
+                "# Specifies the schema version to use for generating src/types.rs".to_string(),
+            );
         }
     }
 
     // Write the modified content back to the file
-    let mut file = fs::File::create(&config_path)?;
+    let mut file = fs::File::create(config_path)?;
     for line in new_lines {
         writeln!(file, "{}", line)?;
     }

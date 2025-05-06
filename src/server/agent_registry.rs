@@ -1,13 +1,12 @@
 /// Manages discovery and caching of known A2A agents.
-
 use crate::client::A2aClient;
-use crate::types::AgentCard;
 use crate::server::error::ServerError;
+use crate::types::AgentCard;
 
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
-use tracing::{instrument, debug, info};
+use tracing::{debug, info, instrument};
 
 /// Information cached about a known agent.
 #[derive(Clone, Debug)]
@@ -21,6 +20,12 @@ pub struct CachedAgentInfo {
 pub struct AgentRegistry {
     /// Map from agent ID (or URL if ID not known yet) to cached info.
     pub agents: Arc<DashMap<String, CachedAgentInfo>>,
+}
+
+impl Default for AgentRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AgentRegistry {
@@ -52,22 +57,23 @@ impl AgentRegistry {
                 self.agents.insert(agent_id.clone(), cache_info);
                 info!(%agent_id, %url, "Successfully discovered and registered/updated agent."); // Keep info for success
                 Ok(agent_id) // Return the agent's name/ID
-            },
-            Err(e) => {
-                Err(ServerError::A2aClientError(format!("Failed to get agent card from {}: {}", url, e)))
             }
+            Err(e) => Err(ServerError::A2aClientError(format!(
+                "Failed to get agent card from {}: {}",
+                url, e
+            ))),
         }
     }
 
     /// Registers a known agent directly
     pub fn register_agent(&self, agent_id: &str, url: &str, name: &str) {
-        // Create a basic card 
+        // Create a basic card
         let card = AgentCard {
             name: name.to_string(),
             description: Some(format!("Agent '{}'", name)),
             url: url.to_string(),
             provider: None,
-            version: "1.0".to_string(), 
+            version: "1.0".to_string(),
             documentation_url: None,
             capabilities: crate::types::AgentCapabilities {
                 streaming: true,
@@ -85,7 +91,7 @@ impl AgentRegistry {
             card,
             last_checked: Utc::now(),
         };
-        
+
         self.agents.insert(agent_id.to_string(), cache_info);
     }
 
@@ -98,13 +104,17 @@ impl AgentRegistry {
     pub async fn get_agent_url(&self, agent_id: &str) -> Result<String, ServerError> {
         match self.get(agent_id) {
             Some(info) => Ok(info.card.url),
-            None => Err(ServerError::AgentNotFound(format!("Agent '{}' not found in registry", agent_id)))
+            None => Err(ServerError::AgentNotFound(format!(
+                "Agent '{}' not found in registry",
+                agent_id
+            ))),
         }
     }
 
     /// Returns a snapshot of all currently known agents.
     pub fn all(&self) -> Vec<(String, CachedAgentInfo)> {
-        self.agents.iter()
+        self.agents
+            .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect()
     }

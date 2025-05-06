@@ -1,17 +1,17 @@
-use crate::types::{
-    Task, TaskStatusUpdateEvent, TaskArtifactUpdateEvent, Part, TextPart, TaskStatus, TaskState,
-    Message, Role, Artifact,
-};
-use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository};
+use crate::server::repositories::task_repository::TaskRepository;
 use crate::server::ServerError;
-use std::sync::Arc;
+use crate::types::{
+    Message, Part, Role, Task, TaskArtifactUpdateEvent, TaskState, TaskStatus,
+    TaskStatusUpdateEvent, TextPart,
+};
 use chrono::Utc; // Import Utc
-use tokio::sync::mpsc;
-use serde_json::{json, Value};
 use futures_util::Stream;
+use serde_json::{json, Value};
 use std::pin::Pin;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, error, info, trace, warn, instrument}; // Import tracing macros
+use tracing::{debug, error, info, instrument, trace, warn}; // Import tracing macros
 
 /// Service for handling streaming tasks
 pub struct StreamingService {
@@ -30,7 +30,7 @@ impl StreamingService {
     pub fn create_streaming_task(
         &self,
         request_id: Value,
-        task: Task
+        task: Task,
     ) -> Pin<Box<dyn Stream<Item = Result<String, hyper::Error>> + Send>> {
         info!("Creating SSE stream for new task.");
         trace!(?task, "Initial task details for streaming.");
@@ -53,12 +53,13 @@ impl StreamingService {
             "jsonrpc": "2.0",
             "id": request_id.clone(),
             "result": status_event
-        }).to_string();
+        })
+        .to_string();
         trace!(sse_message = %status_json, "Serialized initial status event.");
 
         debug!("Spawning background task to handle streaming updates.");
         tokio::spawn(async move {
-             // Create a tracing span for the streaming task
+            // Create a tracing span for the streaming task
             let span = tracing::info_span!(
                 "sse_stream_task",
                 task_id = %task_id,
@@ -70,8 +71,8 @@ impl StreamingService {
 
             debug!("Sending initial status event via SSE channel.");
             if let Err(e) = tx.send(Ok(format!("data: {}\n\n", status_json))).await {
-                 error!(error = %e, "Failed to send initial status event to SSE channel. Closing stream.");
-                 return; // Exit task if initial send fails
+                error!(error = %e, "Failed to send initial status event to SSE channel. Closing stream.");
+                return; // Exit task if initial send fails
             }
             trace!("Initial status event sent.");
 
@@ -94,7 +95,9 @@ impl StreamingService {
             // Check if task requires input based on metadata - this is for test_sendsubscribe_input_required_followup_stream
             debug!("Checking if task requires input based on metadata.");
             let requires_input = if let Some(meta) = &current_task.metadata {
-                meta.get("_mock_require_input").and_then(|v| v.as_bool()).unwrap_or(false)
+                meta.get("_mock_require_input")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
             } else {
                 false
             };
@@ -104,7 +107,7 @@ impl StreamingService {
             if requires_input {
                 info!("Task requires input. Updating state and sending InputRequired event.");
                 // Update task state to InputRequired
-                use crate::types::{TaskStatus, TaskState, Message, Role, Part, TextPart};
+                use crate::types::{Message, Part, Role, TaskState, TaskStatus, TextPart};
                 use chrono::Utc;
 
                 current_task.status = TaskStatus {
@@ -125,10 +128,13 @@ impl StreamingService {
                 // Save the updated task
                 debug!("Saving InputRequired task state.");
                 if let Err(e) = task_repo.save_task(&current_task).await {
-                     error!(error = %e, "Failed to save InputRequired task state. Stream may be inconsistent.");
+                    error!(error = %e, "Failed to save InputRequired task state. Stream may be inconsistent.");
                 }
-                if let Err(e) = task_repo.save_state_history(&current_task.id, &current_task).await {
-                     error!(error = %e, "Failed to save InputRequired task state history. Stream may be inconsistent.");
+                if let Err(e) = task_repo
+                    .save_state_history(&current_task.id, &current_task)
+                    .await
+                {
+                    error!(error = %e, "Failed to save InputRequired task state history. Stream may be inconsistent.");
                 }
 
                 // Send the InputRequired update
@@ -139,21 +145,28 @@ impl StreamingService {
                     status: current_task.status.clone(),
                     metadata: current_task.metadata.clone(),
                 };
-                trace!(?input_required_status, "InputRequired status event details.");
+                trace!(
+                    ?input_required_status,
+                    "InputRequired status event details."
+                );
 
                 let input_required_json = json!({
                     "jsonrpc": "2.0",
                     "id": request_id.clone(),
                     "result": input_required_status
-                }).to_string();
+                })
+                .to_string();
                 trace!(sse_message = %input_required_json, "Serialized InputRequired status event.");
 
                 debug!("Sending InputRequired status event via SSE channel.");
-                 if let Err(e) = tx.send(Ok(format!("data: {}\n\n", input_required_json))).await {
-                     error!(error = %e, "Failed to send InputRequired status event to SSE channel. Closing stream.");
-                     return;
-                 }
-                 trace!("InputRequired status event sent.");
+                if let Err(e) = tx
+                    .send(Ok(format!("data: {}\n\n", input_required_json)))
+                    .await
+                {
+                    error!(error = %e, "Failed to send InputRequired status event to SSE channel. Closing stream.");
+                    return;
+                }
+                trace!("InputRequired status event sent.");
 
                 // Hang the stream to wait for follow-up (or timeout in a real scenario)
                 info!("Task waiting for input. Stream will remain open.");
@@ -166,7 +179,10 @@ impl StreamingService {
             } else {
                 // Simulate some work being done before completion
                 let work_duration = std::time::Duration::from_millis(500); // Simulate 0.5s work
-                debug!(duration_ms = work_duration.as_millis(), "Simulating task work.");
+                debug!(
+                    duration_ms = work_duration.as_millis(),
+                    "Simulating task work."
+                );
                 tokio::time::sleep(work_duration).await;
 
                 // Simulate sending an artifact update (example)
@@ -177,27 +193,28 @@ impl StreamingService {
                     metadata: None,
                 });
                 let artifact_event = TaskArtifactUpdateEvent {
-                     id: task_id.clone(),
-                     artifact: crate::types::Artifact {
-                         index: 0,
-                         name: Some("intermediate.txt".to_string()),
-                         parts: vec![artifact_part],
-                         description: None,
-                         append: Some(true),
-                         last_chunk: Some(false),
-                         metadata: None,
-                     },
-                     metadata: None,
+                    id: task_id.clone(),
+                    artifact: crate::types::Artifact {
+                        index: 0,
+                        name: Some("intermediate.txt".to_string()),
+                        parts: vec![artifact_part],
+                        description: None,
+                        append: Some(true),
+                        last_chunk: Some(false),
+                        metadata: None,
+                    },
+                    metadata: None,
                 };
                 let artifact_json = json!({
                     "jsonrpc": "2.0",
                     "id": request_id.clone(),
                     "result": artifact_event
-                }).to_string();
+                })
+                .to_string();
                 trace!(sse_message = %artifact_json, "Serialized artifact event.");
                 if let Err(e) = tx.send(Ok(format!("data: {}\n\n", artifact_json))).await {
-                     error!(error = %e, "Failed to send artifact event to SSE channel. Closing stream.");
-                     return;
+                    error!(error = %e, "Failed to send artifact event to SSE channel. Closing stream.");
+                    return;
                 }
                 trace!("Artifact event sent.");
 
@@ -208,50 +225,54 @@ impl StreamingService {
             // Re-fetch the task in case its state changed externally (unlikely in this simple model)
             debug!("Refetching task state before sending final update.");
             let updated_task = match task_repo.get_task(&task_id).await {
-                 Ok(Some(t)) => t,
-                 _ => {
-                     error!("Task disappeared or failed to fetch before final update. Closing stream.");
-                     return;
-                 }
+                Ok(Some(t)) => t,
+                _ => {
+                    error!(
+                        "Task disappeared or failed to fetch before final update. Closing stream."
+                    );
+                    return;
+                }
             };
             trace!(final_state = ?updated_task.status.state, "Fetched final task state.");
 
             // Send a final update (assuming it completed successfully here)
             // In a real scenario, the state would come from the actual task execution flow
             debug!("Preparing final status update event (Completed).");
-            let final_status_obj = TaskStatus { // Create a completed status for the final message
-                 state: TaskState::Completed,
-                 timestamp: Some(Utc::now()),
-                 message: Some(Message {
-                     role: Role::Agent,
-                     parts: vec![Part::TextPart(TextPart {
-                         type_: "text".to_string(),
-                         text: "Task completed via streaming.".to_string(),
-                         metadata: None,
-                     })],
-                     metadata: None,
-                 }),
+            let final_status_obj = TaskStatus {
+                // Create a completed status for the final message
+                state: TaskState::Completed,
+                timestamp: Some(Utc::now()),
+                message: Some(Message {
+                    role: Role::Agent,
+                    parts: vec![Part::TextPart(TextPart {
+                        type_: "text".to_string(),
+                        text: "Task completed via streaming.".to_string(),
+                        metadata: None,
+                    })],
+                    metadata: None,
+                }),
             };
             let final_status_event = TaskStatusUpdateEvent {
                 id: task_id.clone(),
-                final_: true, // Mark as final
+                final_: true,             // Mark as final
                 status: final_status_obj, // Use the completed status
                 metadata: updated_task.metadata.clone(),
             };
-             trace!(?final_status_event, "Final status event details.");
+            trace!(?final_status_event, "Final status event details.");
 
             let final_json = json!({
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": final_status_event
-            }).to_string();
+            })
+            .to_string();
             trace!(sse_message = %final_json, "Serialized final status event.");
 
             debug!("Sending final status event via SSE channel.");
             if let Err(e) = tx.send(Ok(format!("data: {}\n\n", final_json))).await {
-                 error!(error = %e, "Failed to send final status event to SSE channel.");
+                error!(error = %e, "Failed to send final status event to SSE channel.");
             } else {
-                 trace!("Final status event sent.");
+                trace!("Final status event sent.");
             }
             info!("SSE streaming task finished.");
         }); // End of spawned task
@@ -266,10 +287,10 @@ impl StreamingService {
     pub async fn resubscribe_to_task(
         &self,
         request_id: Value,
-        task_id: String
+        task_id: String,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, hyper::Error>> + Send>>, ServerError> {
         info!("Resubscribing to SSE stream for existing task.");
-        tracing::Span::current().record("task_id", &tracing::field::display(&task_id)); // Record task_id in span
+        tracing::Span::current().record("task_id", tracing::field::display(&task_id)); // Record task_id in span
         trace!(%task_id, "Task ID for resubscription.");
 
         // Check if task exists - this is needed for test_resubscribe_non_existent_task
@@ -277,7 +298,10 @@ impl StreamingService {
         let task_exists = self.task_repository.get_task(&task_id).await?.is_some();
         if !task_exists {
             warn!("Task not found for resubscription.");
-            return Err(ServerError::TaskNotFound(format!("Task not found: {}", task_id)));
+            return Err(ServerError::TaskNotFound(format!(
+                "Task not found: {}",
+                task_id
+            )));
         }
         debug!("Task found.");
 
@@ -306,21 +330,22 @@ impl StreamingService {
             "jsonrpc": "2.0",
             "id": request_id.clone(),
             "result": status_event
-        }).to_string();
+        })
+        .to_string();
         trace!(sse_message = %status_json, "Serialized current status event.");
 
         // If the task is already in a final state, just send the current status and a final=true update
         let is_final = matches!(
             task.status.state,
-            crate::types::TaskState::Completed |
-            crate::types::TaskState::Failed |
-            crate::types::TaskState::Canceled
+            crate::types::TaskState::Completed
+                | crate::types::TaskState::Failed
+                | crate::types::TaskState::Canceled
         );
         trace!(%is_final, "Checked if task is in a final state.");
 
         debug!("Spawning background task for resubscription stream.");
         tokio::spawn(async move {
-             // Create a tracing span for the resubscription task
+            // Create a tracing span for the resubscription task
             let span = tracing::info_span!(
                 "sse_resub_task",
                 task_id = %task_id,
@@ -332,13 +357,15 @@ impl StreamingService {
 
             debug!("Sending current status event via SSE channel.");
             if let Err(e) = tx.send(Ok(format!("data: {}\n\n", status_json))).await {
-                 error!(error = %e, "Failed to send current status event on resubscribe. Closing stream.");
-                 return;
+                error!(error = %e, "Failed to send current status event on resubscribe. Closing stream.");
+                return;
             }
             trace!("Current status event sent.");
 
             if is_final {
-                info!("Task is already in final state. Sending final=true update and closing stream.");
+                info!(
+                    "Task is already in final state. Sending final=true update and closing stream."
+                );
                 // Send the same status again, but marked as final
                 let final_status_event = TaskStatusUpdateEvent {
                     id: task.id.clone(),
@@ -346,20 +373,24 @@ impl StreamingService {
                     status: task.status.clone(),
                     metadata: task.metadata.clone(),
                 };
-                trace!(?final_status_event, "Final status event details (resubscribe).");
+                trace!(
+                    ?final_status_event,
+                    "Final status event details (resubscribe)."
+                );
 
                 let final_json = json!({
                     "jsonrpc": "2.0",
                     "id": request_id.clone(),
                     "result": final_status_event
-                }).to_string();
+                })
+                .to_string();
                 trace!(sse_message = %final_json, "Serialized final status event (resubscribe).");
 
                 debug!("Sending final status event (resubscribe) via SSE channel.");
                 if let Err(e) = tx.send(Ok(format!("data: {}\n\n", final_json))).await {
-                     error!(error = %e, "Failed to send final status event on resubscribe.");
+                    error!(error = %e, "Failed to send final status event on resubscribe.");
                 } else {
-                     trace!("Final status event sent (resubscribe).");
+                    trace!("Final status event sent (resubscribe).");
                 }
             } else {
                 info!("Task is not in final state. Monitoring for updates (mock).");
@@ -368,17 +399,20 @@ impl StreamingService {
                 // and send them as they occur. For simplicity, we'll just send a
                 // final update after a short delay, potentially changing state if needed for tests.
                 let monitor_delay = std::time::Duration::from_millis(500);
-                debug!(delay_ms = monitor_delay.as_millis(), "Simulating monitoring delay.");
+                debug!(
+                    delay_ms = monitor_delay.as_millis(),
+                    "Simulating monitoring delay."
+                );
                 tokio::time::sleep(monitor_delay).await;
 
                 // Re-fetch task state
                 debug!("Re-fetching task state after monitoring delay.");
                 let mut current_task = match task_repo.get_task(&task_id).await {
-                     Ok(Some(t)) => t,
-                     _ => {
-                         error!("Task disappeared or failed to fetch during monitoring. Closing stream.");
-                         return;
-                     }
+                    Ok(Some(t)) => t,
+                    _ => {
+                        error!("Task disappeared or failed to fetch during monitoring. Closing stream.");
+                        return;
+                    }
                 };
                 trace!(current_state = ?current_task.status.state, "Fetched task state after delay.");
 
@@ -386,14 +420,20 @@ impl StreamingService {
                 if current_task.status.state == crate::types::TaskState::Working {
                     let should_complete = if let Some(meta) = &current_task.metadata {
                         // Check for mock flags used in tests
-                        meta.get("_mock_duration_ms").is_some() || !meta.get("_mock_remain_working").and_then(|v| v.as_bool()).unwrap_or(false)
+                        meta.get("_mock_duration_ms").is_some()
+                            || !meta
+                                .get("_mock_remain_working")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
                     } else {
                         true // Default to completing if no mock flags
                     };
 
                     if should_complete {
-                        info!("Task was Working, transitioning to Completed for final update (mock).");
-                        use crate::types::{TaskStatus, TaskState, Message, Role, Part, TextPart};
+                        info!(
+                            "Task was Working, transitioning to Completed for final update (mock)."
+                        );
+                        use crate::types::{Message, Part, Role, TaskState, TaskStatus, TextPart};
                         use chrono::Utc;
 
                         current_task.status = TaskStatus {
@@ -413,14 +453,17 @@ impl StreamingService {
 
                         // Save the updated task state
                         debug!("Saving Completed task state (resubscribe).");
-                         if let Err(e) = task_repo.save_task(&current_task).await {
-                             error!(error = %e, "Failed to save Completed task state (resubscribe). Stream may be inconsistent.");
-                         }
-                         if let Err(e) = task_repo.save_state_history(&current_task.id, &current_task).await {
-                              error!(error = %e, "Failed to save Completed task state history (resubscribe). Stream may be inconsistent.");
-                         }
+                        if let Err(e) = task_repo.save_task(&current_task).await {
+                            error!(error = %e, "Failed to save Completed task state (resubscribe). Stream may be inconsistent.");
+                        }
+                        if let Err(e) = task_repo
+                            .save_state_history(&current_task.id, &current_task)
+                            .await
+                        {
+                            error!(error = %e, "Failed to save Completed task state history (resubscribe). Stream may be inconsistent.");
+                        }
                     } else {
-                         info!("Task metadata indicates it should remain Working.");
+                        info!("Task metadata indicates it should remain Working.");
                     }
                 }
 
@@ -428,25 +471,29 @@ impl StreamingService {
                 debug!("Preparing final status update event (resubscribe).");
                 let final_status_event = TaskStatusUpdateEvent {
                     id: task_id.clone(),
-                    final_: true, // Mark as final
+                    final_: true,                // Mark as final
                     status: current_task.status, // Use current (possibly updated) status
                     metadata: current_task.metadata.clone(),
                 };
-                trace!(?final_status_event, "Final status event details (resubscribe).");
+                trace!(
+                    ?final_status_event,
+                    "Final status event details (resubscribe)."
+                );
 
                 let final_json = json!({
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "result": final_status_event
-                }).to_string();
+                })
+                .to_string();
                 trace!(sse_message = %final_json, "Serialized final status event (resubscribe).");
 
                 debug!("Sending final status event (resubscribe) via SSE channel.");
-                 if let Err(e) = tx.send(Ok(format!("data: {}\n\n", final_json))).await {
-                     error!(error = %e, "Failed to send final status event on resubscribe.");
-                 } else {
-                     trace!("Final status event sent (resubscribe).");
-                 }
+                if let Err(e) = tx.send(Ok(format!("data: {}\n\n", final_json))).await {
+                    error!(error = %e, "Failed to send final status event on resubscribe.");
+                } else {
+                    trace!("Final status event sent (resubscribe).");
+                }
             }
             info!("SSE resubscription task finished.");
         }); // End of spawned task

@@ -7,7 +7,7 @@ use std::pin::Pin;
 
 use crate::client::errors::{A2aError, ClientError};
 use crate::client::A2aClient;
-use crate::types::{Artifact, Message, Task, TaskQueryParams, TaskSendParams};
+use crate::types::{Artifact, Message, Part, Task, TaskQueryParams, TaskSendParams}; // Added Part
 
 /// Response from a streaming task operation
 #[derive(Debug, Clone)]

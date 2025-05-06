@@ -1,8 +1,8 @@
-use crate::types::{PushNotificationConfig, TaskPushNotificationConfig, TaskIdParams};
-use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository};
+use crate::server::repositories::task_repository::TaskRepository;
 use crate::server::ServerError;
+use crate::types::{PushNotificationConfig, TaskIdParams, TaskPushNotificationConfig};
 use std::sync::Arc;
-use tracing::{debug, error, info, trace, warn, instrument}; // Import tracing macros
+use tracing::{debug, error, info, instrument, trace, warn}; // Import tracing macros
 
 /// Service for handling push notification configuration
 pub struct NotificationService {
@@ -18,13 +18,19 @@ impl NotificationService {
 
     /// Set push notification configuration for a task
     #[instrument(skip(self, params), fields(task_id = %params.id, url = %params.push_notification_config.url))]
-    pub async fn set_push_notification(&self, params: TaskPushNotificationConfig) -> Result<(), ServerError> {
+    pub async fn set_push_notification(
+        &self,
+        params: TaskPushNotificationConfig,
+    ) -> Result<(), ServerError> {
         info!("Setting push notification configuration for task.");
         trace!(?params, "Full push notification parameters.");
 
         // Check if task exists
         debug!("Checking if task exists in repository.");
-        let _ = self.task_repository.get_task(&params.id).await?
+        let _ = self
+            .task_repository
+            .get_task(&params.id)
+            .await?
             .ok_or_else(|| {
                 warn!("Task not found when trying to set push notification config.");
                 ServerError::TaskNotFound(params.id.clone())
@@ -37,10 +43,13 @@ impl NotificationService {
         trace!(?config, "Configuration being validated.");
 
         // Validate URL
-        if config.url.is_empty() || (!config.url.starts_with("http://") && !config.url.starts_with("https://")) {
+        if config.url.is_empty()
+            || (!config.url.starts_with("http://") && !config.url.starts_with("https://"))
+        {
             error!(url = %config.url, "Invalid push notification URL provided.");
             return Err(ServerError::InvalidParameters(format!(
-                "Invalid push notification URL: {}", config.url
+                "Invalid push notification URL: {}",
+                config.url
             )));
         }
         trace!("URL validation passed.");
@@ -54,8 +63,8 @@ impl NotificationService {
                 // If token is provided but authentication is not, create a proper authentication object
                 config.authentication = Some(crate::types::AuthenticationInfo {
                     schemes: vec!["Bearer".to_string()], // Default to Bearer scheme
-                    credentials: Some(token.clone()), // Use the provided token
-                    extra: serde_json::Map::new(), // No extra fields by default
+                    credentials: Some(token.clone()),    // Use the provided token
+                    extra: serde_json::Map::new(),       // No extra fields by default
                 });
                 trace!(?config.authentication, "Created default AuthenticationInfo.");
             } else if let Some(ref mut auth) = config.authentication {
@@ -74,14 +83,16 @@ impl NotificationService {
         } else {
             trace!("No token provided in config. Skipping AuthenticationInfo consistency check.");
         }
-        trace!(?config, "Final push notification config after validation/adjustment.");
+        trace!(
+            ?config,
+            "Final push notification config after validation/adjustment."
+        );
 
         // Save the push notification configuration
         debug!("Saving push notification configuration to repository.");
-        self.task_repository.save_push_notification_config(
-            &params.id,
-            &config
-        ).await?;
+        self.task_repository
+            .save_push_notification_config(&params.id, &config)
+            .await?;
         info!("Push notification configuration saved successfully.");
 
         Ok(())
@@ -89,13 +100,19 @@ impl NotificationService {
 
     /// Get push notification configuration for a task
     #[instrument(skip(self, params), fields(task_id = %params.id))]
-    pub async fn get_push_notification(&self, params: TaskIdParams) -> Result<PushNotificationConfig, ServerError> {
+    pub async fn get_push_notification(
+        &self,
+        params: TaskIdParams,
+    ) -> Result<PushNotificationConfig, ServerError> {
         info!("Getting push notification configuration for task.");
         trace!(?params, "Get push notification parameters.");
 
         // Check if task exists
         debug!("Checking if task exists in repository.");
-        let _ = self.task_repository.get_task(&params.id).await?
+        let _ = self
+            .task_repository
+            .get_task(&params.id)
+            .await?
             .ok_or_else(|| {
                 warn!("Task not found when trying to get push notification config.");
                 ServerError::TaskNotFound(params.id.clone())
@@ -104,11 +121,18 @@ impl NotificationService {
 
         // Get the push notification configuration
         debug!("Fetching push notification configuration from repository.");
-        let config = self.task_repository.get_push_notification_config(&params.id).await?
+        let config = self
+            .task_repository
+            .get_push_notification_config(&params.id)
+            .await?
             .ok_or_else(|| {
                 warn!("No push notification configuration found for task.");
-                ServerError::InvalidParameters( // Maybe should be a different error? Or just return None/empty? Check spec.
-                    format!("No push notification configuration found for task {}", params.id)
+                ServerError::InvalidParameters(
+                    // Maybe should be a different error? Or just return None/empty? Check spec.
+                    format!(
+                        "No push notification configuration found for task {}",
+                        params.id
+                    ),
                 )
             })?;
         info!("Push notification configuration retrieved successfully.");

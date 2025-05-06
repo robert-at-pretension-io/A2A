@@ -1,40 +1,37 @@
-use crate::types::{Task, TaskStatus, TaskState, TaskSendParams, TaskQueryParams, TaskIdParams};
-use crate::types::{Message, Role, Part, TextPart};
-use crate::server::repositories::task_repository::{/* InMemoryTaskRepository, */ TaskRepository}; // Removed unused
+use crate::server::repositories::task_repository::{/* InMemoryTaskRepository, */ TaskRepository,}; // Removed unused
 use crate::server::ServerError;
-use std::sync::Arc;
+use crate::types::{Message, Part, Role, TextPart};
+use crate::types::{Task, TaskIdParams, TaskQueryParams, TaskSendParams, TaskState, TaskStatus};
 use chrono::Utc;
-use tracing::{debug, error, info, trace, warn, instrument}; // Import tracing macros
+use std::sync::Arc;
+use tracing::{debug, error, info, instrument, trace, warn}; // Import tracing macros
 use uuid::Uuid;
 
 // Import the LlmClient trait from the new llm_client module
 use crate::bidirectional::llm_client::LlmClient; // <-- Update import path
-// Import helper functions and traits
+                                                 // Import helper functions and traits
 use crate::bidirectional::agent_helpers::MessageExt; // <-- Import our extension trait
-// Import from local server components instead of bidirectional_agent
+                                                     // Import from local server components instead of bidirectional_agent
 use crate::server::{
-    task_router::{RoutingDecision, LlmTaskRouterTrait}, // Removed unused TaskRouter import
-    tool_executor::ToolExecutor,
+    agent_registry::AgentRegistry,
     // task_flow::TaskFlow, // TaskFlow logic will be integrated here
     client_manager::ClientManager,
-    agent_registry::AgentRegistry,
+    task_router::{LlmTaskRouterTrait, RoutingDecision}, // Removed unused TaskRouter import
+    tool_executor::ToolExecutor,
 };
 use tokio::time::{sleep, Duration}; // Added for polling delay
-
 
 pub struct TaskService {
     task_repository: Arc<dyn TaskRepository>,
     // Use the LlmTaskRouterTrait for polymorphism
-    
     task_router: Option<Arc<dyn LlmTaskRouterTrait>>,
-    
+
     pub tool_executor: Option<Arc<ToolExecutor>>, // <-- Make this field public
     // Add components needed by TaskFlow if TaskService orchestrates it
-    
     client_manager: Option<Arc<ClientManager>>,
-    
+
     agent_registry: Option<Arc<AgentRegistry>>,
-    
+
     agent_id: Option<String>, // ID of the agent running this service
     llm_client: Option<Arc<dyn LlmClient>>, // Add LLM client for rewriting
 }
@@ -47,13 +44,13 @@ impl TaskService {
         Self {
             task_repository,
             task_router: None,
-            
+
             tool_executor: None,
-            
+
             client_manager: None,
-            
+
             agent_registry: None,
-                
+
             agent_id: None,
             llm_client: None, // Initialize the new field to None for standalone mode
         }
@@ -64,17 +61,27 @@ impl TaskService {
     /// Creates a new TaskService configured for bidirectional operation.
     /// Requires the corresponding features to be enabled.
     // Skip llm_client as it doesn't implement Debug
-    #[instrument(skip(task_repository, task_router, tool_executor, client_manager, agent_registry, llm_client), fields(agent_id))]
+    #[instrument(
+        skip(
+            task_repository,
+            task_router,
+            tool_executor,
+            client_manager,
+            agent_registry,
+            llm_client
+        ),
+        fields(agent_id)
+    )]
     pub fn bidirectional(
         task_repository: Arc<dyn TaskRepository>,
         // Accept the trait object for router
-         task_router: Arc<dyn LlmTaskRouterTrait>,
-         tool_executor: Arc<ToolExecutor>,
+        task_router: Arc<dyn LlmTaskRouterTrait>,
+        tool_executor: Arc<ToolExecutor>,
         // Add Slice 3 components
-         client_manager: Arc<ClientManager>,
-         agent_registry: Arc<AgentRegistry>,
-         agent_id: String,
-         llm_client: Option<Arc<dyn LlmClient>>, // Add LLM client parameter
+        client_manager: Arc<ClientManager>,
+        agent_registry: Arc<AgentRegistry>,
+        agent_id: String,
+        llm_client: Option<Arc<dyn LlmClient>>, // Add LLM client parameter
     ) -> Self {
         info!(%agent_id, llm_available = llm_client.is_some(), "Creating TaskService in bidirectional mode.");
         // Compile-time check for feature consistency (example)
@@ -84,18 +91,17 @@ impl TaskService {
         Self {
             task_repository,
             task_router: Some(task_router),
-            
+
             tool_executor: Some(tool_executor),
-            
+
             client_manager: Some(client_manager),
-            
+
             agent_registry: Some(agent_registry),
-            
+
             agent_id: Some(agent_id),
             llm_client, // Store the LLM client
         }
     }
-
 
     /// Process a new task or a follow-up message
     #[instrument(skip(self, params), fields(task_id = %params.id, session_id = ?params.session_id))]
@@ -110,7 +116,9 @@ impl TaskService {
             debug!("Task already exists. Processing as follow-up."); // Changed to debug
             trace!(?existing_task, "Existing task details.");
             // Pass only the new message for follow-up processing
-            return self.process_follow_up(existing_task, Some(params.message)).await;
+            return self
+                .process_follow_up(existing_task, Some(params.message))
+                .await;
         }
         debug!("Task does not exist. Processing as new task."); // Changed to debug
 
@@ -147,24 +155,31 @@ impl TaskService {
         // First save the initial state (Submitted) of the task for state history
         debug!("Saving initial (Submitted) task state to repository and history.");
         self.task_repository.save_task(&task).await?;
-        self.task_repository.save_state_history(&task.id, &task).await?;
+        self.task_repository
+            .save_state_history(&task.id, &task)
+            .await?;
 
         // Update status to Working before processing
         task.status.state = TaskState::Working;
         task.status.timestamp = Some(Utc::now());
         debug!("Updating task state to Working.");
         self.task_repository.save_task(&task).await?;
-        self.task_repository.save_state_history(&task.id, &task).await?;
+        self.task_repository
+            .save_state_history(&task.id, &task)
+            .await?;
         trace!(?task, "Task state updated to Working.");
-
 
         // --- Routing and Execution Logic (Integrated from TaskFlow) ---
         debug!("Entering integrated routing and execution logic.");
-        if let (Some(router), Some(executor), Some(cm), Some(_reg), Some(_agent_id)) =
-            (&self.task_router, &self.tool_executor, &self.client_manager, &self.agent_registry, &self.agent_id)
-        {
+        if let (Some(router), Some(executor), Some(cm), Some(_reg), Some(_agent_id)) = (
+            &self.task_router,
+            &self.tool_executor,
+            &self.client_manager,
+            &self.agent_registry,
+            &self.agent_id,
+        ) {
             debug!("Bidirectional components found. Proceeding with routing and execution."); // Changed to debug
-            // Make routing decision
+                                                                                              // Make routing decision
             debug!("Calling task router decide method.");
             let decision_result = match router.decide(&params).await {
                 Ok(decision) => decision,
@@ -178,11 +193,18 @@ impl TaskService {
                             text: format!("Internal routing decision failed: {}. Please clarify your request or try again.", e), // <-- Update message
                             metadata: None,
                         })],
-                        metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
+                        metadata: Some(
+                            serde_json::json!({ "error_context": e.to_string() })
+                                .as_object()
+                                .unwrap()
+                                .clone(),
+                        ),
                     });
                     task.status.timestamp = Some(Utc::now());
                     self.task_repository.save_task(&task).await?;
-                    self.task_repository.save_state_history(&task.id, &task).await?;
+                    self.task_repository
+                        .save_state_history(&task.id, &task)
+                        .await?;
                     return Ok(task); // Return the failed task
                 }
             };
@@ -192,8 +214,11 @@ impl TaskService {
             match decision_result {
                 RoutingDecision::Local { tool_name, params } => {
                     info!(%tool_name, ?params, "Executing task locally using tool and extracted parameters."); // Keep info for local execution start
-                    // Execute locally and wait for completion, passing the extracted params
-                    match executor.execute_task_locally(&mut task, &tool_name, params).await {
+                                                                                                               // Execute locally and wait for completion, passing the extracted params
+                    match executor
+                        .execute_task_locally(&mut task, &tool_name, params)
+                        .await
+                    {
                         Ok(_) => {
                             debug!("Local execution finished by tool executor.");
                             // Task state should be updated by the executor (Completed or Failed)
@@ -201,15 +226,27 @@ impl TaskService {
                         Err(e) => {
                             error!(error = %e, "Local tool execution failed.");
                             task.status.state = TaskState::Failed;
-                            task.status.message = Some(Message { role: Role::Agent, parts: vec![Part::TextPart(TextPart { type_: "text".to_string(), text: format!("Local execution failed: {}", e), metadata: None })], metadata: None });
+                            task.status.message = Some(Message {
+                                role: Role::Agent,
+                                parts: vec![Part::TextPart(TextPart {
+                                    type_: "text".to_string(),
+                                    text: format!("Local execution failed: {}", e),
+                                    metadata: None,
+                                })],
+                                metadata: None,
+                            });
                             task.status.timestamp = Some(Utc::now());
                         }
                     }
                     // Save the final state after local execution
                     self.task_repository.save_task(&task).await?;
-                    self.task_repository.save_state_history(&task.id, &task).await?;
+                    self.task_repository
+                        .save_state_history(&task.id, &task)
+                        .await?;
                 }
-                RoutingDecision::Remote { agent_id: remote_agent_id } => {
+                RoutingDecision::Remote {
+                    agent_id: remote_agent_id,
+                } => {
                     info!(%remote_agent_id, "Delegating task to remote agent."); // Keep info for delegation start
 
                     // --- LLM Rewrite Logic ---
@@ -219,7 +256,9 @@ impl TaskService {
                     if let Some(llm) = &self.llm_client {
                         debug!("Attempting to rewrite message using LLM for delegation.");
                         // Extract original text
-                        let original_text = initial_message.parts.iter()
+                        let original_text = initial_message
+                            .parts
+                            .iter()
                             .filter_map(|p| match p {
                                 Part::TextPart(tp) => Some(tp.text.as_str()),
                                 _ => None,
@@ -267,16 +306,17 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                             warn!("Original message text was empty. Skipping rewrite.");
                         }
                     } else {
-                        debug!("LLM client not available in TaskService. Sending original message.");
+                        debug!(
+                            "LLM client not available in TaskService. Sending original message."
+                        );
                         // message_to_send remains the original message
                     }
                     // --- End LLM Rewrite Logic ---
 
-
                     // Prepare TaskSendParams for delegation using the potentially rewritten message
                     let delegation_params = TaskSendParams {
                         id: Uuid::new_v4().to_string(), // Generate a new ID for the remote task
-                        message: message_to_send, // Use the (potentially rewritten) message
+                        message: message_to_send,       // Use the (potentially rewritten) message
                         session_id: Some(session_id.clone()), // Pass session ID
                         metadata: task.metadata.clone(),
                         history_length: None,
@@ -289,7 +329,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     match cm.send_task(&remote_agent_id, delegation_params).await {
                         Ok(initial_remote_task) => {
                             info!(%remote_agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Delegation initiated successfully."); // Keep info for delegation success
-                            // Update local task to indicate delegation
+                                                                                                                                                               // Update local task to indicate delegation
                             task.status.state = TaskState::Working; // Keep local task Working
                             task.status.timestamp = Some(Utc::now());
                             task.status.message = Some(Message {
@@ -301,11 +341,19 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                 })],
                                 metadata: None,
                             });
-                            task.metadata.get_or_insert_with(Default::default).insert("remote_task_id".to_string(), remote_task_id.clone().into());
-                            task.metadata.get_or_insert_with(Default::default).insert("delegated_to_agent_id".to_string(), remote_agent_id.clone().into());
+                            task.metadata.get_or_insert_with(Default::default).insert(
+                                "remote_task_id".to_string(),
+                                remote_task_id.clone().into(),
+                            );
+                            task.metadata.get_or_insert_with(Default::default).insert(
+                                "delegated_to_agent_id".to_string(),
+                                remote_agent_id.clone().into(),
+                            );
 
                             self.task_repository.save_task(&task).await?;
-                            self.task_repository.save_state_history(&task.id, &task).await?;
+                            self.task_repository
+                                .save_state_history(&task.id, &task)
+                                .await?;
 
                             // --- Start Polling Remote Task ---
                             debug!(%remote_agent_id, %remote_task_id, "Starting to poll remote task status."); // Changed to debug
@@ -314,12 +362,21 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                             let mut final_remote_task: Option<Task> = None;
 
                             for attempt in 1..=max_polling_attempts {
-                                debug!(attempt, max_polling_attempts, "Polling remote task status.");
+                                debug!(
+                                    attempt,
+                                    max_polling_attempts, "Polling remote task status."
+                                );
                                 match cm.get_task_status(&remote_agent_id, &remote_task_id).await {
                                     Ok(remote_task_update) => {
                                         trace!(remote_state = ?remote_task_update.status.state, "Received remote task status update.");
                                         // Check if remote task reached a final state
-                                        if matches!(remote_task_update.status.state, TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::InputRequired) {
+                                        if matches!(
+                                            remote_task_update.status.state,
+                                            TaskState::Completed
+                                                | TaskState::Failed
+                                                | TaskState::Canceled
+                                                | TaskState::InputRequired
+                                        ) {
                                             info!(final_state = ?remote_task_update.status.state, "Remote task reached final state."); // Keep info for final state
                                             final_remote_task = Some(remote_task_update);
                                             break; // Exit polling loop
@@ -344,7 +401,9 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                         });
                                         task.status.timestamp = Some(Utc::now());
                                         self.task_repository.save_task(&task).await?;
-                                        self.task_repository.save_state_history(&task.id, &task).await?;
+                                        self.task_repository
+                                            .save_state_history(&task.id, &task)
+                                            .await?;
                                         return Ok(task); // Return the local task (now InputRequired)
                                     }
                                 }
@@ -355,7 +414,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                             // --- Update Local Task with Final Remote State ---
                             if let Some(final_task) = final_remote_task {
                                 info!(final_state = ?final_task.status.state, "Updating local task with final remote state."); // Keep info for update
-                                // Mirror the final state, message, and artifacts
+                                                                                                                               // Mirror the final state, message, and artifacts
                                 task.status = final_task.status;
                                 task.artifacts = final_task.artifacts;
                                 // Ensure timestamp is updated
@@ -379,8 +438,9 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                             }
                             // Save the final mirrored state
                             self.task_repository.save_task(&task).await?;
-                            self.task_repository.save_state_history(&task.id, &task).await?;
-
+                            self.task_repository
+                                .save_state_history(&task.id, &task)
+                                .await?;
                         }
                         Err(e) => {
                             error!(%remote_agent_id, error = %e, "Failed to initiate task delegation.");
@@ -401,7 +461,9 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                             task.status.timestamp = Some(Utc::now());
                             // --- CHANGE END ---
                             self.task_repository.save_task(&task).await?;
-                            self.task_repository.save_state_history(&task.id, &task).await?;
+                            self.task_repository
+                                .save_state_history(&task.id, &task)
+                                .await?;
                         }
                     }
                 }
@@ -419,7 +481,9 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                         metadata: None,
                     });
                     self.task_repository.save_task(&task).await?;
-                    self.task_repository.save_state_history(&task.id, &task).await?;
+                    self.task_repository
+                        .save_state_history(&task.id, &task)
+                        .await?;
                 }
                 RoutingDecision::Decompose { subtasks: _ } => {
                     warn!("Task decomposition requested but not implemented.");
@@ -435,8 +499,10 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                         metadata: None,
                     });
                     self.task_repository.save_task(&task).await?;
-                    self.task_repository.save_state_history(&task.id, &task).await?;
-                },
+                    self.task_repository
+                        .save_state_history(&task.id, &task)
+                        .await?;
+                }
                 RoutingDecision::NeedsClarification { question } => {
                     info!(task_id = %task.id, "Routing decision: Needs Clarification.");
                     // Update task state to InputRequired with the clarification question
@@ -444,8 +510,10 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     task.status.message = Some(Message::agent(question)); // Use the question from the decision
                     task.status.timestamp = Some(Utc::now());
                     self.task_repository.save_task(&task).await?;
-                    self.task_repository.save_state_history(&task.id, &task).await?;
-                },
+                    self.task_repository
+                        .save_state_history(&task.id, &task)
+                        .await?;
+                }
                 RoutingDecision::Decompose { subtasks } => {
                     info!(task_id = %task.id, subtask_count = subtasks.len(), "Routing decision: Decompose.");
                     // TODO: Implement actual decomposition logic
@@ -454,19 +522,26 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     // - Synthesize results (NP4)
                     warn!(task_id = %task.id, "Task decomposition not yet fully implemented in TaskService. Marking task as Failed.");
                     task.status.state = TaskState::Failed;
-                    task.status.message = Some(Message::agent("Task decomposition is not yet supported.".to_string()));
+                    task.status.message = Some(Message::agent(
+                        "Task decomposition is not yet supported.".to_string(),
+                    ));
                     task.status.timestamp = Some(Utc::now());
                     self.task_repository.save_task(&task).await?;
-                    self.task_repository.save_state_history(&task.id, &task).await?;
+                    self.task_repository
+                        .save_state_history(&task.id, &task)
+                        .await?;
                 }
             }
         } else {
             // Fallback to default processing (standalone mode)
             debug!("Router/Executor/ClientManager not available (standalone mode?). Using default task content processing."); // Changed to debug
-            self.process_task_content(&mut task, Some(initial_message)).await?;
+            self.process_task_content(&mut task, Some(initial_message))
+                .await?;
             // Save the final state after default processing
             self.task_repository.save_task(&task).await?;
-            self.task_repository.save_state_history(&task.id, &task).await?;
+            self.task_repository
+                .save_state_history(&task.id, &task)
+                .await?;
         }
         // --- End Integrated Routing and Execution Logic ---
 
@@ -476,85 +551,99 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
     /// Process follow-up message for an existing task
     #[instrument(skip(self, task, message), fields(task_id = %task.id, current_state = ?task.status.state))]
-    async fn process_follow_up(&self, mut task: Task, message: Option<Message>) -> Result<Task, ServerError> {
+    async fn process_follow_up(
+        &self,
+        mut task: Task,
+        message: Option<Message>,
+    ) -> Result<Task, ServerError> {
         info!("Processing follow-up message."); // Keep info for follow-up start
         trace!(?message, "Follow-up message details.");
 
         // Add the follow-up message to history *before* processing
         if let Some(ref msg) = message {
-             debug!("Adding follow-up message to task history.");
-             task.history.get_or_insert_with(Vec::new).push(msg.clone());
-             // Save intermediate state with new history message
-             self.task_repository.save_task(&task).await?;
-             // Don't save history state here yet, wait until after processing
+            debug!("Adding follow-up message to task history.");
+            task.history.get_or_insert_with(Vec::new).push(msg.clone());
+            // Save intermediate state with new history message
+            self.task_repository.save_task(&task).await?;
+            // Don't save history state here yet, wait until after processing
         }
-
 
         // Only process follow-up if task is in a state that allows it
         match task.status.state {
             TaskState::InputRequired => {
                 debug!("Task is in InputRequired state. Processing follow-up."); // Changed to debug
-                // Process the follow-up message using the configured router/executor if available
-                if let (Some(router), Some(executor), Some(message_val)) = (&self.task_router, &self.tool_executor, &message) {
-                     debug!("Using bidirectional components for follow-up processing.");
-                     
-                     // Get routing decision for the follow-up message
-                     match router.process_follow_up(&task.id, message_val).await {
-                         Ok(decision) => {
-                             debug!(?decision, "Follow-up routing decision received.");
-                             
-                             // Process the follow-up according to the decision
-                             match decision {
-                                 RoutingDecision::Local { tool_name, params } => {
-                                     info!(%tool_name, ?params, "Executing follow-up locally using tool and extracted parameters.");
-                                     // Execute locally and wait for completion, passing the extracted params
-                                     match executor.execute_task_locally(&mut task, &tool_name, params).await {
-                                         Ok(_) => {
-                                             debug!("Local execution of follow-up finished by tool executor.");
-                                             // Task state should be updated by the executor (Completed or Failed)
-                                         }
-                                         Err(e) => {
-                                             error!(error = %e, "Local tool execution for follow-up failed.");
-                                             task.status.state = TaskState::Failed;
-                                             task.status.message = Some(Message { 
-                                                 role: Role::Agent, 
-                                                 parts: vec![Part::TextPart(TextPart { 
-                                                     type_: "text".to_string(), 
-                                                     text: format!("Follow-up execution failed: {}", e), 
-                                                     metadata: None 
-                                                 })], 
-                                                 metadata: None 
-                                             });
-                                             task.status.timestamp = Some(Utc::now());
-                                         }
-                                     }
-                                 },
-                                 RoutingDecision::Remote { agent_id } => {
-                                     info!(%agent_id, "Delegating follow-up to remote agent.");
-                                     
-                                     // Check if we have the client manager for remote delegation
-                                     if let Some(cm) = &self.client_manager {
-                                         // Handle remote delegation similar to initial task delegation
-                                         // Potentially simplify compared to full task delegation
-                                         
-                                         // --- LLM Rewrite Logic (simplified for follow-up) ---
-                                         let mut message_to_send = message_val.clone();
-                                         let delegating_agent_id = self.agent_id.as_deref().unwrap_or("UnknownAgent");
-                                         
-                                         if let Some(llm) = &self.llm_client {
-                                             debug!("Attempting to rewrite follow-up message using LLM for delegation.");
-                                             // Extract original text
-                                             let original_text = message_val.parts.iter()
-                                                 .filter_map(|p| match p {
-                                                     Part::TextPart(tp) => Some(tp.text.as_str()),
-                                                     _ => None,
-                                                 })
-                                                 .collect::<Vec<_>>()
-                                                 .join("\n");
-                                             
-                                             if !original_text.is_empty() {
-                                                 let rewrite_prompt = format!(
-                                                     r#"You are helping Agent '{delegating_agent_id}' delegate a follow-up request to Agent '{agent_id}'.
+                                                                                 // Process the follow-up message using the configured router/executor if available
+                if let (Some(router), Some(executor), Some(message_val)) =
+                    (&self.task_router, &self.tool_executor, &message)
+                {
+                    debug!("Using bidirectional components for follow-up processing.");
+
+                    // Get routing decision for the follow-up message
+                    match router.process_follow_up(&task.id, message_val).await {
+                        Ok(decision) => {
+                            debug!(?decision, "Follow-up routing decision received.");
+
+                            // Process the follow-up according to the decision
+                            match decision {
+                                RoutingDecision::Local { tool_name, params } => {
+                                    info!(%tool_name, ?params, "Executing follow-up locally using tool and extracted parameters.");
+                                    // Execute locally and wait for completion, passing the extracted params
+                                    match executor
+                                        .execute_task_locally(&mut task, &tool_name, params)
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            debug!("Local execution of follow-up finished by tool executor.");
+                                            // Task state should be updated by the executor (Completed or Failed)
+                                        }
+                                        Err(e) => {
+                                            error!(error = %e, "Local tool execution for follow-up failed.");
+                                            task.status.state = TaskState::Failed;
+                                            task.status.message = Some(Message {
+                                                role: Role::Agent,
+                                                parts: vec![Part::TextPart(TextPart {
+                                                    type_: "text".to_string(),
+                                                    text: format!(
+                                                        "Follow-up execution failed: {}",
+                                                        e
+                                                    ),
+                                                    metadata: None,
+                                                })],
+                                                metadata: None,
+                                            });
+                                            task.status.timestamp = Some(Utc::now());
+                                        }
+                                    }
+                                }
+                                RoutingDecision::Remote { agent_id } => {
+                                    info!(%agent_id, "Delegating follow-up to remote agent.");
+
+                                    // Check if we have the client manager for remote delegation
+                                    if let Some(cm) = &self.client_manager {
+                                        // Handle remote delegation similar to initial task delegation
+                                        // Potentially simplify compared to full task delegation
+
+                                        // --- LLM Rewrite Logic (simplified for follow-up) ---
+                                        let mut message_to_send = message_val.clone();
+                                        let delegating_agent_id =
+                                            self.agent_id.as_deref().unwrap_or("UnknownAgent");
+
+                                        if let Some(llm) = &self.llm_client {
+                                            debug!("Attempting to rewrite follow-up message using LLM for delegation.");
+                                            // Extract original text
+                                            let original_text = message_val
+                                                .parts
+                                                .iter()
+                                                .filter_map(|p| match p {
+                                                    Part::TextPart(tp) => Some(tp.text.as_str()),
+                                                    _ => None,
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+
+                                            if !original_text.is_empty() {
+                                                let rewrite_prompt = format!(
+                                                    r#"You are helping Agent '{delegating_agent_id}' delegate a follow-up request to Agent '{agent_id}'.
                                                      Agent '{delegating_agent_id}' received the following follow-up message from a user:
                                                      "{original_text}"
                                                      
@@ -564,51 +653,53 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                                      2. Clearly state the new information or question from the user.
                                                      
                                                      Respond ONLY with the rewritten message text, suitable for sending directly to Agent '{agent_id}'."#
-                                                 );
-                                                 
-                                                 match llm.complete(&rewrite_prompt, None).await {
-                                                     Ok(rewritten_text) => {
-                                                         debug!("Successfully rewrote follow-up message for delegation.");
-                                                         trace!(rewritten_text = %rewritten_text, "Rewritten follow-up message content.");
-                                                         // Replace the message content with the rewritten text
-                                                         message_to_send = Message {
-                                                             role: Role::User,
-                                                             parts: vec![Part::TextPart(TextPart {
-                                                                 type_: "text".to_string(),
-                                                                 text: rewritten_text.trim().to_string(),
-                                                                 metadata: None,
-                                                             })],
-                                                             metadata: None,
-                                                         };
-                                                     }
-                                                     Err(e) => {
-                                                         warn!(error = %e, "LLM rewrite of follow-up failed. Sending original message.");
-                                                     }
-                                                 }
-                                             }
-                                         }
-                                         // --- End LLM Rewrite Logic ---
-                                         
-                                         // Create a new task for the delegated follow-up
-                                         let delegation_params = TaskSendParams {
-                                             id: Uuid::new_v4().to_string(),
-                                             message: message_to_send,
-                                             session_id: task.session_id.clone(),
-                                             metadata: task.metadata.clone(),
-                                             history_length: None,
-                                             push_notification: None,
-                                         };
-                                         let remote_task_id = delegation_params.id.clone();
-                                         
-                                         // Send the delegated follow-up
-                                         match cm.send_task(&agent_id, delegation_params).await {
-                                             Ok(initial_remote_task) => {
-                                                 info!(%agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Follow-up delegation initiated successfully.");
-                                                 
-                                                 // Update local task to indicate delegation
-                                                 task.status.state = TaskState::Working;
-                                                 task.status.timestamp = Some(Utc::now());
-                                                 task.status.message = Some(Message {
+                                                );
+
+                                                match llm.complete(&rewrite_prompt, None).await {
+                                                    Ok(rewritten_text) => {
+                                                        debug!("Successfully rewrote follow-up message for delegation.");
+                                                        trace!(rewritten_text = %rewritten_text, "Rewritten follow-up message content.");
+                                                        // Replace the message content with the rewritten text
+                                                        message_to_send = Message {
+                                                            role: Role::User,
+                                                            parts: vec![Part::TextPart(TextPart {
+                                                                type_: "text".to_string(),
+                                                                text: rewritten_text
+                                                                    .trim()
+                                                                    .to_string(),
+                                                                metadata: None,
+                                                            })],
+                                                            metadata: None,
+                                                        };
+                                                    }
+                                                    Err(e) => {
+                                                        warn!(error = %e, "LLM rewrite of follow-up failed. Sending original message.");
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // --- End LLM Rewrite Logic ---
+
+                                        // Create a new task for the delegated follow-up
+                                        let delegation_params = TaskSendParams {
+                                            id: Uuid::new_v4().to_string(),
+                                            message: message_to_send,
+                                            session_id: task.session_id.clone(),
+                                            metadata: task.metadata.clone(),
+                                            history_length: None,
+                                            push_notification: None,
+                                        };
+                                        let remote_task_id = delegation_params.id.clone();
+
+                                        // Send the delegated follow-up
+                                        match cm.send_task(&agent_id, delegation_params).await {
+                                            Ok(initial_remote_task) => {
+                                                info!(%agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Follow-up delegation initiated successfully.");
+
+                                                // Update local task to indicate delegation
+                                                task.status.state = TaskState::Working;
+                                                task.status.timestamp = Some(Utc::now());
+                                                task.status.message = Some(Message {
                                                      role: Role::Agent,
                                                      parts: vec![Part::TextPart(TextPart {
                                                          type_: "text".to_string(),
@@ -617,41 +708,57 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                                      })],
                                                      metadata: None,
                                                  });
-                                                 
-                                                 // Save remote task ID in metadata
-                                                 task.metadata.get_or_insert_with(Default::default).insert(
-                                                     "remote_follow_up_task_id".to_string(), 
-                                                     remote_task_id.clone().into()
-                                                 );
-                                                 
-                                                 self.task_repository.save_task(&task).await?;
-                                                 self.task_repository.save_state_history(&task.id, &task).await?;
-                                                 
-                                                 // Poll for remote task completion
-                                                 let max_polling_attempts = 30;
-                                                 let polling_interval = Duration::from_secs(2);
-                                                 let mut final_remote_task: Option<Task> = None;
-                                                 
-                                                 for attempt in 1..=max_polling_attempts {
-                                                     debug!(attempt, max_polling_attempts, "Polling remote follow-up task status.");
-                                                     match cm.get_task_status(&agent_id, &remote_task_id).await {
-                                                         Ok(remote_task_update) => {
-                                                             trace!(remote_state = ?remote_task_update.status.state, "Received remote follow-up task status update.");
-                                                             
-                                                             // Check if remote task reached a final state
-                                                             if matches!(remote_task_update.status.state, 
-                                                                 TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::InputRequired) 
-                                                             {
-                                                                 info!(final_state = ?remote_task_update.status.state, "Remote follow-up task reached final state.");
-                                                                 final_remote_task = Some(remote_task_update);
-                                                                 break;
-                                                             }
-                                                         }
-                                                         Err(e) => {
-                                                             error!(error = %e, "Polling remote follow-up task failed.");
-                                                             // Update local task due to monitoring error
-                                                             task.status.state = TaskState::Failed;
-                                                             task.status.message = Some(Message {
+
+                                                // Save remote task ID in metadata
+                                                task.metadata
+                                                    .get_or_insert_with(Default::default)
+                                                    .insert(
+                                                        "remote_follow_up_task_id".to_string(),
+                                                        remote_task_id.clone().into(),
+                                                    );
+
+                                                self.task_repository.save_task(&task).await?;
+                                                self.task_repository
+                                                    .save_state_history(&task.id, &task)
+                                                    .await?;
+
+                                                // Poll for remote task completion
+                                                let max_polling_attempts = 30;
+                                                let polling_interval = Duration::from_secs(2);
+                                                let mut final_remote_task: Option<Task> = None;
+
+                                                for attempt in 1..=max_polling_attempts {
+                                                    debug!(
+                                                        attempt,
+                                                        max_polling_attempts,
+                                                        "Polling remote follow-up task status."
+                                                    );
+                                                    match cm
+                                                        .get_task_status(&agent_id, &remote_task_id)
+                                                        .await
+                                                    {
+                                                        Ok(remote_task_update) => {
+                                                            trace!(remote_state = ?remote_task_update.status.state, "Received remote follow-up task status update.");
+
+                                                            // Check if remote task reached a final state
+                                                            if matches!(
+                                                                remote_task_update.status.state,
+                                                                TaskState::Completed
+                                                                    | TaskState::Failed
+                                                                    | TaskState::Canceled
+                                                                    | TaskState::InputRequired
+                                                            ) {
+                                                                info!(final_state = ?remote_task_update.status.state, "Remote follow-up task reached final state.");
+                                                                final_remote_task =
+                                                                    Some(remote_task_update);
+                                                                break;
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            error!(error = %e, "Polling remote follow-up task failed.");
+                                                            // Update local task due to monitoring error
+                                                            task.status.state = TaskState::Failed;
+                                                            task.status.message = Some(Message {
                                                                  role: Role::Agent,
                                                                  parts: vec![Part::TextPart(TextPart {
                                                                      type_: "text".to_string(),
@@ -663,44 +770,54 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                                                  })],
                                                                  metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
                                                              });
-                                                             task.status.timestamp = Some(Utc::now());
-                                                             self.task_repository.save_task(&task).await?;
-                                                             self.task_repository.save_state_history(&task.id, &task).await?;
-                                                             return Ok(task);
-                                                         }
-                                                     }
-                                                     // Wait before next poll
-                                                     sleep(polling_interval).await;
-                                                 }
-                                                 
-                                                 // Update task with final remote state
-                                                 if let Some(final_task) = final_remote_task {
-                                                     info!(final_state = ?final_task.status.state, "Updating local task with final remote follow-up state.");
-                                                     
-                                                     // Mirror the final state, message, and artifacts
-                                                     task.status = final_task.status;
-                                                     
-                                                     // If remote task produced artifacts, add them to our task
-                                                     if let Some(remote_artifacts) = final_task.artifacts {
-                                                         if !remote_artifacts.is_empty() {
-                                                             // Get our existing artifacts or create empty vec
-                                                             let artifacts = task.artifacts.get_or_insert_with(Vec::new);
-                                                             
-                                                             // Add remote artifacts to our collection
-                                                             for mut artifact in remote_artifacts {
-                                                                 // Update index to continue from our last artifact
-                                                                 artifact.index = artifacts.len() as i64;
-                                                                 artifacts.push(artifact);
-                                                             }
-                                                         }
-                                                     }
-                                                     
-                                                     // Ensure timestamp is updated
-                                                     task.status.timestamp = Some(Utc::now());
-                                                 } else {
-                                                     warn!(polling_attempts = max_polling_attempts, "Remote follow-up task did not reach final state after polling. Marking as Failed.");
-                                                     task.status.state = TaskState::Failed;
-                                                     task.status.message = Some(Message {
+                                                            task.status.timestamp =
+                                                                Some(Utc::now());
+                                                            self.task_repository
+                                                                .save_task(&task)
+                                                                .await?;
+                                                            self.task_repository
+                                                                .save_state_history(&task.id, &task)
+                                                                .await?;
+                                                            return Ok(task);
+                                                        }
+                                                    }
+                                                    // Wait before next poll
+                                                    sleep(polling_interval).await;
+                                                }
+
+                                                // Update task with final remote state
+                                                if let Some(final_task) = final_remote_task {
+                                                    info!(final_state = ?final_task.status.state, "Updating local task with final remote follow-up state.");
+
+                                                    // Mirror the final state, message, and artifacts
+                                                    task.status = final_task.status;
+
+                                                    // If remote task produced artifacts, add them to our task
+                                                    if let Some(remote_artifacts) =
+                                                        final_task.artifacts
+                                                    {
+                                                        if !remote_artifacts.is_empty() {
+                                                            // Get our existing artifacts or create empty vec
+                                                            let artifacts = task
+                                                                .artifacts
+                                                                .get_or_insert_with(Vec::new);
+
+                                                            // Add remote artifacts to our collection
+                                                            for mut artifact in remote_artifacts {
+                                                                // Update index to continue from our last artifact
+                                                                artifact.index =
+                                                                    artifacts.len() as i64;
+                                                                artifacts.push(artifact);
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Ensure timestamp is updated
+                                                    task.status.timestamp = Some(Utc::now());
+                                                } else {
+                                                    warn!(polling_attempts = max_polling_attempts, "Remote follow-up task did not reach final state after polling. Marking as Failed.");
+                                                    task.status.state = TaskState::Failed;
+                                                    task.status.message = Some(Message {
                                                          role: Role::Agent,
                                                          parts: vec![Part::TextPart(TextPart {
                                                              type_: "text".to_string(),
@@ -712,17 +829,19 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                                          })],
                                                          metadata: Some(serde_json::json!({ "error_context": "polling_timeout" }).as_object().unwrap().clone()),
                                                      });
-                                                     task.status.timestamp = Some(Utc::now());
-                                                 }
-                                                 
-                                                 // Save the final state
-                                                 self.task_repository.save_task(&task).await?;
-                                                 self.task_repository.save_state_history(&task.id, &task).await?;
-                                             }
-                                             Err(e) => {
-                                                 error!(%agent_id, error = %e, "Failed to delegate follow-up task.");
-                                                 task.status.state = TaskState::Failed;
-                                                 task.status.message = Some(Message {
+                                                    task.status.timestamp = Some(Utc::now());
+                                                }
+
+                                                // Save the final state
+                                                self.task_repository.save_task(&task).await?;
+                                                self.task_repository
+                                                    .save_state_history(&task.id, &task)
+                                                    .await?;
+                                            }
+                                            Err(e) => {
+                                                error!(%agent_id, error = %e, "Failed to delegate follow-up task.");
+                                                task.status.state = TaskState::Failed;
+                                                task.status.message = Some(Message {
                                                      role: Role::Agent,
                                                      parts: vec![Part::TextPart(TextPart {
                                                          type_: "text".to_string(),
@@ -734,15 +853,17 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                                      })],
                                                      metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
                                                  });
-                                                 task.status.timestamp = Some(Utc::now());
-                                                 self.task_repository.save_task(&task).await?;
-                                                 self.task_repository.save_state_history(&task.id, &task).await?;
-                                             }
-                                         }
-                                     } else {
-                                         error!("Client manager not available for remote follow-up delegation.");
-                                         task.status.state = TaskState::Failed;
-                                         task.status.message = Some(Message {
+                                                task.status.timestamp = Some(Utc::now());
+                                                self.task_repository.save_task(&task).await?;
+                                                self.task_repository
+                                                    .save_state_history(&task.id, &task)
+                                                    .await?;
+                                            }
+                                        }
+                                    } else {
+                                        error!("Client manager not available for remote follow-up delegation.");
+                                        task.status.state = TaskState::Failed;
+                                        task.status.message = Some(Message {
                                              role: Role::Agent,
                                              parts: vec![Part::TextPart(TextPart {
                                                  type_: "text".to_string(),
@@ -751,83 +872,104 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                              })],
                                              metadata: None,
                                          });
-                                         task.status.timestamp = Some(Utc::now());
-                                         self.task_repository.save_task(&task).await?;
-                                         self.task_repository.save_state_history(&task.id, &task).await?;
-                                     }
-                                 },
-                                 RoutingDecision::Reject { reason } => {
-                                     info!(%reason, "Follow-up message rejected based on routing decision.");
-                                     task.status.state = TaskState::Failed;
-                                     task.status.timestamp = Some(Utc::now());
-                                     task.status.message = Some(Message {
-                                         role: Role::Agent,
-                                         parts: vec![Part::TextPart(TextPart {
-                                             type_: "text".to_string(),
-                                             text: format!("Follow-up rejected: {}", reason),
-                                             metadata: None,
-                                         })],
-                                         metadata: None,
-                                     });
-                                     self.task_repository.save_task(&task).await?;
-                                     self.task_repository.save_state_history(&task.id, &task).await?;
-                                 },
-                                 RoutingDecision::Decompose { subtasks: _ } => {
-                                     warn!("Follow-up decomposition requested but not implemented.");
-                                     task.status.state = TaskState::Failed;
-                                     task.status.timestamp = Some(Utc::now());
-                                     task.status.message = Some(Message {
-                                         role: Role::Agent,
-                                         parts: vec![Part::TextPart(TextPart {
-                                             type_: "text".to_string(),
-                                             text: "Follow-up decomposition is not implemented.".to_string(),
-                                             metadata: None,
-                                         })],
-                                         metadata: None,
-                                     });
-                                     self.task_repository.save_task(&task).await?;
-                                     self.task_repository.save_state_history(&task.id, &task).await?;
-                                 },
-                                 RoutingDecision::NeedsClarification { question } => {
-                                     // This case should ideally not happen during follow-up processing,
-                                     // as clarification should occur before routing.
-                                     // If it does, treat it as needing human input again.
-                                     warn!(task_id = %task.id, "Received NeedsClarification decision during follow-up processing. Setting state to InputRequired.");
-                                     task.status.state = TaskState::InputRequired;
-                                     task.status.message = Some(Message::agent(question));
-                                     task.status.timestamp = Some(Utc::now());
-                                     self.task_repository.save_task(&task).await?;
-                                     self.task_repository.save_state_history(&task.id, &task).await?;
-                                 },
-                                 RoutingDecision::Decompose { subtasks } => {
-                                     // Similar to NeedsClarification, decomposition should ideally happen
-                                     // on the initial routing, not during follow-up.
-                                     warn!(task_id = %task.id, subtask_count = subtasks.len(), "Received Decompose decision during follow-up processing. Marking task as Failed.");
-                                     task.status.state = TaskState::Failed;
-                                     task.status.message = Some(Message::agent("Task decomposition during follow-up is not supported.".to_string()));
-                                     task.status.timestamp = Some(Utc::now());
-                                     self.task_repository.save_task(&task).await?;
-                                     self.task_repository.save_state_history(&task.id, &task).await?;
-                                 }
-                             }
-                         },
-                         Err(e) => {
-                             error!(error = %e, "Follow-up routing decision failed.");
-                             task.status.state = TaskState::Failed;
-                             task.status.message = Some(Message {
-                                 role: Role::Agent,
-                                 parts: vec![Part::TextPart(TextPart {
-                                     type_: "text".to_string(),
-                                     text: format!("Follow-up routing failed: {}.", e),
-                                     metadata: None,
-                                 })],
-                                 metadata: Some(serde_json::json!({ "error_context": e.to_string() }).as_object().unwrap().clone()),
-                             });
-                             task.status.timestamp = Some(Utc::now());
-                             self.task_repository.save_task(&task).await?;
-                             self.task_repository.save_state_history(&task.id, &task).await?;
-                         }
-                     }
+                                        task.status.timestamp = Some(Utc::now());
+                                        self.task_repository.save_task(&task).await?;
+                                        self.task_repository
+                                            .save_state_history(&task.id, &task)
+                                            .await?;
+                                    }
+                                }
+                                RoutingDecision::Reject { reason } => {
+                                    info!(%reason, "Follow-up message rejected based on routing decision.");
+                                    task.status.state = TaskState::Failed;
+                                    task.status.timestamp = Some(Utc::now());
+                                    task.status.message = Some(Message {
+                                        role: Role::Agent,
+                                        parts: vec![Part::TextPart(TextPart {
+                                            type_: "text".to_string(),
+                                            text: format!("Follow-up rejected: {}", reason),
+                                            metadata: None,
+                                        })],
+                                        metadata: None,
+                                    });
+                                    self.task_repository.save_task(&task).await?;
+                                    self.task_repository
+                                        .save_state_history(&task.id, &task)
+                                        .await?;
+                                }
+                                RoutingDecision::Decompose { subtasks: _ } => {
+                                    warn!("Follow-up decomposition requested but not implemented.");
+                                    task.status.state = TaskState::Failed;
+                                    task.status.timestamp = Some(Utc::now());
+                                    task.status.message = Some(Message {
+                                        role: Role::Agent,
+                                        parts: vec![Part::TextPart(TextPart {
+                                            type_: "text".to_string(),
+                                            text: "Follow-up decomposition is not implemented."
+                                                .to_string(),
+                                            metadata: None,
+                                        })],
+                                        metadata: None,
+                                    });
+                                    self.task_repository.save_task(&task).await?;
+                                    self.task_repository
+                                        .save_state_history(&task.id, &task)
+                                        .await?;
+                                }
+                                RoutingDecision::NeedsClarification { question } => {
+                                    // This case should ideally not happen during follow-up processing,
+                                    // as clarification should occur before routing.
+                                    // If it does, treat it as needing human input again.
+                                    warn!(task_id = %task.id, "Received NeedsClarification decision during follow-up processing. Setting state to InputRequired.");
+                                    task.status.state = TaskState::InputRequired;
+                                    task.status.message = Some(Message::agent(question));
+                                    task.status.timestamp = Some(Utc::now());
+                                    self.task_repository.save_task(&task).await?;
+                                    self.task_repository
+                                        .save_state_history(&task.id, &task)
+                                        .await?;
+                                }
+                                RoutingDecision::Decompose { subtasks } => {
+                                    // Similar to NeedsClarification, decomposition should ideally happen
+                                    // on the initial routing, not during follow-up.
+                                    warn!(task_id = %task.id, subtask_count = subtasks.len(), "Received Decompose decision during follow-up processing. Marking task as Failed.");
+                                    task.status.state = TaskState::Failed;
+                                    task.status.message = Some(Message::agent(
+                                        "Task decomposition during follow-up is not supported."
+                                            .to_string(),
+                                    ));
+                                    task.status.timestamp = Some(Utc::now());
+                                    self.task_repository.save_task(&task).await?;
+                                    self.task_repository
+                                        .save_state_history(&task.id, &task)
+                                        .await?;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!(error = %e, "Follow-up routing decision failed.");
+                            task.status.state = TaskState::Failed;
+                            task.status.message = Some(Message {
+                                role: Role::Agent,
+                                parts: vec![Part::TextPart(TextPart {
+                                    type_: "text".to_string(),
+                                    text: format!("Follow-up routing failed: {}.", e),
+                                    metadata: None,
+                                })],
+                                metadata: Some(
+                                    serde_json::json!({ "error_context": e.to_string() })
+                                        .as_object()
+                                        .unwrap()
+                                        .clone(),
+                                ),
+                            });
+                            task.status.timestamp = Some(Utc::now());
+                            self.task_repository.save_task(&task).await?;
+                            self.task_repository
+                                .save_state_history(&task.id, &task)
+                                .await?;
+                        }
+                    }
                 } else {
                     debug!("Standalone mode or missing message: Processing follow-up content directly.");
                     // Standalone: Process content directly (or use a simpler logic)
@@ -837,29 +979,42 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                 // Save the updated task and state history
                 debug!("Saving final task state after follow-up processing.");
                 self.task_repository.save_task(&task).await?;
-                self.task_repository.save_state_history(&task.id, &task).await?;
-
-            },
+                self.task_repository
+                    .save_state_history(&task.id, &task)
+                    .await?;
+            }
             TaskState::Completed | TaskState::Failed | TaskState::Canceled => {
-                error!("Task is in a final state ({:?}) and cannot accept follow-up messages.", task.status.state);
-                return Err(ServerError::InvalidParameters(
-                    format!("Task {} is in {} state and cannot accept follow-up messages",
-                            task.id, task.status.state)
-                ));
-            },
+                error!(
+                    "Task is in a final state ({:?}) and cannot accept follow-up messages.",
+                    task.status.state
+                );
+                return Err(ServerError::InvalidParameters(format!(
+                    "Task {} is in {} state and cannot accept follow-up messages",
+                    task.id, task.status.state
+                )));
+            }
             TaskState::Working | TaskState::Submitted => {
                 // For Working/Submitted state, reject follow-up for now
-                warn!("Task is in {:?} state. Rejecting follow-up message.", task.status.state);
-                return Err(ServerError::InvalidParameters(
-                    format!("Task {} is still processing ({:?}). Cannot accept follow-up message yet.",
-                            task.id, task.status.state)
-                ));
-            },
-             // Handle Unknown or other potential states if necessary
-             _ => {
-                 error!("Task is in unhandled state ({:?}) for follow-up.", task.status.state);
-                 return Err(ServerError::Internal(format!("Task {} in unhandled state {:?} for follow-up", task.id, task.status.state)));
-             }
+                warn!(
+                    "Task is in {:?} state. Rejecting follow-up message.",
+                    task.status.state
+                );
+                return Err(ServerError::InvalidParameters(format!(
+                    "Task {} is still processing ({:?}). Cannot accept follow-up message yet.",
+                    task.id, task.status.state
+                )));
+            }
+            // Handle Unknown or other potential states if necessary
+            _ => {
+                error!(
+                    "Task is in unhandled state ({:?}) for follow-up.",
+                    task.status.state
+                );
+                return Err(ServerError::Internal(format!(
+                    "Task {} in unhandled state {:?} for follow-up",
+                    task.id, task.status.state
+                )));
+            }
         }
 
         info!(final_state = ?task.status.state, "Finished processing follow-up message."); // Keep info for follow-up end
@@ -868,7 +1023,11 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
     /// Process the content of a task (simplified implementation for reference server)
     #[instrument(skip(self, task, message), fields(task_id = %task.id))]
-    async fn process_task_content(&self, task: &mut Task, message: Option<Message>) -> Result<(), ServerError> {
+    async fn process_task_content(
+        &self,
+        task: &mut Task,
+        message: Option<Message>,
+    ) -> Result<(), ServerError> {
         debug!("Processing task content (standalone/fallback logic)."); // Changed to debug
         trace!(?message, "Message content being processed.");
         // Simplified implementation - in a real server, this would process the task asynchronously
@@ -885,9 +1044,14 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         // Check if we should request input - check both message metadata and task metadata
         debug!("Checking if task requires input based on metadata.");
         let require_input = if let Some(ref meta) = metadata {
-            meta.get("_mock_require_input").and_then(|v| v.as_bool()).unwrap_or(false)
+            meta.get("_mock_require_input")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
         } else if let Some(ref task_meta) = task.metadata {
-            task_meta.get("_mock_require_input").and_then(|v| v.as_bool()).unwrap_or(false)
+            task_meta
+                .get("_mock_require_input")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
         } else {
             false
         };
@@ -899,7 +1063,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
         if require_input {
             info!("Task requires input. Updating status to InputRequired."); // Keep info for state change
-            // Update task status to request input
+                                                                             // Update task status to request input
             task.status = TaskStatus {
                 state: TaskState::InputRequired,
                 timestamp: Some(Utc::now()),
@@ -919,8 +1083,12 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
         // Check if we should keep the task in working state
         debug!("Checking if task should remain in Working state based on metadata.");
-        let remain_working = if let Some(ref task_meta) = task.metadata { // Check task metadata
-            task_meta.get("_mock_remain_working").and_then(|v| v.as_bool()).unwrap_or(false)
+        let remain_working = if let Some(ref task_meta) = task.metadata {
+            // Check task metadata
+            task_meta
+                .get("_mock_remain_working")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
         } else {
             false
         };
@@ -928,7 +1096,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
         if remain_working {
             debug!("Task metadata indicates it should remain Working."); // Changed to debug
-            // Keep the task in working state (or update timestamp/message if needed)
+                                                                         // Keep the task in working state (or update timestamp/message if needed)
             task.status.state = TaskState::Working; // Ensure it's Working
             task.status.timestamp = Some(Utc::now());
             task.status.message = Some(Message {
@@ -943,7 +1111,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
             trace!(?task.status, "Task status kept as Working.");
         } else {
             info!("Task does not require input or remain working. Marking as Completed."); // Keep info for state change
-            // Just mark as completed for this reference implementation
+                                                                                           // Just mark as completed for this reference implementation
             task.status = TaskStatus {
                 state: TaskState::Completed,
                 timestamp: Some(Utc::now()),
@@ -957,25 +1125,25 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     metadata: None,
                 }),
             };
-             // Add artifact for completed task if none exists yet (for basic tests)
-             if task.artifacts.is_none() || task.artifacts.as_ref().map_or(true, |a| a.is_empty()) {
-                 debug!("Adding default completion artifact.");
-                 let completion_artifact = crate::types::Artifact {
-                     index: 0,
-                     name: Some("result.txt".to_string()),
-                     parts: vec![crate::types::Part::TextPart(crate::types::TextPart {
-                         type_: "text".to_string(),
-                         text: "Default task completion result.".to_string(),
-                         metadata: None,
-                     })],
-                     description: Some("Default completion artifact".to_string()),
-                     append: None,
-                     last_chunk: None,
-                     metadata: None,
-                 };
-                 task.artifacts = Some(vec![completion_artifact]);
-                 trace!(?task.artifacts, "Default artifact added.");
-             }
+            // Add artifact for completed task if none exists yet (for basic tests)
+            if task.artifacts.is_none() || task.artifacts.as_ref().is_none_or(|a| a.is_empty()) {
+                debug!("Adding default completion artifact.");
+                let completion_artifact = crate::types::Artifact {
+                    index: 0,
+                    name: Some("result.txt".to_string()),
+                    parts: vec![crate::types::Part::TextPart(crate::types::TextPart {
+                        type_: "text".to_string(),
+                        text: "Default task completion result.".to_string(),
+                        metadata: None,
+                    })],
+                    description: Some("Default completion artifact".to_string()),
+                    append: None,
+                    last_chunk: None,
+                    metadata: None,
+                };
+                task.artifacts = Some(vec![completion_artifact]);
+                trace!(?task.artifacts, "Default artifact added.");
+            }
             trace!(?task.status, "Task status updated to Completed.");
         }
 
@@ -984,11 +1152,18 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
     /// Process file or data artifacts
     #[instrument(skip(self, task, message), fields(task_id = %task.id))]
-    async fn process_task_artifacts(&self, task: &mut Task, message: &Option<Message>) -> Result<(), ServerError> {
+    async fn process_task_artifacts(
+        &self,
+        task: &mut Task,
+        message: &Option<Message>,
+    ) -> Result<(), ServerError> {
         debug!("Processing artifacts from message (if any).");
         // Check if message has file or data parts
         if let Some(ref msg) = message {
-            trace!(part_count = msg.parts.len(), "Checking message parts for files/data.");
+            trace!(
+                part_count = msg.parts.len(),
+                "Checking message parts for files/data."
+            );
             let mut has_file = false;
             let mut has_data = false;
 
@@ -997,16 +1172,19 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     Part::FilePart(fp) => {
                         trace!(part_index = i, file_name = ?fp.file.name, "Found FilePart.");
                         has_file = true;
-                    },
-                    Part::DataPart(_dp) => { // Prefix dp with _
+                    }
+                    Part::DataPart(_dp) => {
+                        // Prefix dp with _
                         trace!(part_index = i, "Found DataPart.");
                         has_data = true;
-                    },
-                    Part::TextPart(_) => {
-                        trace!(part_index = i, "Found TextPart (ignored for artifact processing).");
                     }
-                    // Handle unknown part types if necessary
-                    // _ => { warn!(part_index = i, "Found unknown part type."); }
+                    Part::TextPart(_) => {
+                        trace!(
+                            part_index = i,
+                            "Found TextPart (ignored for artifact processing)."
+                        );
+                    } // Handle unknown part types if necessary
+                      // _ => { warn!(part_index = i, "Found unknown part type."); }
                 }
             }
             trace!(%has_file, %has_data, "File/Data part check complete.");
@@ -1048,11 +1226,14 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
             // Add data artifact if found
             if has_data {
-                 debug!("Creating artifact for processed data content.");
+                debug!("Creating artifact for processed data content.");
                 // Create data part for json artifact
                 let mut data_map = serde_json::Map::new();
                 data_map.insert("processed".to_string(), serde_json::json!(true));
-                data_map.insert("timestamp".to_string(), serde_json::json!(chrono::Utc::now().to_rfc3339()));
+                data_map.insert(
+                    "timestamp".to_string(),
+                    serde_json::json!(chrono::Utc::now().to_rfc3339()),
+                );
                 trace!(?data_map, "Created data map for data artifact.");
 
                 let data_part = crate::types::DataPart {
@@ -1060,7 +1241,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                     data: data_map,
                     metadata: None,
                 };
-                 trace!(?data_part, "Created data part for data artifact.");
+                trace!(?data_part, "Created data part for data artifact.");
 
                 // Create artifact with correct fields based on type definition
                 let data_artifact = crate::types::Artifact {
@@ -1092,7 +1273,10 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         debug!("Getting task details."); // Changed to debug
         trace!(?params, "Task query parameters.");
         debug!("Fetching task from repository.");
-        let task = self.task_repository.get_task(&params.id).await?
+        let task = self
+            .task_repository
+            .get_task(&params.id)
+            .await?
             .ok_or_else(|| {
                 warn!("Task not found in repository.");
                 ServerError::TaskNotFound(params.id.clone())
@@ -1107,14 +1291,23 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
             if let Some(history) = &mut result.history {
                 let original_len = history.len();
                 if original_len > history_length as usize {
-                    trace!(original_len, target_len = history_length, "Truncating history.");
-                    *history = history.iter()
+                    trace!(
+                        original_len,
+                        target_len = history_length,
+                        "Truncating history."
+                    );
+                    *history = history
+                        .iter()
                         .skip(original_len - history_length as usize)
                         .cloned()
                         .collect();
                     trace!(final_len = history.len(), "History truncated.");
                 } else {
-                    trace!(original_len, target_len = history_length, "History length is within limit, no truncation needed.");
+                    trace!(
+                        original_len,
+                        target_len = history_length,
+                        "History length is within limit, no truncation needed."
+                    );
                 }
             } else {
                 trace!("Task has no history, filter not applied.");
@@ -1132,10 +1325,13 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         info!("Attempting to cancel task."); // Keep info for cancellation attempt
         trace!(?params, "Cancel task parameters.");
         debug!("Fetching task to check current state.");
-        let mut task = self.task_repository.get_task(&params.id).await?
+        let mut task = self
+            .task_repository
+            .get_task(&params.id)
+            .await?
             .ok_or_else(|| {
-                 warn!("Task not found for cancellation.");
-                 ServerError::TaskNotFound(params.id.clone())
+                warn!("Task not found for cancellation.");
+                ServerError::TaskNotFound(params.id.clone())
             })?;
         debug!(current_state = ?task.status.state, "Task found."); // Changed to debug
         trace!(?task, "Task details before cancellation.");
@@ -1143,14 +1339,20 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         // Check if task can be canceled
         match task.status.state {
             TaskState::Completed | TaskState::Failed | TaskState::Canceled => {
-                warn!("Task is already in a final state ({:?}), cannot cancel.", task.status.state);
+                warn!(
+                    "Task is already in a final state ({:?}), cannot cancel.",
+                    task.status.state
+                );
                 return Err(ServerError::TaskNotCancelable(format!(
                     "Task {} is in {} state and cannot be canceled",
                     params.id, task.status.state
                 )));
             }
             _ => {
-                debug!("Task is in a cancelable state ({:?}). Proceeding with cancellation.", task.status.state); // Changed to debug
+                debug!(
+                    "Task is in a cancelable state ({:?}). Proceeding with cancellation.",
+                    task.status.state
+                ); // Changed to debug
             }
         }
 
@@ -1177,7 +1379,9 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
 
         // Save state history
         debug!("Saving canceled task state to history.");
-        self.task_repository.save_state_history(&task.id, &task).await?;
+        self.task_repository
+            .save_state_history(&task.id, &task)
+            .await?;
 
         info!("Task successfully canceled."); // Keep info for success
         Ok(task)
@@ -1190,7 +1394,10 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         trace!(%task_id, "Task ID for history retrieval.");
         // First check if the task exists
         debug!("Checking if task exists before getting history.");
-        let _ = self.task_repository.get_task(task_id).await?
+        let _ = self
+            .task_repository
+            .get_task(task_id)
+            .await?
             .ok_or_else(|| {
                 warn!("Task not found when trying to get state history.");
                 ServerError::TaskNotFound(task_id.to_string())
@@ -1215,11 +1422,13 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
         self.task_repository.save_task(&task).await?;
         // Also save its initial state to history for consistency
         debug!("Saving imported task's initial state to history.");
-        self.task_repository.save_state_history(&task.id, &task).await?;
+        self.task_repository
+            .save_state_history(&task.id, &task)
+            .await?;
         debug!("Task imported successfully."); // Changed to debug
         Ok(())
     }
-    
+
     /// Set a custom router implementation (for testing)
     pub fn set_router(&self, router: Arc<dyn LlmTaskRouterTrait>) {
         info!("Setting custom router implementation");

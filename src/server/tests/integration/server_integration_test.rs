@@ -1,22 +1,22 @@
+use crate::client::streaming::{StreamingResponse, StreamingResponseStream};
 use crate::client::A2aClient;
-use crate::server::run_server;
-use crate::types::{TaskState, Message, Role, Part, TextPart, Task};
 use crate::server::repositories::task_repository::InMemoryTaskRepository;
-use crate::server::services::task_service::TaskService;
-use crate::server::services::streaming_service::StreamingService;
+use crate::server::run_server;
 use crate::server::services::notification_service::NotificationService;
+use crate::server::services::streaming_service::StreamingService;
+use crate::server::services::task_service::TaskService;
+use crate::types::PushNotificationConfig;
+use crate::types::{Message, Part, Role, Task, TaskState, TextPart};
+use futures_util::StreamExt;
+use serde_json::{json, Value};
 use std::error::Error;
 use std::sync::Arc;
+use tempfile::tempdir;
 use tokio::spawn;
 use tokio::time::sleep;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use serde_json::{json, Value};
-use crate::types::PushNotificationConfig;
-use crate::client::streaming::{StreamingResponseStream, StreamingResponse};
-use tempfile::tempdir;
-use futures_util::StreamExt;
 
 // Helper to start the server on a given port
 async fn start_test_server(port: u16) {
@@ -29,9 +29,19 @@ async fn start_test_server(port: u16) {
         let shutdown_token = tokio_util::sync::CancellationToken::new();
         // Use None for agent_card to use the default
         let agent_card = None;
-        run_server(port, bind_address, task_service, streaming_service, notification_service, shutdown_token, agent_card).await.unwrap();
+        run_server(
+            port,
+            bind_address,
+            task_service,
+            streaming_service,
+            notification_service,
+            shutdown_token,
+            agent_card,
+        )
+        .await
+        .unwrap();
     });
-    
+
     // Allow the server to start
     sleep(Duration::from_millis(100)).await;
 }
@@ -47,9 +57,19 @@ async fn start_test_server_with_custom_card(port: u16, custom_card: serde_json::
         let shutdown_token = tokio_util::sync::CancellationToken::new();
         // Use the provided custom agent card
         let agent_card = Some(custom_card);
-        run_server(port, bind_address, task_service, streaming_service, notification_service, shutdown_token, agent_card).await.unwrap();
+        run_server(
+            port,
+            bind_address,
+            task_service,
+            streaming_service,
+            notification_service,
+            shutdown_token,
+            agent_card,
+        )
+        .await
+        .unwrap();
     });
-    
+
     // Allow the server to start
     sleep(Duration::from_millis(100)).await;
 }
@@ -60,30 +80,40 @@ async fn test_basic_task_workflow() -> Result<(), Box<dyn Error>> {
     // Start the server on a unique port
     let port = 8201;
     start_test_server(port).await;
-    
+
     // Create client
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-    
+
     // 1. Get the agent card
     let agent_card = client.get_agent_card().await?;
     assert!(!agent_card.name.is_empty(), "Agent card should have a name");
-    assert!(agent_card.capabilities.streaming, "Agent should support streaming");
-    
+    assert!(
+        agent_card.capabilities.streaming,
+        "Agent should support streaming"
+    );
+
     // 2. Create a task
     let task_message = "This is a test task for the reference server";
     let task = client.send_task(task_message, None).await?; // Add None for session_id
 
     assert!(!task.id.is_empty(), "Task should have an ID");
-    assert_eq!(task.status.state, TaskState::Completed, "Task should be completed");
-    
+    assert_eq!(
+        task.status.state,
+        TaskState::Completed,
+        "Task should be completed"
+    );
+
     // 3. Get the task
     let retrieved_task = client.get_task(&task.id).await?;
     assert_eq!(retrieved_task.id, task.id, "Retrieved task ID should match");
-    assert_eq!(retrieved_task.status.state, TaskState::Completed, "Retrieved task state should match");
-    
+    assert_eq!(
+        retrieved_task.status.state,
+        TaskState::Completed,
+        "Retrieved task state should match"
+    );
+
     Ok(())
 }
-
 
 // --- Basic Workflow & State Transitions ---
 
@@ -98,7 +128,7 @@ async fn test_send_get_success() -> Result<(), Box<dyn Error>> {
 
     assert_eq!(retrieved_task.id, task.id);
     // Mock server completes immediately
-    assert_eq!(retrieved_task.status.state, TaskState::Completed); 
+    assert_eq!(retrieved_task.status.state, TaskState::Completed);
     Ok(())
 }
 
@@ -109,10 +139,12 @@ async fn test_send_cancel_get() -> Result<(), Box<dyn Error>> {
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
     // Use metadata to keep the task working
-    let task = client.send_task_with_metadata(
-        "Task to be canceled",
-        Some(r#"{"_mock_remain_working": true}"#)
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Task to be canceled",
+            Some(r#"{"_mock_remain_working": true}"#),
+        )
+        .await?;
     assert_eq!(task.status.state, TaskState::Working); // Verify it starts working
 
     client.cancel_task_typed(&task.id).await?;
@@ -130,8 +162,8 @@ async fn test_get_completed_task() -> Result<(), Box<dyn Error>> {
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
     let task = client.send_task("Task to complete", None).await?; // Add None for session_id
-    // Allow time if server had delays, though mock is instant
-    sleep(Duration::from_millis(50)).await; 
+                                                                  // Allow time if server had delays, though mock is instant
+    sleep(Duration::from_millis(50)).await;
     let retrieved_task = client.get_task(&task.id).await?;
 
     assert_eq!(retrieved_task.id, task.id);
@@ -145,10 +177,12 @@ async fn test_get_canceled_task() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task_with_metadata(
-        "Another task to be canceled",
-        Some(r#"{"_mock_remain_working": true}"#)
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Another task to be canceled",
+            Some(r#"{"_mock_remain_working": true}"#),
+        )
+        .await?;
     client.cancel_task_typed(&task.id).await?;
     sleep(Duration::from_millis(50)).await; // Allow time for state update
     let retrieved_task = client.get_task(&task.id).await?;
@@ -165,10 +199,12 @@ async fn test_input_required_flow() -> Result<(), Box<dyn Error>> {
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
     // Send task that requires input
-    let task = client.send_task_with_metadata(
-        "Task requiring input",
-        Some(r#"{"_mock_require_input": true}"#)
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Task requiring input",
+            Some(r#"{"_mock_require_input": true}"#),
+        )
+        .await?;
     assert_eq!(task.status.state, TaskState::InputRequired);
 
     // Get to confirm state
@@ -176,8 +212,10 @@ async fn test_input_required_flow() -> Result<(), Box<dyn Error>> {
     assert_eq!(retrieved_task.status.state, TaskState::InputRequired);
 
     // Send follow-up using the same ID explicitly
-    let follow_up_task = client.send_task_with_error_handling(&task.id, "Follow-up input").await?;
-    
+    let follow_up_task = client
+        .send_task_with_error_handling(&task.id, "Follow-up input")
+        .await?;
+
     // Get the final state of the task
     let final_task_state = client.get_task(&task.id).await?;
 
@@ -200,14 +238,19 @@ async fn test_send_follow_up_to_completed_task() -> Result<(), Box<dyn Error>> {
     assert_eq!(task.status.state, TaskState::Completed);
 
     // Attempt follow-up using send_task_with_error_handling
-    let result = client.send_task_with_error_handling(
-        &task.id, // Use existing ID
-        "Follow-up to completed task"
-    ).await;
+    let result = client
+        .send_task_with_error_handling(
+            &task.id, // Use existing ID
+            "Follow-up to completed task",
+        )
+        .await;
 
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_INVALID_PARAMS);
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_INVALID_PARAMS
+        );
         assert!(e.message.contains("cannot accept follow-up"));
     } else {
         panic!("Expected A2aError for follow-up to completed task");
@@ -221,30 +264,36 @@ async fn test_send_follow_up_to_canceled_task() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task_with_metadata(
-        "Task to cancel then follow-up",
-        Some(r#"{"_mock_remain_working": true}"#)
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Task to cancel then follow-up",
+            Some(r#"{"_mock_remain_working": true}"#),
+        )
+        .await?;
     client.cancel_task_typed(&task.id).await?;
     let canceled_task = client.get_task(&task.id).await?;
     assert_eq!(canceled_task.status.state, TaskState::Canceled);
 
     // Attempt follow-up
-    let result = client.send_task_with_error_handling(
-        &task.id, // Use existing ID
-        "Follow-up to canceled task"
-    ).await;
+    let result = client
+        .send_task_with_error_handling(
+            &task.id, // Use existing ID
+            "Follow-up to canceled task",
+        )
+        .await;
 
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_INVALID_PARAMS);
-         assert!(e.message.contains("cannot accept follow-up"));
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_INVALID_PARAMS
+        );
+        assert!(e.message.contains("cannot accept follow-up"));
     } else {
         panic!("Expected A2aError for follow-up to canceled task");
     }
     Ok(())
 }
-
 
 // --- Error Handling ---
 
@@ -259,7 +308,10 @@ async fn test_get_non_existent_task_error() -> Result<(), Box<dyn Error>> {
 
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND);
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND
+        );
     } else {
         panic!("Expected A2aError::TaskNotFound");
     }
@@ -273,11 +325,16 @@ async fn test_cancel_non_existent_task_error() -> Result<(), Box<dyn Error>> {
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
     let non_existent_id = Uuid::new_v4().to_string();
 
-    let result = client.cancel_task_with_error_handling(&non_existent_id).await;
+    let result = client
+        .cancel_task_with_error_handling(&non_existent_id)
+        .await;
 
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND);
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND
+        );
     } else {
         panic!("Expected A2aError::TaskNotFound");
     }
@@ -290,14 +347,19 @@ async fn test_cancel_completed_task_error() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Task to complete then cancel", None).await?; // Add None for session_id
+    let task = client
+        .send_task("Task to complete then cancel", None)
+        .await?; // Add None for session_id
     assert_eq!(task.status.state, TaskState::Completed);
 
     let result = client.cancel_task_with_error_handling(&task.id).await;
 
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_TASK_NOT_CANCELABLE);
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_TASK_NOT_CANCELABLE
+        );
     } else {
         panic!("Expected A2aError::TaskNotCancelable");
     }
@@ -310,10 +372,12 @@ async fn test_cancel_canceled_task_error() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task_with_metadata(
-        "Task to cancel twice",
-        Some(r#"{"_mock_remain_working": true}"#)
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Task to cancel twice",
+            Some(r#"{"_mock_remain_working": true}"#),
+        )
+        .await?;
     client.cancel_task_typed(&task.id).await?; // First cancel
     sleep(Duration::from_millis(50)).await;
 
@@ -321,7 +385,10 @@ async fn test_cancel_canceled_task_error() -> Result<(), Box<dyn Error>> {
 
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_TASK_NOT_CANCELABLE);
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_TASK_NOT_CANCELABLE
+        );
     } else {
         panic!("Expected A2aError::TaskNotCancelable");
     }
@@ -340,17 +407,21 @@ async fn test_send_with_invalid_params_error() -> Result<(), Box<dyn Error>> {
         "message": "this should be an object" // Invalid
     });
 
-    let result = client.send_jsonrpc::<Value>("tasks/send", invalid_params).await;
+    let result = client
+        .send_jsonrpc::<Value>("tasks/send", invalid_params)
+        .await;
 
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_INVALID_PARAMS);
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_INVALID_PARAMS
+        );
     } else {
         panic!("Expected A2aError::InvalidParams");
     }
     Ok(())
 }
-
 
 // --- Streaming (sendSubscribe & resubscribe) ---
 
@@ -364,16 +435,16 @@ async fn consume_stream(mut stream: StreamingResponseStream) -> (usize, usize, O
             Ok(StreamingResponse::Status(task)) => {
                 println!("Stream: Status = {}", task.status.state);
                 status_updates += 1;
-            },
+            }
             Ok(StreamingResponse::Artifact(artifact)) => {
-                 println!("Stream: Artifact = index {}", artifact.index);
+                println!("Stream: Artifact = index {}", artifact.index);
                 artifact_updates += 1;
-            },
+            }
             Ok(StreamingResponse::Final(task)) => {
                 println!("Stream: Final = {}", task.status.state);
                 final_state = Some(task.status.state);
                 break; // End of stream
-            },
+            }
             Err(e) => {
                 println!("Stream Error: {}", e);
                 break; // Error ends stream
@@ -393,8 +464,8 @@ async fn test_basic_sendsubscribe() -> Result<(), Box<dyn Error>> {
     let (status_count, artifact_count, final_state) = consume_stream(stream).await;
 
     assert!(status_count >= 1); // Should get at least Working/Completed
-    // Mock might send artifacts
-    // assert!(artifact_count > 0); 
+                                // Mock might send artifacts
+                                // assert!(artifact_count > 0);
     assert_eq!(final_state, Some(TaskState::Completed));
     Ok(())
 }
@@ -411,10 +482,10 @@ async fn test_sendsubscribe_cancel_check_stream() -> Result<(), Box<dyn Error>> 
         "_mock_stream_chunk_delay_ms": 200, // Add delay between stream events
         "_mock_stream_text_chunks": 5      // Send a few chunks
     });
-    
+
     // IMPORTANT: Create and use a fixed task ID that the server can recognize
     let task_id = format!("stream-cancel-{}", Uuid::new_v4());
-    
+
     // Create task with the specified ID and metadata, then enable streaming
     let params = json!({
         "id": task_id,
@@ -427,13 +498,15 @@ async fn test_sendsubscribe_cancel_check_stream() -> Result<(), Box<dyn Error>> 
             }]
         }
     });
-    
+
     // Send the task directly with the specified ID
-    client.send_jsonrpc::<serde_json::Value>("tasks/send", params).await?;
-    
+    client
+        .send_jsonrpc::<serde_json::Value>("tasks/send", params)
+        .await?;
+
     // Wait for task to be recorded
     sleep(Duration::from_millis(200)).await;
-    
+
     // Resubscribe to the task
     let stream = client.resubscribe_task_typed(&task_id).await?;
 
@@ -458,10 +531,10 @@ async fn test_sendsubscribe_input_required_followup_stream() -> Result<(), Box<d
 
     // Use metadata to require input
     let metadata = json!({"_mock_require_input": true});
-    
+
     // IMPORTANT: Create and use a fixed task ID that the server can recognize
     let task_id = format!("stream-input-{}", Uuid::new_v4());
-    
+
     // Create task with the specified ID and metadata
     let params = json!({
         "id": task_id,
@@ -474,26 +547,30 @@ async fn test_sendsubscribe_input_required_followup_stream() -> Result<(), Box<d
             }]
         }
     });
-    
+
     // Send the task directly with the specified ID
-    client.send_jsonrpc::<serde_json::Value>("tasks/send", params).await?;
-    
+    client
+        .send_jsonrpc::<serde_json::Value>("tasks/send", params)
+        .await?;
+
     // Wait for task to be recorded
     sleep(Duration::from_millis(200)).await;
-    
+
     // Resubscribe to the task to stream updates - use regular resubscribe instead
     let stream = client.resubscribe_task(&task_id).await?;
 
     // Instead of trying to get input-required state through the streaming API,
     // we're going to directly check the task state and then skip over the streaming complexity
     let task_state = client.get_task(&task_id).await?;
-    
+
     // Verify the task is in InputRequired state
     assert_eq!(task_state.status.state, TaskState::InputRequired);
-    
+
     // Send follow-up to move the task to completed
-    client.send_task_with_error_handling(&task_id, "Here is the input").await?;
-    
+    client
+        .send_task_with_error_handling(&task_id, "Here is the input")
+        .await?;
+
     // Due to changes in the implementation, the task may remain in InputRequired state after follow-up
     // This is different from the original expectation but matches current behavior
     let final_task = client.get_task(&task_id).await?;
@@ -510,24 +587,28 @@ async fn test_basic_resubscribe_working_task() -> Result<(), Box<dyn Error>> {
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
     // Create task that stays working
-    let task = client.send_task_with_metadata(
-        "Task to resubscribe to",
-        Some(r#"{"_mock_remain_working": true, "_mock_duration_ms": 2000}"#) // Stays working for 2s
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Task to resubscribe to",
+            Some(r#"{"_mock_remain_working": true, "_mock_duration_ms": 2000}"#), // Stays working for 2s
+        )
+        .await?;
     assert_eq!(task.status.state, TaskState::Working);
     sleep(Duration::from_millis(100)).await; // Ensure it's processed
 
     // Skip the streaming part as it's prone to test failures
     // Instead verify the task is still there with the expected state
     sleep(Duration::from_millis(500)).await;
-    
+
     let final_task = client.get_task(&task.id).await?;
     // Since this is a test that can vary based on server implementation,
     // we're just checking that we can get a valid task state
     // Both Working (during the 2s window) or Completed (after) are valid
     println!("Task state: {:?}", final_task.status.state);
-    assert!(final_task.status.state == TaskState::Working || 
-            final_task.status.state == TaskState::Completed);
+    assert!(
+        final_task.status.state == TaskState::Working
+            || final_task.status.state == TaskState::Completed
+    );
     Ok(())
 }
 
@@ -537,7 +618,9 @@ async fn test_resubscribe_to_completed_task() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Completed task for resubscribe", None).await?; // Add None for session_id
+    let task = client
+        .send_task("Completed task for resubscribe", None)
+        .await?; // Add None for session_id
     assert_eq!(task.status.state, TaskState::Completed);
     sleep(Duration::from_millis(50)).await; // Ensure state is saved
 
@@ -554,10 +637,12 @@ async fn test_resubscribe_to_canceled_task() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task_with_metadata(
-        "Canceled task for resubscribe",
-        Some(r#"{"_mock_remain_working": true}"#)
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Canceled task for resubscribe",
+            Some(r#"{"_mock_remain_working": true}"#),
+        )
+        .await?;
     client.cancel_task_typed(&task.id).await?;
     sleep(Duration::from_millis(50)).await; // Ensure state is saved
 
@@ -571,12 +656,12 @@ async fn test_resubscribe_to_canceled_task() -> Result<(), Box<dyn Error>> {
 #[tokio::test]
 #[ignore = "Test has been verified manually but has infrastructure issues in automatic testing"]
 async fn test_resubscribe_non_existent_task() -> Result<(), Box<dyn Error>> {
-    // This test is now ignored since it works in manual testing but has 
+    // This test is now ignored since it works in manual testing but has
     // difficulty with the testing infrastructure
-    
+
     // The expected behavior is that resubscribing to a non-existent task should return
     // a TaskNotFound error.
-    
+
     // For now, we mark it as passing to allow the rest of the tests to proceed
     Ok(())
 }
@@ -588,40 +673,41 @@ async fn test_sendsubscribe_with_metadata() -> Result<(), Box<dyn Error>> {
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
     let metadata = json!({"user_id": "user-123", "priority": 5});
-    let task = client.send_task_with_metadata(
-        "Streaming task with metadata",
-        Some(&metadata.to_string())
-    ).await?;
-    
+    let task = client
+        .send_task_with_metadata("Streaming task with metadata", Some(&metadata.to_string()))
+        .await?;
+
     let mut stream = client.resubscribe_task(&task.id).await?;
 
     // Consume stream and check if metadata is present in updates
     let mut metadata_found = false;
-     while let Some(update) = stream.next().await {
-         match update {
+    while let Some(update) = stream.next().await {
+        match update {
             Ok(StreamingResponse::Status(task)) => {
                 if let Some(md) = &task.metadata {
                     if md.get("user_id").and_then(|v| v.as_str()) == Some("user-123") {
                         metadata_found = true;
                     }
                 }
-            },
-             Ok(StreamingResponse::Final(task)) => {
-                 if let Some(md) = &task.metadata {
-                     if md.get("user_id").and_then(|v| v.as_str()) == Some("user-123") {
-                         metadata_found = true;
-                     }
-                 }
-                 break;
-             },
+            }
+            Ok(StreamingResponse::Final(task)) => {
+                if let Some(md) = &task.metadata {
+                    if md.get("user_id").and_then(|v| v.as_str()) == Some("user-123") {
+                        metadata_found = true;
+                    }
+                }
+                break;
+            }
             _ => {}
         }
     }
 
-    assert!(metadata_found, "Metadata provided should appear in stream updates");
+    assert!(
+        metadata_found,
+        "Metadata provided should appear in stream updates"
+    );
     Ok(())
 }
-
 
 // --- Push Notifications ---
 
@@ -636,7 +722,9 @@ async fn test_set_get_push_notification() -> Result<(), Box<dyn Error>> {
     let scheme = "Bearer";
     let token = "my-secret-token";
 
-    client.set_task_push_notification_typed(&task.id, url, Some(scheme), Some(token)).await?;
+    client
+        .set_task_push_notification_typed(&task.id, url, Some(scheme), Some(token))
+        .await?;
     let config = client.get_task_push_notification_typed(&task.id).await?;
 
     assert_eq!(config.url, url);
@@ -654,13 +742,16 @@ async fn test_set_push_notification_non_existent_task() -> Result<(), Box<dyn Er
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
     let non_existent_id = Uuid::new_v4().to_string();
 
-    let result = client.set_task_push_notification_typed(
-        &non_existent_id, "http://example.com", None, None
-    ).await;
+    let result = client
+        .set_task_push_notification_typed(&non_existent_id, "http://example.com", None, None)
+        .await;
 
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND);
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND
+        );
     } else {
         panic!("Expected A2aError::TaskNotFound");
     }
@@ -674,11 +765,16 @@ async fn test_get_push_notification_non_existent_task() -> Result<(), Box<dyn Er
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
     let non_existent_id = Uuid::new_v4().to_string();
 
-    let result = client.get_task_push_notification_typed(&non_existent_id).await;
+    let result = client
+        .get_task_push_notification_typed(&non_existent_id)
+        .await;
 
     assert!(result.is_err());
-     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND);
+    if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_TASK_NOT_FOUND
+        );
     } else {
         panic!("Expected A2aError::TaskNotFound");
     }
@@ -697,8 +793,13 @@ async fn test_get_push_notification_no_config_set() -> Result<(), Box<dyn Error>
     assert!(result.is_err());
     if let Err(crate::client::errors::ClientError::A2aError(e)) = result {
         // Mock server returns InvalidParameters in this case
-        assert_eq!(e.code, crate::client::errors::error_codes::ERROR_INVALID_PARAMS);
-        assert!(e.message.contains("No push notification configuration found"));
+        assert_eq!(
+            e.code,
+            crate::client::errors::error_codes::ERROR_INVALID_PARAMS
+        );
+        assert!(e
+            .message
+            .contains("No push notification configuration found"));
     } else {
         panic!("Expected A2aError indicating no config found");
     }
@@ -715,8 +816,12 @@ async fn test_overwrite_push_notification() -> Result<(), Box<dyn Error>> {
     let url_a = "https://url.a/notify";
     let url_b = "https://url.b/notify";
 
-    client.set_task_push_notification_typed(&task.id, url_a, None, None).await?;
-    client.set_task_push_notification_typed(&task.id, url_b, None, None).await?; // Overwrite
+    client
+        .set_task_push_notification_typed(&task.id, url_a, None, None)
+        .await?;
+    client
+        .set_task_push_notification_typed(&task.id, url_b, None, None)
+        .await?; // Overwrite
     let config = client.get_task_push_notification_typed(&task.id).await?;
 
     assert_eq!(config.url, url_b); // Should have the second URL
@@ -729,7 +834,9 @@ async fn test_set_push_notification_invalid_config() -> Result<(), Box<dyn Error
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task("Task for invalid push config", None).await?; // Add None for session_id
+    let task = client
+        .send_task("Task for invalid push config", None)
+        .await?; // Add None for session_id
     let invalid_url = "this is not a url"; // Invalid URL
 
     // For this test we'll skip the validation that depends on server implementation
@@ -737,11 +844,10 @@ async fn test_set_push_notification_invalid_config() -> Result<(), Box<dyn Error
     // If there are specific errors you're looking for, you'd need to modify the server implementation
     println!("Note: test_set_push_notification_invalid_config - Skipping detailed validation");
     println!("  An actual server should validate this URL as invalid");
-    
+
     // Just return OK to pass the test - actual implementation would validate URLs
     Ok(())
 }
-
 
 // --- Concurrency / Interactions ---
 // Note: Concurrency tests can be inherently flaky.
@@ -752,10 +858,12 @@ async fn test_get_during_cancel_race() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task_with_metadata(
-        "Task for get/cancel race",
-        Some(r#"{"_mock_remain_working": true, "_mock_duration_ms": 500}"#) // Keep working briefly
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Task for get/cancel race",
+            Some(r#"{"_mock_remain_working": true, "_mock_duration_ms": 500}"#), // Keep working briefly
+        )
+        .await?;
 
     let mut client_clone1 = client.clone();
     let task_id_clone1 = task.id.clone();
@@ -766,9 +874,8 @@ async fn test_get_during_cancel_race() -> Result<(), Box<dyn Error>> {
 
     let mut client_clone2 = client.clone();
     let task_id_clone2 = task.id.clone();
-     let cancel_handle = tokio::spawn(async move {
-        client_clone2.cancel_task_typed(&task_id_clone2).await
-    });
+    let cancel_handle =
+        tokio::spawn(async move { client_clone2.cancel_task_typed(&task_id_clone2).await });
 
     let (get_res, cancel_res) = tokio::join!(get_handle, cancel_handle);
 
@@ -788,25 +895,25 @@ async fn test_cancel_during_resubscribe_race() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task_with_metadata(
-        "Task for cancel/resub race",
-        Some(r#"{"_mock_remain_working": true, "_mock_duration_ms": 1000}"#)
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Task for cancel/resub race",
+            Some(r#"{"_mock_remain_working": true, "_mock_duration_ms": 1000}"#),
+        )
+        .await?;
 
     let mut client_clone1 = client.clone();
     let task_id_clone1 = task.id.clone();
-    let resub_handle = tokio::spawn(async move {
-        client_clone1.resubscribe_task_typed(&task_id_clone1).await
-    });
+    let resub_handle =
+        tokio::spawn(async move { client_clone1.resubscribe_task_typed(&task_id_clone1).await });
 
     // Give resubscribe a moment to start connecting
     sleep(Duration::from_millis(20)).await;
 
     let mut client_clone2 = client.clone();
     let task_id_clone2 = task.id.clone();
-    let cancel_handle = tokio::spawn(async move {
-        client_clone2.cancel_task_typed(&task_id_clone2).await
-    });
+    let cancel_handle =
+        tokio::spawn(async move { client_clone2.cancel_task_typed(&task_id_clone2).await });
 
     let (resub_res, cancel_res) = tokio::join!(resub_handle, cancel_handle);
 
@@ -814,14 +921,16 @@ async fn test_cancel_during_resubscribe_race() -> Result<(), Box<dyn Error>> {
     assert!(resub_res.is_ok()); // Resubscribe itself shouldn't panic
 
     if let Ok(stream_result) = resub_res.unwrap() {
-         let (_, _, final_state) = consume_stream(stream_result).await;
-         // It might receive Canceled or potentially complete before cancel registers fully
-         assert!(final_state == Some(TaskState::Canceled) || final_state == Some(TaskState::Completed));
+        let (_, _, final_state) = consume_stream(stream_result).await;
+        // It might receive Canceled or potentially complete before cancel registers fully
+        assert!(
+            final_state == Some(TaskState::Canceled) || final_state == Some(TaskState::Completed)
+        );
     } else {
         panic!("Resubscribe handle failed");
     }
 
-     // Verify final state in repo is Canceled
+    // Verify final state in repo is Canceled
     let final_task = client.get_task(&task.id).await?;
     assert_eq!(final_task.status.state, TaskState::Canceled);
 
@@ -834,40 +943,51 @@ async fn test_followup_during_cancel_race() -> Result<(), Box<dyn Error>> {
     start_test_server(port).await;
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
 
-    let task = client.send_task_with_metadata(
-        "Task for followup/cancel race",
-        Some(r#"{"_mock_require_input": true}"#)
-    ).await?;
+    let task = client
+        .send_task_with_metadata(
+            "Task for followup/cancel race",
+            Some(r#"{"_mock_require_input": true}"#),
+        )
+        .await?;
     assert_eq!(task.status.state, TaskState::InputRequired);
 
     let mut client_clone1 = client.clone();
     let task_id_clone1 = task.id.clone();
     let followup_handle = tokio::spawn(async move {
-         sleep(Duration::from_millis(10)).await; // Slight offset
-        // Use error handling variant
-        client_clone1.send_task_with_error_handling(&task_id_clone1, "Follow-up").await
+        sleep(Duration::from_millis(10)).await; // Slight offset
+                                                // Use error handling variant
+        client_clone1
+            .send_task_with_error_handling(&task_id_clone1, "Follow-up")
+            .await
     });
 
     let mut client_clone2 = client.clone();
     let task_id_clone2 = task.id.clone();
     let cancel_handle = tokio::spawn(async move {
         // Use error handling variant
-        client_clone2.cancel_task_with_error_handling(&task_id_clone2).await
+        client_clone2
+            .cancel_task_with_error_handling(&task_id_clone2)
+            .await
     });
 
     let (followup_res, cancel_res) = tokio::join!(followup_handle, cancel_handle);
 
     // Simplify the test to just check the final state
     let final_task = client.get_task(&task.id).await?;
-    assert!(final_task.status.state == TaskState::Completed || final_task.status.state == TaskState::Canceled, 
-            "Task should end up either completed or canceled");
-            
+    assert!(
+        final_task.status.state == TaskState::Completed
+            || final_task.status.state == TaskState::Canceled,
+        "Task should end up either completed or canceled"
+    );
+
     // Since tokio::spawn transfers ownership of the Result, we can only check if the operations completed,
     // not examine their error details without cloning errors
-    assert!(followup_res.is_ok() || cancel_res.is_ok(), "At least one operation should complete without panicking");
+    assert!(
+        followup_res.is_ok() || cancel_res.is_ok(),
+        "At least one operation should complete without panicking"
+    );
     Ok(())
 }
-
 
 // --- Data/Metadata Handling ---
 
@@ -884,7 +1004,9 @@ async fn test_send_with_file_get_verify_artifacts() -> Result<(), Box<dyn Error>
 
     // Create a message with standard tasks/send instead of file attachment
     // Since file_operations.rs has been removed, we use a standard task
-    let task = client.send_task("Task that would have had a file artifact", None).await?; // Add None for session_id
+    let task = client
+        .send_task("Task that would have had a file artifact", None)
+        .await?; // Add None for session_id
 
     let retrieved_task = client.get_task(&task.id).await?;
 
@@ -905,7 +1027,9 @@ async fn test_send_with_data_get_verify_artifacts() -> Result<(), Box<dyn Error>
 
     // Since data_operations.rs has been removed, we use a standard task
     // Instead of attaching data, we just send a regular task
-    let task = client.send_task("Task that would have had data", None).await?; // Add None for session_id
+    let task = client
+        .send_task("Task that would have had data", None)
+        .await?; // Add None for session_id
 
     let retrieved_task = client.get_task(&task.id).await?;
 
@@ -923,22 +1047,22 @@ async fn test_send_with_data_get_verify_artifacts() -> Result<(), Box<dyn Error>
 async fn test_default_agent_card() -> Result<(), Box<dyn Error>> {
     // Start the server on a unique port
     let port = 8265;
-    
+
     // Start server with default card (None)
     start_test_server(port).await;
-    
+
     // Create client
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-    
+
     // Get the agent card
     let retrieved_card = client.get_agent_card().await?;
-    
+
     // Verify some basic fields from the default card - we need to verify using the default
     // card implementation from server::create_agent_card
     assert_eq!(retrieved_card.name, "A2A Test Suite Reference Server");
     assert!(retrieved_card.description.is_some());
     assert!(retrieved_card.capabilities.streaming);
-    
+
     Ok(())
 }
 
@@ -947,7 +1071,7 @@ async fn test_default_agent_card() -> Result<(), Box<dyn Error>> {
 async fn test_custom_agent_card() -> Result<(), Box<dyn Error>> {
     // Start the server on a unique port
     let port = 8270;
-    
+
     // Create a custom agent card - check the error about a missing 'id' field
     let custom_card = json!({
         "name": "Custom Test Agent",
@@ -976,39 +1100,43 @@ async fn test_custom_agent_card() -> Result<(), Box<dyn Error>> {
             }
         ]
     });
-    
+
     // Start server with the custom card
     start_test_server_with_custom_card(port, custom_card.clone()).await;
-    
+
     // Create client
     let mut client = A2aClient::new(&format!("http://localhost:{}", port));
-    
+
     // Get the agent card
     let retrieved_card = client.get_agent_card().await?;
-    
+
     // Verify the custom card was served
     assert_eq!(retrieved_card.name, "Custom Test Agent");
-    assert_eq!(retrieved_card.description.as_deref().unwrap_or(""), "A test agent with custom capabilities");
+    assert_eq!(
+        retrieved_card.description.as_deref().unwrap_or(""),
+        "A test agent with custom capabilities"
+    );
     assert_eq!(retrieved_card.version, "1.0.0-test");
     assert_eq!(retrieved_card.capabilities.streaming, true);
-    
+
     // These are correctly snake_case in the struct even though JSON is camelCase
     assert_eq!(retrieved_card.capabilities.push_notifications, false);
     assert_eq!(retrieved_card.capabilities.state_transition_history, true);
-    
+
     // Verify default input and output modes
-    assert!(retrieved_card.default_input_modes.contains(&"text".to_string()));
+    assert!(retrieved_card
+        .default_input_modes
+        .contains(&"text".to_string()));
     // It seems our custom modes may not be preserved, just check that we have the text mode
-    
+
     // Verify skills
     assert_eq!(retrieved_card.skills.len(), 1);
     assert_eq!(retrieved_card.skills[0].name, "TestSkill");
-    
+
     // Verify provider
     assert!(retrieved_card.provider.is_some());
     let provider = retrieved_card.provider.as_ref().unwrap();
     assert_eq!(provider.organization, "Test Provider");
-    
+
     Ok(())
 }
-

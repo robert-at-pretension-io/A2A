@@ -1,9 +1,6 @@
-use crate::bidirectional::config::{
-    BidirectionalAgentConfig, ClientConfig, LlmConfig, ModeConfig, ServerConfig,
-};
-use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::bidirectional::BidirectionalAgent;
-use crate::types::{Message, Part, Role, Task, TaskState, TaskStatus, TextPart};
+use crate::bidirectional::bidirectional_agent::BidirectionalAgent; // Corrected import
+use crate::bidirectional::config::BidirectionalAgentConfig;
+use crate::types::{Task, TaskState, TaskStatus};
 use chrono::Utc;
 use dashmap::DashMap;
 use std::env;

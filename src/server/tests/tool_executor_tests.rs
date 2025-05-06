@@ -1,9 +1,8 @@
-use crate::server::tool_executor::{ListAgentsTool, Tool, ToolError, ToolExecutor};
+use crate::server::tool_executor::{ListAgentsTool, Tool, ToolExecutor};
 // Import the canonical AgentRegistry instead of the local AgentDirectory
 use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
-use crate::types::{AgentCard, AgentSkill};
+use crate::types::AgentCard;
 use chrono::Utc;
-use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -13,9 +12,21 @@ struct MockLlmClient;
 
 #[async_trait::async_trait]
 impl crate::bidirectional::llm_client::LlmClient for MockLlmClient {
-    // <-- Update trait path
-    async fn complete(&self, _prompt: &str) -> anyhow::Result<String> {
+    async fn complete(
+        &self,
+        _prompt: &str,
+        _system_prompt_override: Option<&str>,
+    ) -> anyhow::Result<String> {
         Ok("mock response".to_string())
+    }
+
+    async fn complete_structured(
+        &self,
+        _prompt_text: &str,
+        _system_prompt_override: Option<&str>,
+        _output_schema: Value,
+    ) -> anyhow::Result<Value> {
+        Ok(json!({"mock_structured_response": "ok"}))
     }
 }
 
@@ -28,7 +39,7 @@ async fn test_tool_executor_list_agents_with_skills() {
     let registry = Arc::new(AgentRegistry::new());
 
     // Add a test agent with skills to the registry
-    let mut card = AgentCard {
+    let card = AgentCard { // Removed mut
         name: "Test Agent".to_string(),
         url: "http://localhost:8080".to_string(),
         description: Some("Test agent".to_string()),

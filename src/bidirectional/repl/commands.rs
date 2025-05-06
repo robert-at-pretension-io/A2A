@@ -2,16 +2,20 @@
 
 use anyhow::{anyhow, Result};
 use serde_json::{/* json, */ Value}; // Removed json
-// use std::io; // Unused
+                                     // use std::io; // Unused
 use tracing::{debug, error, info, instrument, /* trace, */ warn}; // Removed trace
-// use uuid::Uuid; // Unused
+                                                                  // use uuid::Uuid; // Unused
 
 use crate::{
     bidirectional::{agent_helpers, bidirectional_agent::BidirectionalAgent}, // Add agent_helpers
     client::A2aClient,
     types::{
-        /* AgentCard, AgentCapabilities, */ Part, Role, /* Task, */ TaskIdParams, TaskQueryParams, TaskState, // Removed unused
-        /* TextPart, */ // Unused
+        /* AgentCard, AgentCapabilities, */ Part,
+        Role,
+        /* Task, */ TaskIdParams,
+        TaskQueryParams,
+        TaskState, // Removed unused
+                   /* TextPart, */ // Unused
     },
 };
 
@@ -77,7 +81,7 @@ pub(super) async fn handle_connect(agent: &mut BidirectionalAgent, target: &str)
             let connect_msg = format!("🔗 Connecting to {}: {}", name, url_clone);
 
             // Attempt to get card after connecting (spawn to avoid blocking REPL)
-            let mut agent_client = agent.client.as_mut().unwrap().clone(); // Clone client for task
+            let agent_client = agent.client.as_mut().unwrap().clone(); // Clone client for task
             let agent_registry_clone = agent.agent_registry.clone(); // Clone registry for update
             let known_servers_clone = agent.known_servers.clone(); // Clone known_servers
             let agent_id_clone = agent.agent_id.clone(); // For tracing span
@@ -94,8 +98,7 @@ pub(super) async fn handle_connect(agent: &mut BidirectionalAgent, target: &str)
                         let remote_agent_name = card.name.clone();
                         debug!(%remote_agent_name, "Successfully got card after connecting.");
                         // Update known servers
-                        known_servers_clone
-                            .insert(url_clone.clone(), remote_agent_name.clone());
+                        known_servers_clone.insert(url_clone.clone(), remote_agent_name.clone());
                         // Update canonical registry using discover
                         match agent_registry_clone.discover(&url_clone).await {
                             Ok(discovered_agent_id) => {
@@ -110,11 +113,13 @@ pub(super) async fn handle_connect(agent: &mut BidirectionalAgent, target: &str)
                                 warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by number.");
                             }
                         }
-                        println!("📇 Remote agent verified: {}", remote_agent_name); // Still print verification
+                        println!("📇 Remote agent verified: {}", remote_agent_name);
+                        // Still print verification
                     }
                     Err(e) => {
                         warn!(error = %e, "Connected, but failed to get card.");
-                        println!("⚠️ Could not retrieve agent card after connecting: {}", e); // Still print warning
+                        println!("⚠️ Could not retrieve agent card after connecting: {}", e);
+                        // Still print warning
                     }
                 }
             });
@@ -156,7 +161,7 @@ pub(super) async fn handle_connect(agent: &mut BidirectionalAgent, target: &str)
         }
         debug!(url = %url_to_connect, "Extracted URL. Attempting connection.");
 
-        let mut client = A2aClient::new(&url_to_connect); // Use the extracted URL
+        let client = A2aClient::new(&url_to_connect); // Use the extracted URL
 
         match client.get_agent_card().await {
             Ok(card) => {
@@ -181,8 +186,7 @@ pub(super) async fn handle_connect(agent: &mut BidirectionalAgent, target: &str)
                             debug!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by URL.");
                             if discovered_agent_id != remote_agent_name_clone {
                                 debug!(url = %url_clone, old_name = %remote_agent_name_clone, new_id = %discovered_agent_id, "Updating known_servers with discovered ID.");
-                                known_servers_clone
-                                    .insert(url_clone.clone(), discovered_agent_id);
+                                known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
                             }
                         }
                         Err(e) => {
@@ -246,7 +250,8 @@ pub(super) fn handle_list_servers(agent: &BidirectionalAgent) -> Result<String> 
         server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name
 
         for (i, (name, url)) in server_list.iter().enumerate() {
-            let marker = if Some(url) == agent_helpers::client_url(agent).as_ref() { // Call helper
+            let marker = if Some(url) == agent_helpers::client_url(agent).as_ref() {
+                // Call helper
                 "*"
             } else {
                 " "
@@ -386,8 +391,10 @@ pub(super) async fn handle_list_tasks(agent: &BidirectionalAgent) -> Result<Stri
                 Ok("📭 No tasks recorded in current session.".to_string())
             } else {
                 info!(session_id = %session_id, task_count = %task_ids.len(), "Formatting task list.");
-                let mut output =
-                    format!("\n📋 Tasks Recorded in Current Session ({}):\n", task_ids.len());
+                let mut output = format!(
+                    "\n📋 Tasks Recorded in Current Session ({}):\n",
+                    task_ids.len()
+                );
                 for (i, task_id) in task_ids.iter().enumerate() {
                     let params = TaskQueryParams {
                         id: task_id.clone(),
@@ -471,7 +478,10 @@ pub(super) async fn handle_show_task(agent: &BidirectionalAgent, task_id: &str) 
                 output.push_str(&format!("\n  Status Message: {}\n", text));
             }
             if let Some(history) = &task.history {
-                output.push_str(&format!("\n  History Preview ({} messages):\n", history.len()));
+                output.push_str(&format!(
+                    "\n  History Preview ({} messages):\n",
+                    history.len()
+                ));
                 for msg in history.iter().take(5) {
                     let role_icon = match msg.role {
                         Role::User => "👤",
@@ -621,7 +631,10 @@ pub(super) async fn handle_tool_command(
         Err(e) => {
             error!(error = %e, input_params = %params_str, extracted_json = %extracted_json, 
                   "Failed to parse JSON parameters for :tool command.");
-            return Err(anyhow!("Invalid JSON parameters: {}. Make sure to provide valid JSON.", e));
+            return Err(anyhow!(
+                "Invalid JSON parameters: {}. Make sure to provide valid JSON.",
+                e
+            ));
         }
     };
 
@@ -682,7 +695,7 @@ pub(super) fn handle_show_card(agent: &BidirectionalAgent) -> Result<String> {
         "  Output Modes: {}\n",
         card.default_output_modes.join(", ")
     ));
-    output.push_str("\n");
+    output.push('\n');
     Ok(output)
 }
 
@@ -690,33 +703,42 @@ pub(super) fn handle_show_card(agent: &BidirectionalAgent) -> Result<String> {
 #[instrument(skip(agent, args), fields(agent_id = %agent.agent_id))]
 pub fn handle_memory(agent: &mut BidirectionalAgent, args: &str) -> Result<String> {
     debug!(args = %args, "Handling memory command.");
-    
+
     // Check if this is a clear command
     if args.trim() == "clear" {
         debug!("Clearing rolling memory.");
         agent.rolling_memory.clear();
         return Ok("🧠 Rolling memory cleared.".to_string());
     }
-    
+
     // Get the tasks from rolling memory in chronological order
     let tasks = agent.rolling_memory.get_tasks_chronological();
-    
+
     if tasks.is_empty() {
         debug!("Rolling memory is empty.");
-        return Ok("🧠 Rolling memory is empty. No outgoing requests have been stored.".to_string());
+        return Ok(
+            "🧠 Rolling memory is empty. No outgoing requests have been stored.".to_string(),
+        );
     }
-    
+
     // Format the output
-    let mut output = format!("\n🧠 Rolling Memory ({} outgoing requests):\n\n", tasks.len());
-    
+    let mut output = format!(
+        "\n🧠 Rolling Memory ({} outgoing requests):\n\n",
+        tasks.len()
+    );
+
     for (i, task) in tasks.iter().enumerate() {
         // Extract text from the first user message (original request)
-        let request_text = task.history.as_ref()
+        let request_text = task
+            .history
+            .as_ref()
             .and_then(|history| {
-                history.iter()
+                history
+                    .iter()
                     .find(|msg| msg.role == Role::User)
                     .map(|msg| {
-                        msg.parts.iter()
+                        msg.parts
+                            .iter()
                             .filter_map(|part| match part {
                                 Part::TextPart(tp) => Some(tp.text.as_str()),
                                 _ => None,
@@ -726,27 +748,32 @@ pub fn handle_memory(agent: &mut BidirectionalAgent, args: &str) -> Result<Strin
                     })
             })
             .unwrap_or_else(|| "No request text available".to_string());
-        
+
         // Get a short preview of the request
         let short_request = if request_text.len() > 70 {
             format!("{}...", &request_text[..67])
         } else {
             request_text
         };
-        
+
         // Extract status from the task
         let status = &task.status.state;
-        
+
         // Add to output
-        output.push_str(&format!("{}. Task ID: {} (Status: {:?})\n", i + 1, task.id, status));
+        output.push_str(&format!(
+            "{}. Task ID: {} (Status: {:?})\n",
+            i + 1,
+            task.id,
+            status
+        ));
         output.push_str(&format!("   Request: {}\n", short_request));
-        
+
         // Add a separator between entries
         if i < tasks.len() - 1 {
-            output.push_str("\n");
+            output.push('\n');
         }
     }
-    
+
     output.push_str("\nUse :memoryTask ID to view details of a specific task\n");
     Ok(output)
 }
@@ -755,24 +782,28 @@ pub fn handle_memory(agent: &mut BidirectionalAgent, args: &str) -> Result<Strin
 #[instrument(skip(agent, task_id), fields(agent_id = %agent.agent_id))]
 pub fn handle_memory_task(agent: &BidirectionalAgent, task_id: &str) -> Result<String> {
     debug!(task_id = %task_id, "Handling memory task command.");
-    
+
     if task_id.is_empty() {
         error!("No task ID provided for :memoryTask command.");
         return Err(anyhow!("No task ID provided. Use :memoryTask TASK_ID"));
     }
-    
+
     // Get the task from rolling memory
     match agent.rolling_memory.get_task(task_id) {
         Some(task) => {
             debug!(task_id = %task.id, "Found task in rolling memory.");
-            
+
             // Extract original request text
-            let request_text = task.history.as_ref()
+            let request_text = task
+                .history
+                .as_ref()
                 .and_then(|history| {
-                    history.iter()
+                    history
+                        .iter()
                         .find(|msg| msg.role == Role::User)
                         .map(|msg| {
-                            msg.parts.iter()
+                            msg.parts
+                                .iter()
                                 .filter_map(|part| match part {
                                     Part::TextPart(tp) => Some(tp.text.as_str()),
                                     _ => None,
@@ -782,26 +813,27 @@ pub fn handle_memory_task(agent: &BidirectionalAgent, task_id: &str) -> Result<S
                         })
                 })
                 .unwrap_or_else(|| "No request text available".to_string());
-            
+
             // Extract response text
-            let response_text = crate::bidirectional::agent_helpers::extract_text_from_task(agent, &task);
-            
+            let response_text =
+                crate::bidirectional::agent_helpers::extract_text_from_task(agent, &task);
+
             // Format the output
             let mut output = format!("\n🧠 Memory Task Details for ID: {}\n\n", task_id);
             output.push_str(&format!("Status: {:?}\n", task.status.state));
-            
+
             if let Some(timestamp) = &task.status.timestamp {
                 output.push_str(&format!("Timestamp: {}\n", timestamp));
             }
-            
+
             output.push_str("\n📤 Original Request:\n");
             output.push_str(&format!("{}\n", request_text));
-            
+
             output.push_str("\n📥 Response:\n");
             output.push_str(&format!("{}\n", response_text));
-            
+
             Ok(output)
-        },
+        }
         None => {
             error!(task_id = %task_id, "Task not found in rolling memory.");
             Err(anyhow!("Task ID {} not found in rolling memory", task_id))

@@ -1,7 +1,6 @@
-use crate::client::A2aClient;
-use std::error::Error;
-use crate::types::TaskIdParams;
 use crate::client::errors::ClientError;
+use crate::client::A2aClient;
+use crate::types::TaskIdParams;
 // Remove ErrorCompatibility import
 // use crate::client::error_handling::ErrorCompatibility;
 
@@ -13,17 +12,19 @@ impl A2aClient {
             id: task_id.to_string(),
             metadata: None,
         };
-        
+
         // Send request and return result
         let params_value = serde_json::to_value(params)
             .map_err(|e| ClientError::JsonError(format!("Failed to serialize params: {}", e)))?;
-            
+
         let response: serde_json::Value = self.send_jsonrpc("tasks/cancel", params_value).await?;
-        
+
         // Extract the task ID from the response
         match response.get("id").and_then(|id| id.as_str()) {
             Some(id) => Ok(id.to_string()),
-            None => Err(ClientError::Other("Invalid response: missing task ID".to_string())),
+            None => Err(ClientError::Other(
+                "Invalid response: missing task ID".to_string(),
+            )),
         }
     }
 
@@ -40,7 +41,7 @@ mod tests {
     use super::*;
     use mockito;
     use serde_json::json;
-    
+
     #[tokio::test]
     async fn test_cancel_task() {
         let task_id = "test-task-456";
@@ -51,11 +52,12 @@ mod tests {
                 "id": task_id
             }
         });
-        
+
         let mut server = mockito::Server::new_async().await;
-        
+
         // Using PartialJson matcher for request body validation
-        let mock = server.mock("POST", "/")
+        let mock = server
+            .mock("POST", "/")
             .with_status(200)
             .with_header("content-type", "application/json")
             .match_body(mockito::Matcher::PartialJson(json!({
@@ -66,17 +68,18 @@ mod tests {
                 }
             })))
             .with_body(mock_response.to_string())
-            .create_async().await;
+            .create_async()
+            .await;
 
         let mut client = A2aClient::new(&server.url());
         // Call the _typed version
         let result = client.cancel_task_typed(task_id).await.unwrap();
 
         assert_eq!(result, task_id);
-        
+
         mock.assert_async().await;
     }
-    
+
     #[tokio::test]
     async fn test_cancel_task_error() {
         let task_id = "non-existent-task";
@@ -88,13 +91,15 @@ mod tests {
                 "message": "Task not found"
             }
         });
-        
+
         let mut server = mockito::Server::new_async().await;
-        let mock = server.mock("POST", "/")
+        let mock = server
+            .mock("POST", "/")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(mock_response.to_string())
-            .create_async().await;
+            .create_async()
+            .await;
 
         let mut client = A2aClient::new(&server.url());
         // Call the _typed version
@@ -103,7 +108,7 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
         assert!(error.contains("Task not found"));
-        
+
         mock.assert_async().await;
     }
 }

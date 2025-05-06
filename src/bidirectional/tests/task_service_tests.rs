@@ -1,14 +1,9 @@
-use crate::bidirectional::config::{
-    BidirectionalAgentConfig, ClientConfig, LlmConfig, ModeConfig, ServerConfig,
-};
-use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::bidirectional::BidirectionalAgent;
-use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository};
+use crate::bidirectional::bidirectional_agent::BidirectionalAgent; // Corrected import
+use crate::server::repositories::task_repository::InMemoryTaskRepository;
 use crate::server::services::task_service::TaskService;
 use crate::types::{Message, Part, Role, Task, TaskSendParams, TaskState, TaskStatus, TextPart};
 use anyhow::Result;
 use chrono::Utc;
-use std::env;
 use std::sync::Arc;
 use uuid::Uuid;
 

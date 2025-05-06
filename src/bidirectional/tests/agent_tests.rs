@@ -1,10 +1,6 @@
-use crate::bidirectional::config::{
-    BidirectionalAgentConfig, ClientConfig, LlmConfig, ModeConfig, ServerConfig,
-};
-use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::bidirectional::BidirectionalAgent;
+use crate::bidirectional::bidirectional_agent::BidirectionalAgent;
+use crate::bidirectional::config::BidirectionalAgentConfig;
 use std::env;
-use std::sync::Arc;
 
 fn create_test_config() -> BidirectionalAgentConfig {
     // Create a test configuration with a mock LLM API key

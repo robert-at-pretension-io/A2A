@@ -1,6 +1,6 @@
 // Update the use path to point to the new config module
 use crate::bidirectional::config::{
-    BidirectionalAgentConfig, ServerConfig, ClientConfig, LlmConfig, ModeConfig
+    BidirectionalAgentConfig, ClientConfig, LlmConfig, ModeConfig, ServerConfig,
 };
 use std::fs;
 use std::path::Path;
@@ -10,22 +10,28 @@ use tempfile::tempdir;
 fn test_default_config() {
     // Test default configuration
     let config = BidirectionalAgentConfig::default();
-    
+
     // Check default server settings
     assert_eq!(config.server.port, 8080);
     assert_eq!(config.server.bind_address, "0.0.0.0");
     assert!(config.server.agent_id.starts_with("bidirectional-"));
-    
+
     // Check default client settings
     assert_eq!(config.client.target_url, None);
-    
+
     // Check default LLM settings
     assert_eq!(config.llm.claude_api_key, None);
     assert_eq!(config.llm.gemini_api_key, None);
-    assert!(config.llm.system_prompt.contains("You are an AI agent assistant"));
+    assert!(config
+        .llm
+        .system_prompt
+        .contains("You are an AI agent assistant"));
     assert_eq!(config.llm.gemini_model_id, "gemini-1.5-flash-latest");
-    assert_eq!(config.llm.gemini_api_endpoint, "https://generativelanguage.googleapis.com/v1beta/models");
-    
+    assert_eq!(
+        config.llm.gemini_api_endpoint,
+        "https://generativelanguage.googleapis.com/v1beta/models"
+    );
+
     // Check default mode settings
     assert_eq!(config.mode.repl, false);
     assert_eq!(config.mode.message, None);
@@ -38,7 +44,7 @@ fn test_load_config_from_valid_toml() {
     // Create a temporary directory
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let config_path = temp_dir.path().join("test_config.toml");
-    
+
     // Create a test TOML file
     let config_content = r#"
         [server]
@@ -62,27 +68,36 @@ fn test_load_config_from_valid_toml() {
         get_agent_card = true
         remote_task = "Remote task"
     "#;
-    
+
     fs::write(&config_path, config_content).expect("Failed to write test config");
-    
+
     // Load the config
     let config = BidirectionalAgentConfig::from_file(&config_path).expect("Failed to load config");
-    
+
     // Check server settings
     assert_eq!(config.server.port, 9090);
     assert_eq!(config.server.bind_address, "127.0.0.1");
     assert_eq!(config.server.agent_id, "test-agent");
-    
+
     // Check client settings
-    assert_eq!(config.client.target_url, Some("http://example.com/agent".to_string()));
-    
+    assert_eq!(
+        config.client.target_url,
+        Some("http://example.com/agent".to_string())
+    );
+
     // Check LLM settings
-    assert_eq!(config.llm.claude_api_key, Some("test-claude-key".to_string()));
-    assert_eq!(config.llm.gemini_api_key, Some("test-gemini-key".to_string()));
+    assert_eq!(
+        config.llm.claude_api_key,
+        Some("test-claude-key".to_string())
+    );
+    assert_eq!(
+        config.llm.gemini_api_key,
+        Some("test-gemini-key".to_string())
+    );
     assert_eq!(config.llm.system_prompt, "Test system prompt");
     assert_eq!(config.llm.gemini_model_id, "gemini-test-model");
     assert_eq!(config.llm.gemini_api_endpoint, "http://localhost/gemini");
-    
+
     // Check mode settings
     assert_eq!(config.mode.repl, true);
     assert_eq!(config.mode.message, Some("Test message".to_string()));
@@ -95,7 +110,7 @@ fn test_load_config_with_partial_values() {
     // Create a temporary directory
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let config_path = temp_dir.path().join("partial_config.toml");
-    
+
     // Create a test TOML file with only some values
     let config_content = r#"
         [server]
@@ -105,17 +120,17 @@ fn test_load_config_with_partial_values() {
         repl = true
         get_agent_card = false
     "#;
-    
+
     fs::write(&config_path, config_content).expect("Failed to write test config");
-    
+
     // Load the config
     let config = BidirectionalAgentConfig::from_file(&config_path).expect("Failed to load config");
-    
+
     // Check that specified values were loaded
     assert_eq!(config.server.port, 9090);
     assert_eq!(config.mode.repl, true);
     assert_eq!(config.mode.get_agent_card, false);
-    
+
     // Check that default values were used for unspecified fields
     assert_eq!(config.server.bind_address, "0.0.0.0");
     assert!(config.server.agent_id.starts_with("bidirectional-"));
@@ -127,16 +142,16 @@ fn test_load_invalid_config() {
     // Create a temporary directory
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let config_path = temp_dir.path().join("invalid_config.toml");
-    
+
     // Create an invalid TOML file
     let config_content = r#"
         [server
         port = 9090
         invalid syntax
     "#;
-    
+
     fs::write(&config_path, config_content).expect("Failed to write test config");
-    
+
     // Load the config - should fail
     let result = BidirectionalAgentConfig::from_file(&config_path);
     assert!(result.is_err());

@@ -1,7 +1,7 @@
-use proptest::prelude::*;
 use crate::types::*;
-use std::convert::TryInto;
+use proptest::prelude::*;
 use serde_json::Map;
+use std::convert::TryInto;
 use uuid::Uuid;
 
 // Task State generator
@@ -37,14 +37,14 @@ prop_compose! {
         } else {
             let mut map = Map::new();
             map.insert("test".to_string(), serde_json::Value::String("value".to_string()));
-            
+
             if has_metadata == 2 {
                 map.insert("nested".to_string(), serde_json::json!({
                     "inner": "value",
                     "num": 42
                 }));
             }
-            
+
             Some(map)
         }
     }
@@ -60,7 +60,7 @@ prop_compose! {
 // TextPart generator
 prop_compose! {
     fn arb_text_part()(
-        text in "(Hello|Hi|Hey|Greetings).*(world|there|friend|everyone).*", 
+        text in "(Hello|Hi|Hey|Greetings).*(world|there|friend|everyone).*",
         metadata in arb_metadata()
     ) -> TextPart {
         TextPart {
@@ -78,7 +78,7 @@ prop_compose! {
         data_map.insert("key1".to_string(), serde_json::Value::String("value1".to_string()));
         data_map.insert("key2".to_string(), serde_json::Value::Number(serde_json::Number::from(42)));
         data_map.insert("key3".to_string(), serde_json::json!(["item1", "item2"]));
-        
+
         DataPart {
             type_: "data".to_string(),
             data: data_map,
@@ -98,13 +98,13 @@ prop_compose! {
         } else {
             None
         };
-        
+
         let uri = if content_type == 0 || content_type == 2 {
             Some("https://example.com/file".to_string())
         } else {
             None
         };
-        
+
         FileContent {
             bytes,
             uri,
@@ -147,7 +147,7 @@ prop_compose! {
 // Message generator
 prop_compose! {
     fn arb_message()(
-        role in arb_role(), 
+        role in arb_role(),
         parts in prop::collection::vec(arb_part(), 1..3),
         metadata in arb_metadata()
     ) -> Message {
@@ -172,7 +172,7 @@ prop_compose! {
         } else {
             None
         };
-        
+
         TaskStatus {
             state,
             message: message_opt,
@@ -195,25 +195,25 @@ prop_compose! {
         Artifact {
             parts,
             index,
-            name: if has_name > 0 { 
-                Some(format!("artifact-{}", index)) 
-            } else { 
-                None 
+            name: if has_name > 0 {
+                Some(format!("artifact-{}", index))
+            } else {
+                None
             },
-            description: if has_description > 0 { 
-                Some(format!("Description for artifact {}", index)) 
-            } else { 
-                None 
+            description: if has_description > 0 {
+                Some(format!("Description for artifact {}", index))
+            } else {
+                None
             },
-            append: if has_append > 0 { 
-                Some(has_append == 2) 
-            } else { 
-                None 
+            append: if has_append > 0 {
+                Some(has_append == 2)
+            } else {
+                None
             },
-            last_chunk: if has_last_chunk > 0 { 
-                Some(true) 
-            } else { 
-                None 
+            last_chunk: if has_last_chunk > 0 {
+                Some(true)
+            } else {
+                None
             },
             metadata,
         }
@@ -236,14 +236,14 @@ prop_compose! {
         } else {
             None
         };
-        
+
         // Create a history of messages
         let history = if status.message.is_some() {
             Some(vec![status.message.clone().unwrap()])
         } else {
             None
         };
-        
+
         Task {
             id,
             session_id: Some(session_id),  // Session ID is optional in the schema
@@ -261,11 +261,11 @@ prop_compose! {
         scheme_count in 1..3usize
     ) -> Option<AgentAuthentication> {
         let schemes = vec![
-            "Bearer".to_string(), 
+            "Bearer".to_string(),
             "ApiKey".to_string(),
             "OAuth2".to_string()
         ][0..scheme_count].to_vec();
-        
+
         Some(AgentAuthentication {
             schemes,
             credentials: Some("https://example.com/auth".to_string()),
@@ -300,7 +300,7 @@ prop_compose! {
     ) -> AgentSkill {
         let skill_id = format!("skill-{}", id);
         let name = format!("Skill {}", skill_id.chars().take(8).collect::<String>());
-        
+
         AgentSkill {
             id: skill_id,
             name,
@@ -382,31 +382,31 @@ where
 {
     // Clone the value for later comparison
     let value_clone = value.clone();
-    
+
     // Serialize to JSON
     let json = serde_json::to_string(&value).unwrap();
-    
+
     // Print the JSON for debugging if needed
     // println!("JSON: {}", json);
-    
+
     // Deserialize back
     let deserialized: T = serde_json::from_str(&json).unwrap();
-    
+
     // Verify serialization succeeded (we can't check equality for types without PartialEq)
     // Instead, we serialize again and compare JSON strings
     let re_serialized = serde_json::to_string(&deserialized).unwrap();
     prop_assert_eq!(json.clone(), re_serialized);
-    
+
     // Serialize to pretty JSON for more coverage
     let pretty_json = serde_json::to_string_pretty(&value_clone).unwrap();
-    
+
     // Deserialize from pretty JSON
     let pretty_deserialized: T = serde_json::from_str(&pretty_json).unwrap();
-    
+
     // Verify pretty format serialization succeeded
     let re_serialized_pretty = serde_json::to_string(&pretty_deserialized).unwrap();
     prop_assert_eq!(json, re_serialized_pretty);
-    
+
     Ok(())
 }
 
@@ -415,36 +415,55 @@ where
 // Verify A2A protocol invariants and constraints
 fn verify_protocol_invariants<T>(value: T) -> Result<(), TestCaseError>
 where
-    T: serde::Serialize + std::fmt::Debug + Clone
+    T: serde::Serialize + std::fmt::Debug + Clone,
 {
     // Convert to JSON string
     let json_string = serde_json::to_string(&value).unwrap();
-    
+
     // Property 1: JSON is valid and can be parsed as a generic Value
     let json_value: serde_json::Value = serde_json::from_str(&json_string)?;
-    prop_assert!(json_value.is_object() || json_value.is_array(), 
-        "A2A objects must serialize to either JSON objects or arrays");
-    
+    prop_assert!(
+        json_value.is_object() || json_value.is_array(),
+        "A2A objects must serialize to either JSON objects or arrays"
+    );
+
     // Property 2: No top-level undefined or null values (unless explicitly allowed)
     if let serde_json::Value::Object(map) = &json_value {
         for (key, value) in map {
             // Skip checking metadata, which can be null
-            if key == "metadata" || key == "description" || key == "message" || 
-               key == "history" || key == "artifacts" || key == "provider" ||
-               key == "documentationUrl" || key == "authentication" ||
-               key == "append" || key == "lastChunk" || key == "name" ||
-               key == "timestamp" || key == "url" || key == "credentials" ||
-               key == "tags" || key == "examples" || key == "inputModes" ||
-               key == "outputModes" || key == "session_id" || key == "sessionId" ||
-               key == "uri" || key == "bytes" || key == "mimeType" || key == "mime_type" ||
-               key == "token" {
+            if key == "metadata"
+                || key == "description"
+                || key == "message"
+                || key == "history"
+                || key == "artifacts"
+                || key == "provider"
+                || key == "documentationUrl"
+                || key == "authentication"
+                || key == "append"
+                || key == "lastChunk"
+                || key == "name"
+                || key == "timestamp"
+                || key == "url"
+                || key == "credentials"
+                || key == "tags"
+                || key == "examples"
+                || key == "inputModes"
+                || key == "outputModes"
+                || key == "session_id"
+                || key == "sessionId"
+                || key == "uri"
+                || key == "bytes"
+                || key == "mimeType"
+                || key == "mime_type"
+                || key == "token"
+            {
                 continue;
             }
-            
+
             prop_assert!(!value.is_null(), "Required field '{}' cannot be null", key);
         }
     }
-    
+
     Ok(())
 }
 
@@ -453,65 +472,91 @@ fn verify_part_constraints(part: &Part) -> Result<(), TestCaseError> {
     match part {
         Part::TextPart(text_part) => {
             // Property: Text parts must have non-empty text
-            prop_assert!(!text_part.text.is_empty(), "TextPart must have non-empty text content");
-            prop_assert_eq!(&text_part.type_, "text", "TextPart must have type_ field set to 'text'");
-        },
+            prop_assert!(
+                !text_part.text.is_empty(),
+                "TextPart must have non-empty text content"
+            );
+            prop_assert_eq!(
+                &text_part.type_,
+                "text",
+                "TextPart must have type_ field set to 'text'"
+            );
+        }
         Part::DataPart(data_part) => {
             // Property: Data parts must have at least one data field
-            prop_assert!(!data_part.data.is_empty(), "DataPart must have at least one data field");
-            prop_assert_eq!(&data_part.type_, "data", "DataPart must have type_ field set to 'data'");
-        },
+            prop_assert!(
+                !data_part.data.is_empty(),
+                "DataPart must have at least one data field"
+            );
+            prop_assert_eq!(
+                &data_part.type_,
+                "data",
+                "DataPart must have type_ field set to 'data'"
+            );
+        }
         Part::FilePart(file_part) => {
             // Property: File parts must have either bytes or uri
             let has_bytes = file_part.file.bytes.is_some();
             let has_uri = file_part.file.uri.is_some();
-            prop_assert!(has_bytes || has_uri, "FilePart must have either bytes or uri");
-            prop_assert_eq!(&file_part.type_, "file", "FilePart must have type_ field set to 'file'");
-            
+            prop_assert!(
+                has_bytes || has_uri,
+                "FilePart must have either bytes or uri"
+            );
+            prop_assert_eq!(
+                &file_part.type_,
+                "file",
+                "FilePart must have type_ field set to 'file'"
+            );
+
             // If bytes are provided, they must be valid base64
             if let Some(bytes) = &file_part.file.bytes {
                 if !bytes.is_empty() {
                     // This will attempt to decode base64 to verify it's valid
                     let result = base64::Engine::decode(
-                        &base64::engine::general_purpose::STANDARD, 
-                        bytes.as_bytes()
+                        &base64::engine::general_purpose::STANDARD,
+                        bytes.as_bytes(),
                     );
                     prop_assert!(result.is_ok(), "FilePart bytes must be valid base64");
                 }
             }
-            
+
             // URI, if provided, must be a valid URI format
             if let Some(uri) = &file_part.file.uri {
                 if !uri.is_empty() {
                     prop_assert!(
-                        uri.starts_with("http://") || 
-                        uri.starts_with("https://") || 
-                        uri.starts_with("file://") ||
-                        uri.starts_with("files/"),
+                        uri.starts_with("http://")
+                            || uri.starts_with("https://")
+                            || uri.starts_with("file://")
+                            || uri.starts_with("files/"),
                         "FilePart URI must be a valid URI format"
                     );
                 }
             }
         }
     }
-    
+
     Ok(())
 }
 
 // Validate Message constraints
 fn verify_message_constraints(message: &Message) -> Result<(), TestCaseError> {
     // Property: Message must have a valid role
-    prop_assert!(message.role == Role::User || message.role == Role::Agent, 
-                "Message role must be either 'user' or 'agent'");
-    
+    prop_assert!(
+        message.role == Role::User || message.role == Role::Agent,
+        "Message role must be either 'user' or 'agent'"
+    );
+
     // Property: Message must have at least one part
-    prop_assert!(!message.parts.is_empty(), "Message must have at least one part");
-    
+    prop_assert!(
+        !message.parts.is_empty(),
+        "Message must have at least one part"
+    );
+
     // Property: All parts in the message must be valid
     for part in &message.parts {
         verify_part_constraints(part)?;
     }
-    
+
     Ok(())
 }
 
@@ -519,14 +564,14 @@ fn verify_message_constraints(message: &Message) -> Result<(), TestCaseError> {
 fn verify_task_constraints(task: &Task) -> Result<(), TestCaseError> {
     // Property: Task must have a non-empty ID
     prop_assert!(!task.id.is_empty(), "Task must have a non-empty ID");
-    
+
     // Property: If history is present, each message must be valid
     if let Some(history) = &task.history {
         for message in history {
             verify_message_constraints(message)?;
         }
     }
-    
+
     // Property: If artifacts are present, each artifact must have valid parts
     if let Some(artifacts) = &task.artifacts {
         for artifact in artifacts {
@@ -534,47 +579,62 @@ fn verify_task_constraints(task: &Task) -> Result<(), TestCaseError> {
             for part in &artifact.parts {
                 verify_part_constraints(part)?;
             }
-            
+
             // Property: Artifact indexes must be non-negative
             prop_assert!(artifact.index >= 0, "Artifact index must be non-negative");
         }
     }
-    
+
     Ok(())
 }
 
 // Validate Agent Card constraints
 fn verify_agent_card_constraints(card: &AgentCard) -> Result<(), TestCaseError> {
     // Property: Agent card must have a non-empty name
-    prop_assert!(!card.name.is_empty(), "Agent card must have a non-empty name");
-    
+    prop_assert!(
+        !card.name.is_empty(),
+        "Agent card must have a non-empty name"
+    );
+
     // Property: Agent card URL must be a valid URL
     prop_assert!(
         card.url.starts_with("http://") || card.url.starts_with("https://"),
         "Agent card URL must be a valid URL format"
     );
-    
+
     // Property: Agent card must have at least one default input and output mode
-    prop_assert!(!card.default_input_modes.is_empty(), 
-                "Agent card must have at least one default input mode");
-    prop_assert!(!card.default_output_modes.is_empty(), 
-                "Agent card must have at least one default output mode");
-    
+    prop_assert!(
+        !card.default_input_modes.is_empty(),
+        "Agent card must have at least one default input mode"
+    );
+    prop_assert!(
+        !card.default_output_modes.is_empty(),
+        "Agent card must have at least one default output mode"
+    );
+
     // Property: If authentication is present, it must have at least one scheme
     if let Some(auth) = &card.authentication {
-        prop_assert!(!auth.schemes.is_empty(), 
-                    "Agent authentication must have at least one scheme");
+        prop_assert!(
+            !auth.schemes.is_empty(),
+            "Agent authentication must have at least one scheme"
+        );
     }
-    
+
     // Property: Agent card must have at least one skill
-    prop_assert!(!card.skills.is_empty(), "Agent card must have at least one skill");
-    
+    prop_assert!(
+        !card.skills.is_empty(),
+        "Agent card must have at least one skill"
+    );
+
     // Property: All skills must have non-empty IDs and names
     for skill in &card.skills {
         prop_assert!(!skill.id.is_empty(), "Agent skill must have a non-empty ID");
-        prop_assert!(!skill.name.is_empty(), "Agent skill must have a non-empty name");
+        prop_assert!(
+            !skill.name.is_empty(),
+            "Agent skill must have a non-empty name"
+        );
     }
-    
+
     Ok(())
 }
 
@@ -584,30 +644,35 @@ fn verify_task_status_constraints(status: &TaskStatus) -> Result<(), TestCaseErr
     if let Some(message) = &status.message {
         verify_message_constraints(message)?;
     }
-    
+
     // Property: If timestamp is present, it must be a valid ISO 8601 datetime
     if let Some(timestamp) = &status.timestamp {
-        prop_assert!(timestamp.timestamp() > 0, "Task status timestamp must be valid");
+        prop_assert!(
+            timestamp.timestamp() > 0,
+            "Task status timestamp must be valid"
+        );
     }
-    
+
     // Property: State transitions must be valid according to A2A spec
     match status.state {
-        TaskState::Submitted => (),  // This is a valid initial state
-        TaskState::Working => (),    // This is a valid working state
+        TaskState::Submitted => (), // This is a valid initial state
+        TaskState::Working => (),   // This is a valid working state
         TaskState::InputRequired => {
             // Property: Input-required state should have a message
-            prop_assert!(status.message.is_some(), 
-                        "Input-required state must have a message");
-        },
-        TaskState::Completed => (),  // This is a valid final state
-        TaskState::Canceled => (),   // This is a valid final state
-        TaskState::Failed => (),     // This is a valid final state
+            prop_assert!(
+                status.message.is_some(),
+                "Input-required state must have a message"
+            );
+        }
+        TaskState::Completed => (), // This is a valid final state
+        TaskState::Canceled => (),  // This is a valid final state
+        TaskState::Failed => (),    // This is a valid final state
         TaskState::Unknown => {
             // Unknown should only be used when a state cannot be mapped
             // This is a fallback state and generally shouldn't appear in tests
-        },
+        }
     }
-    
+
     Ok(())
 }
 
@@ -683,10 +748,10 @@ pub fn run_property_tests(count: usize) {
     proptest!(config, |(artifact in arb_artifact())| {
         test_serde_roundtrip(artifact.clone())?;
         verify_protocol_invariants(artifact.clone())?;
-        
+
         // Property: Artifact index must be non-negative
         prop_assert!(artifact.index >= 0, "Artifact index must be non-negative");
-        
+
         // Property: All parts must be valid
         for part in &artifact.parts {
             verify_part_constraints(part)?;
@@ -710,7 +775,7 @@ pub fn run_property_tests(count: usize) {
     proptest!(config, |(skill in arb_agent_skill())| {
         test_serde_roundtrip(skill.clone())?;
         verify_protocol_invariants(skill.clone())?;
-        
+
         // Property: Skill must have non-empty ID and name
         prop_assert!(!skill.id.is_empty(), "Agent skill must have a non-empty ID");
         prop_assert!(!skill.name.is_empty(), "Agent skill must have a non-empty name");
@@ -736,21 +801,21 @@ pub fn run_property_tests(count: usize) {
     });
     println!("✅ AgentCard serialization and constraints test passed");
     passed_tests += 1;
-    
-    // Test Task state transition invariants 
+
+    // Test Task state transition invariants
     total_tests += 1;
     proptest!(config, |(initial_state in arb_task_state(), next_state in arb_task_state())| {
         // Property: State transitions follow A2A specification rules
         // For simplicity and to avoid further errors, let's use a simpler approach:
         // Any state transition is valid except those explicitly prohibited
-        
+
         // For a real A2A implementation, we'd use stricter rules, but for testing
         // we want to be more permissive to accommodate different implementation choices
         let valid = match (initial_state, next_state) {
             // Most states can transition to any other state in some scenarios (resubmission, etc.)
             (_, _) => true,
         };
-        
+
         // Verify that the transition is valid
         prop_assert!(
             valid,
@@ -759,11 +824,11 @@ pub fn run_property_tests(count: usize) {
     });
     println!("✅ Task state transition invariants test passed");
     passed_tests += 1;
-    
+
     // Test complex cases with artifact streaming invariants
     total_tests += 1;
     proptest!(config, |(
-        artifact1 in arb_artifact(), 
+        artifact1 in arb_artifact(),
         artifact2 in arb_artifact(),
         artifact3 in arb_artifact()
     )| {
@@ -774,51 +839,51 @@ pub fn run_property_tests(count: usize) {
             last_chunk: Some(false),
             ..artifact1
         };
-        
+
         let streaming_artifact2 = Artifact {
             index: 0,
             append: Some(true),   // Continuation
             last_chunk: Some(false),
             ..artifact2
         };
-        
+
         let streaming_artifact3 = Artifact {
             index: 0,
             append: Some(true),   // Final chunk
             last_chunk: Some(true),
             ..artifact3
         };
-        
+
         // Property: Streaming artifacts with the same index must form a coherent append chain
-        prop_assert_eq!(streaming_artifact1.index, streaming_artifact2.index, 
+        prop_assert_eq!(streaming_artifact1.index, streaming_artifact2.index,
                       "Streaming artifacts must have the same index");
-        prop_assert_eq!(streaming_artifact2.index, streaming_artifact3.index, 
+        prop_assert_eq!(streaming_artifact2.index, streaming_artifact3.index,
                       "Streaming artifacts must have the same index");
-        
-        prop_assert_eq!(streaming_artifact1.append, Some(false), 
+
+        prop_assert_eq!(streaming_artifact1.append, Some(false),
                       "First streaming artifact must have append=false");
-        prop_assert_eq!(streaming_artifact2.append, Some(true), 
+        prop_assert_eq!(streaming_artifact2.append, Some(true),
                       "Continuation artifacts must have append=true");
-        prop_assert_eq!(streaming_artifact3.append, Some(true), 
+        prop_assert_eq!(streaming_artifact3.append, Some(true),
                       "Continuation artifacts must have append=true");
-        
-        prop_assert_eq!(streaming_artifact1.last_chunk, Some(false), 
+
+        prop_assert_eq!(streaming_artifact1.last_chunk, Some(false),
                       "Non-final artifacts must have last_chunk=false");
-        prop_assert_eq!(streaming_artifact2.last_chunk, Some(false), 
+        prop_assert_eq!(streaming_artifact2.last_chunk, Some(false),
                       "Non-final artifacts must have last_chunk=false");
-        prop_assert_eq!(streaming_artifact3.last_chunk, Some(true), 
+        prop_assert_eq!(streaming_artifact3.last_chunk, Some(true),
                       "Final artifact must have last_chunk=true");
-        
+
         // Test serialization of streaming artifacts
         verify_protocol_invariants(vec![
-            streaming_artifact1.clone(), 
-            streaming_artifact2.clone(), 
+            streaming_artifact1.clone(),
+            streaming_artifact2.clone(),
             streaming_artifact3.clone()
         ])?;
     });
     println!("✅ Artifact streaming invariants test passed");
     passed_tests += 1;
-    
+
     // Test Task and Message complex property verifications
     total_tests += 1;
     proptest!(config, |(task in arb_task(), message in arb_message())| {
@@ -828,11 +893,11 @@ pub fn run_property_tests(count: usize) {
             message: Some(message.clone()),
             timestamp: Some(chrono::Utc::now()),
         };
-        
+
         // Test roundtrip serialization
         test_serde_roundtrip(status.clone())?;
         verify_task_status_constraints(&status)?;
-        
+
         // Property: Input-required tasks must have a message
         let input_required_status = TaskStatus {
             state: TaskState::InputRequired,
@@ -840,7 +905,7 @@ pub fn run_property_tests(count: usize) {
             timestamp: Some(chrono::Utc::now()),
         };
         verify_task_status_constraints(&input_required_status)?;
-        
+
         // Property: Task ID uniqueness (verify task ID is UUID format)
         if task.id.len() >= 36 {  // Check if ID could be a UUID
             if let Ok(_uuid) = uuid::Uuid::parse_str(&task.id) {
@@ -849,15 +914,15 @@ pub fn run_property_tests(count: usize) {
                 // ID is not a UUID, but that's allowed in the spec
             }
         }
-        
+
         // Test complex task constraints
         verify_task_constraints(&task)?;
-        
+
         // Test that we can serialize a full Task with artifacts
         if let Some(artifacts) = &task.artifacts {
             let artifacts_json = serde_json::to_string(artifacts).unwrap();
             let deserialized_artifacts: Vec<Artifact> = serde_json::from_str(&artifacts_json).unwrap();
-            
+
             // Property: Artifact count preserved through serialization
             prop_assert_eq!(artifacts.len(), deserialized_artifacts.len(),
                           "Artifact count must be preserved through serialization");
@@ -866,6 +931,8 @@ pub fn run_property_tests(count: usize) {
     println!("✅ Complex task and message constraints test passed");
     passed_tests += 1;
 
-    println!("\n🎉 All {} of {} property tests passed! ({} test cases per type)", 
-             passed_tests, total_tests, count);
+    println!(
+        "\n🎉 All {} of {} property tests passed! ({} test cases per type)",
+        passed_tests, total_tests, count
+    );
 }
