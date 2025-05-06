@@ -43,9 +43,17 @@ pub struct ClientConfig {
 /// LLM configuration section
 #[derive(Clone, Debug, Deserialize)]
 pub struct LlmConfig {
+    // Claude specific
     pub claude_api_key: Option<String>,
     #[serde(default = "default_system_prompt")]
-    pub system_prompt: String,
+    pub system_prompt: String, // General system prompt, can be overridden
+
+    // Gemini specific
+    pub gemini_api_key: Option<String>,
+    #[serde(default = "default_gemini_model_id")]
+    pub gemini_model_id: String,
+    #[serde(default = "default_gemini_api_endpoint")]
+    pub gemini_api_endpoint: String,
 }
 
 /// Tool configuration section
@@ -140,6 +148,14 @@ fn default_system_prompt() -> String {
     SYSTEM_PROMPT.to_string()
 }
 
+fn default_gemini_model_id() -> String {
+    "gemini-1.5-flash-latest".to_string() // A common default model
+}
+
+fn default_gemini_api_endpoint() -> String {
+    "https://generativelanguage.googleapis.com/v1beta/models".to_string()
+}
+
 // --- Default Implementations ---
 
 impl Default for ServerConfig {
@@ -166,6 +182,9 @@ impl Default for LlmConfig {
         Self {
             claude_api_key: None,
             system_prompt: default_system_prompt(),
+            gemini_api_key: None,
+            gemini_model_id: default_gemini_model_id(),
+            gemini_api_endpoint: default_gemini_api_endpoint(),
         }
     }
 }
@@ -205,19 +224,32 @@ impl BidirectionalAgentConfig {
         debug!("Checking for CLAUDE_API_KEY environment variable override.");
         if config.llm.claude_api_key.is_none() {
             if let Ok(env_key) = std::env::var("CLAUDE_API_KEY") {
-                info!("Using Claude API key from environment variable.");
+                info!("Using Claude API key from CLAUDE_API_KEY environment variable.");
                 config.llm.claude_api_key = Some(env_key);
             } else {
                 debug!("CLAUDE_API_KEY environment variable not found.");
             }
         } else {
-            debug!("Claude API key already set in config file.");
+            debug!("Claude API key already set in config file or previously by env var.");
+        }
+
+        // Check for Gemini API key from environment variable
+        debug!("Checking for GEMINI_API_KEY environment variable override.");
+        if config.llm.gemini_api_key.is_none() {
+            if let Ok(env_key) = std::env::var("GEMINI_API_KEY") {
+                info!("Using Gemini API key from GEMINI_API_KEY environment variable.");
+                config.llm.gemini_api_key = Some(env_key);
+            } else {
+                debug!("GEMINI_API_KEY environment variable not found.");
+            }
+        } else {
+            debug!("Gemini API key already set in config file or previously by env var.");
         }
 
         // Store the path from which the config was loaded
         config.config_file_path = Some(path.as_ref().display().to_string());
 
-        debug!("Configuration loaded successfully from file.");
+        debug!("Configuration loaded successfully from file, environment variables checked.");
         Ok(config)
     }
 }
@@ -229,11 +261,16 @@ pub fn load_config_from_path(config: &mut BidirectionalAgentConfig, config_path:
     match BidirectionalAgentConfig::from_file(config_path) { // from_file now uses debug/trace internally if logging is up
         Ok(mut loaded_config) => {
             eprintln!("[PRE-LOG] Config file '{}' loaded successfully. Merging with existing/default config.", config_path);
-            // Preserve env var API key if it was set and config file doesn't have one
+            // Preserve env var API keys if they were set and config file doesn't have them
             if config.llm.claude_api_key.is_some() && loaded_config.llm.claude_api_key.is_none() {
-                eprintln!("[PRE-LOG] Preserving Claude API key from environment variable over config file.");
+                eprintln!("[PRE-LOG] Preserving Claude API key from environment or previous config.");
                 loaded_config.llm.claude_api_key = config.llm.claude_api_key.clone();
             }
+            if config.llm.gemini_api_key.is_some() && loaded_config.llm.gemini_api_key.is_none() {
+                eprintln!("[PRE-LOG] Preserving Gemini API key from environment or previous config.");
+                loaded_config.llm.gemini_api_key = config.llm.gemini_api_key.clone();
+            }
+
             // Preserve command-line overrides if they were set before loading the file
             // Example: Preserve port if set via --port= or --listen before the config file path
              if config.server.port != default_port() && loaded_config.server.port == default_port() {

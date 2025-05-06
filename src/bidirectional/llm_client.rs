@@ -9,7 +9,16 @@ use tracing::{debug, error, /* info, */ trace, instrument}; // Removed info
 /// Simple LLM client interface
 #[async_trait]
 pub trait LlmClient: Send + Sync {
-    async fn complete(&self, prompt: &str) -> Result<String>;
+    /// Generates a text completion for the given prompt.
+    async fn complete(&self, prompt_text: &str, system_prompt_override: Option<&str>) -> Result<String>;
+
+    /// Generates a structured JSON completion for the given prompt and schema.
+    async fn complete_structured(
+        &self,
+        prompt_text: &str,
+        system_prompt_override: Option<&str>,
+        output_schema: Value,
+    ) -> Result<Value>;
 }
 
 /// Simple implementation of an LLM client that delegates to Claude
@@ -29,23 +38,22 @@ impl ClaudeLlmClient {
 
 #[async_trait]
 impl LlmClient for ClaudeLlmClient {
-    #[instrument(skip(self, prompt), fields(prompt_len = prompt.len()))]
-    async fn complete(&self, prompt: &str) -> Result<String> {
-        debug!("Sending request to Claude LLM.");
-        trace!(?prompt, "LLM prompt content.");
-        // Create a new client for the Claude API
+    #[instrument(skip(self, prompt_text, system_prompt_override), fields(prompt_len = prompt_text.len()))]
+    async fn complete(&self, prompt_text: &str, system_prompt_override: Option<&str>) -> Result<String> {
+        debug!("Sending request to Claude LLM for text completion.");
+        trace!(?prompt_text, "LLM prompt content.");
         let client = reqwest::Client::new();
-        // Prepare the request payload
+        let system = system_prompt_override.unwrap_or(&self.system_prompt);
         let payload = json!({
-            "model": "claude-3-7-sonnet-20250219",
-            "max_tokens": 60000,
-            "system": self.system_prompt,
+            "model": "claude-3-haiku-20240307", // Using a faster model for general completion
+            "max_tokens": 4096, // Adjusted max_tokens
+            "system": system,
             "messages": [{
                 "role": "user",
-                "content": prompt
+                "content": prompt_text
             }]
         });
-        trace!(payload = %payload, "Claude API request payload.");
+        trace!(payload = %payload, system_prompt = %system, "Claude API request payload.");
 
         // Send the request to the Claude API
         debug!("Posting request to Claude API endpoint.");
@@ -82,5 +90,29 @@ impl LlmClient for ClaudeLlmClient {
         trace!(completion = %completion, "Completion content.");
 
         Ok(completion.to_string())
+    }
+
+    #[instrument(skip(self, prompt_text, system_prompt_override, output_schema), fields(prompt_len = prompt_text.len()))]
+    async fn complete_structured(
+        &self,
+        prompt_text: &str,
+        system_prompt_override: Option<&str>,
+        _output_schema: Value, // Claude doesn't directly use the schema in the API call
+    ) -> Result<Value> {
+        debug!("Attempting structured completion with Claude (text-based).");
+        // For Claude, we'll get a text completion and try to parse it as JSON.
+        // The prompt itself should guide Claude to produce a JSON string.
+        let text_response = self.complete(prompt_text, system_prompt_override).await?;
+        trace!(%text_response, "Received text response from Claude for structured attempt.");
+
+        // Attempt to parse the text response as JSON
+        // Use the helper from task_router to extract JSON even if there's surrounding text.
+        let json_str = crate::bidirectional::task_router::extract_json_from_text(&text_response);
+        
+        serde_json::from_str(&json_str)
+            .map_err(|e| {
+                error!(error = %e, raw_response = %text_response, extracted_json = %json_str, "Failed to parse Claude's text response as JSON.");
+                anyhow!("Claude response was not valid JSON: {}. Response: '{}'", e, text_response)
+            })
     }
 }
