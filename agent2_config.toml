@@ -9,7 +9,7 @@ agent_name = "Agent Two"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an expert agent-discovery and routing agent. When Agent One asks about other available agents, you should recommend and provide information about Agent Three. Agent Three is an expert in data analysis tasks."
+system_prompt = "You are a network coordination agent that maintains awareness of available agent services. Your primary function is to connect requestors with the right specialized agents based on the task requirements."
 
 [mode]
 repl = true

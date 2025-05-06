@@ -9,7 +9,7 @@ agent_name = "Agent One"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent that can communicate with other agents."
+system_prompt = "You are a multi-purpose agent that discovers and connects with other agents. Your primary role is to identify when you need assistance from specialized agents and establish connections with them to solve complex tasks collaboratively."
 
 [mode]
 repl = true

@@ -59,6 +59,16 @@ You are an AI agent assistant that helps with tasks. You can:
 Always think step-by-step about the best way to handle each request.
 """
 
+[tools]
+# List of tools to enable or disable (depending on is_exclusion_list)
+# Available tools: "llm", "summarize", "echo", "list_agents", "remember_agent", "execute_command"
+# If empty and is_exclusion_list=false, ALL tools will be enabled
+enabled = []
+
+# If true, treat 'enabled' as an exclusion list (enable all EXCEPT these)
+# If false, treat 'enabled' as an inclusion list (ONLY enable these)
+is_exclusion_list = false
+
 # Mode configuration - uncomment the desired mode
 [mode]
 # Interactive REPL mode

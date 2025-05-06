@@ -106,7 +106,7 @@ impl TaskService {
     /// Process a new task or a follow-up message
     #[instrument(skip(self, params), fields(task_id = %params.id, session_id = ?params.session_id))]
     pub async fn process_task(&self, params: TaskSendParams) -> Result<Task, ServerError> {
-        info!("Processing task request."); // Keep info for start
+        debug!("Processing task request."); // Changed to debug
         trace!(?params, "Full task parameters received.");
         let task_id = params.id.clone();
 
@@ -213,7 +213,7 @@ impl TaskService {
             // Process the decision
             match decision_result {
                 RoutingDecision::Local { tool_name, params } => {
-                    info!(%tool_name, ?params, "Executing task locally using tool and extracted parameters."); // Keep info for local execution start
+                    debug!(%tool_name, ?params, "Executing task locally using tool and extracted parameters."); // Changed to debug
                                                                                                                // Execute locally and wait for completion, passing the extracted params
                     match executor
                         .execute_task_locally(&mut task, &tool_name, params)
@@ -330,10 +330,10 @@ Respond ONLY with the rewritten message text. This text will be sent directly to
                     let remote_task_id = delegation_params.id.clone(); // Store remote task ID
 
                     // Initiate delegation
-                    debug!(remote_agent_id=%remote_agent_id, remote_task_id=%remote_task_id, "Sending task parameters to ClientManager."); // Changed to debug
+                    debug!(remote_agent_id=%remote_agent_id, remote_task_id=%remote_task_id, "Sending task parameters to ClientManager.");
                     match cm.send_task(&remote_agent_id, delegation_params).await {
                         Ok(initial_remote_task) => {
-                            info!(%remote_agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Delegation initiated successfully."); // Keep info for delegation success
+                            info!(%remote_agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "🔄 Delegating task to remote agent."); // Make delegation info more visible
                                                                                                                                                                // Update local task to indicate delegation
                             task.status.state = TaskState::Working; // Keep local task Working
                             task.status.timestamp = Some(Utc::now());
@@ -550,7 +550,7 @@ Respond ONLY with the rewritten message text. This text will be sent directly to
         }
         // --- End Integrated Routing and Execution Logic ---
 
-        info!(final_state = ?task.status.state, "Finished processing task request. Returning final task state."); // Keep info for end of processing
+        debug!(final_state = ?task.status.state, "Finished processing task request. Returning final task state."); // Changed to debug
         Ok(task) // Return the final state of the task
     }
 
@@ -705,7 +705,7 @@ Respond ONLY with the rewritten message text. This text will be sent directly to
                                         // Send the delegated follow-up
                                         match cm.send_task(&agent_id, delegation_params).await {
                                             Ok(initial_remote_task) => {
-                                                info!(%agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "Follow-up delegation initiated successfully.");
+                                                info!(%agent_id, %remote_task_id, initial_state = ?initial_remote_task.status.state, "🔄 Delegating follow-up to remote agent.");
 
                                                 // Update local task to indicate delegation
                                                 task.status.state = TaskState::Working;
@@ -1028,7 +1028,7 @@ Respond ONLY with the rewritten message text. This text will be sent directly to
             }
         }
 
-        info!(final_state = ?task.status.state, "Finished processing follow-up message."); // Keep info for follow-up end
+        debug!(final_state = ?task.status.state, "Finished processing follow-up message."); // Changed to debug
         Ok(task)
     }
 

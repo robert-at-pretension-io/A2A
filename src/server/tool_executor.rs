@@ -798,7 +798,8 @@ impl ToolExecutor {
 
     /// Creates a new ToolExecutor with tools enabled via configuration.
     pub fn with_enabled_tools(
-        enabled: &[String],
+        tool_list: &[String],
+        is_exclusion_list: bool,
         llm: Option<Arc<dyn LlmClient>>, // Make LLM optional
         agent_registry: Option<Arc<crate::server::agent_registry::AgentRegistry>>, // Add registry parameter
         known_servers: Option<Arc<DashMap<String, String>>>, // Optional map of known servers from BidirectionalAgent
@@ -820,105 +821,128 @@ impl ToolExecutor {
         map.insert("human_input".into(), Box::new(HumanInputTool));
         tracing::debug!("Tool 'human_input' registered.");
 
-        for name in enabled {
-            match name.as_str() {
-                "llm" => {
-                    if !map.contains_key("llm") {
-                        // Check if llm Option is Some before unwrapping
-                        if let Some(llm_client) = llm.clone() {
-                            // Clone the Option<Arc<...>>
-                            map.insert("llm".into(), Box::new(LlmTool::new(llm_client))); // Pass the Arc directly
-                            tracing::debug!("Tool 'llm' registered.");
-                        } else {
-                            tracing::warn!("Cannot register 'llm' tool: LLM client not provided.");
-                        }
-                    }
+        // Define a function to determine if a tool should be enabled
+        let should_enable = |name: &str| -> bool {
+            if is_exclusion_list {
+                // If it's an exclusion list, enable the tool if it's NOT in the list
+                !tool_list.iter().any(|x| x == name)
+            } else {
+                // If it's an inclusion list, enable the tool if it IS in the list, or if the list is empty (enable all)
+                tool_list.iter().any(|x| x == name) || tool_list.is_empty()
+            }
+        };
+        
+        // Register LLM tool if it should be enabled
+        if should_enable("llm") {
+            if !map.contains_key("llm") {
+                // Check if llm Option is Some before unwrapping
+                if let Some(llm_client) = llm.clone() {
+                    // Clone the Option<Arc<...>>
+                    map.insert("llm".into(), Box::new(LlmTool::new(llm_client))); // Pass the Arc directly
+                    tracing::debug!("Tool 'llm' registered.");
+                } else {
+                    tracing::warn!("Cannot register 'llm' tool: LLM client not provided.");
                 }
-                "summarize" => {
-                    if !map.contains_key("summarize") {
-                        // Check if llm Option is Some before unwrapping
-                        if let Some(llm_client) = llm.clone() {
-                            // Clone the Option<Arc<...>>
-                            map.insert(
-                                "summarize".into(),
-                                Box::new(SummarizeTool::new(llm_client)),
-                            ); // Pass the Arc directly
-                            tracing::debug!("Tool 'summarize' registered.");
-                        } else {
-                            tracing::warn!(
-                                "Cannot register 'summarize' tool: LLM client not provided."
-                            );
-                        }
-                    }
-                }
-                "list_agents" => {
-                    if !map.contains_key("list_agents") {
-                        // Use agent_registry instead of agent_directory
-                        if let Some(reg) = agent_registry.clone() {
-                            map.insert("list_agents".into(), Box::new(ListAgentsTool::new(reg))); // Pass registry
-                            tracing::debug!("Tool 'list_agents' registered.");
-                        } else {
-                            tracing::warn!(
-                                "Cannot register 'list_agents' tool: agent_registry not provided."
-                            );
-                        }
-                    }
-                }
-                "remember_agent" => {
-                    // <-- Register the new tool
-                    if !map.contains_key("remember_agent") {
-                        if let Some(reg) = agent_registry.clone() {
-                            // Pass both agent_registry and known_servers to the tool
-                            map.insert(
-                                "remember_agent".into(),
-                                Box::new(RememberAgentTool::new(reg, known_servers.clone())),
-                            );
-                            tracing::debug!("Tool 'remember_agent' registered.");
-                        } else {
-                            tracing::warn!("Cannot register 'remember_agent' tool: agent_registry not provided.");
-                        }
-                    }
-                }
-                "execute_command" => {
-                    // <-- Register the new command tool
-                    if !map.contains_key("execute_command") {
-                        if let Some(reg) = agent_registry.clone() {
-                            if let Some(ks) = known_servers.clone() {
-                                // Pass registry, known_servers, and agent's own info
-                                map.insert(
-                                    "execute_command".into(),
-                                    Box::new(ExecuteCommandTool::new(
-                                        reg,
-                                        ks,
-                                        agent_id.to_string(),
-                                        agent_name.to_string(),
-                                        agent_version.to_string(), // <-- Pass agent_version
-                                        bind_address.to_string(),
-                                        port,
-                                        llm.clone(), // Pass LLM if available
-                                                     // task_service.clone(), // Omit TaskService for now
-                                    )),
-                                );
-                                tracing::debug!("Tool 'execute_command' registered.");
-                            } else {
-                                tracing::warn!("Cannot register 'execute_command' tool: known_servers map not provided.");
-                            }
-                        } else {
-                            tracing::warn!("Cannot register 'execute_command' tool: agent_registry not provided.");
-                        }
-                    }
-                }
-                "echo" => { /* already registered */ }
-                unknown => {
+            }
+        }
+        
+        // Register summarize tool if it should be enabled
+        if should_enable("summarize") {
+            if !map.contains_key("summarize") {
+                // Check if llm Option is Some before unwrapping
+                if let Some(llm_client) = llm.clone() {
+                    // Clone the Option<Arc<...>>
+                    map.insert(
+                        "summarize".into(),
+                        Box::new(SummarizeTool::new(llm_client)),
+                    ); // Pass the Arc directly
+                    tracing::debug!("Tool 'summarize' registered.");
+                } else {
                     tracing::warn!(
-                        "Unknown tool '{}' in config [tools].enabled, ignoring.",
-                        unknown
+                        "Cannot register 'summarize' tool: LLM client not provided."
                     );
                 }
             }
         }
+        
+        // Register list_agents tool if it should be enabled
+        if should_enable("list_agents") {
+            if !map.contains_key("list_agents") {
+                // Use agent_registry instead of agent_directory
+                if let Some(reg) = agent_registry.clone() {
+                    map.insert("list_agents".into(), Box::new(ListAgentsTool::new(reg))); // Pass registry
+                    tracing::debug!("Tool 'list_agents' registered.");
+                } else {
+                    tracing::warn!(
+                        "Cannot register 'list_agents' tool: agent_registry not provided."
+                    );
+                }
+            }
+        }
+        
+        // Register remember_agent tool if it should be enabled
+        if should_enable("remember_agent") {
+            // <-- Register the new tool
+            if !map.contains_key("remember_agent") {
+                if let Some(reg) = agent_registry.clone() {
+                    // Pass both agent_registry and known_servers to the tool
+                    map.insert(
+                        "remember_agent".into(),
+                        Box::new(RememberAgentTool::new(reg, known_servers.clone())),
+                    );
+                    tracing::debug!("Tool 'remember_agent' registered.");
+                } else {
+                    tracing::warn!("Cannot register 'remember_agent' tool: agent_registry not provided.");
+                }
+            }
+        }
+        
+        // Register execute_command tool if it should be enabled
+        if should_enable("execute_command") {
+            // <-- Register the new command tool
+            if !map.contains_key("execute_command") {
+                if let Some(reg) = agent_registry.clone() {
+                    if let Some(ks) = known_servers.clone() {
+                        // Pass registry, known_servers, and agent's own info
+                        map.insert(
+                            "execute_command".into(),
+                            Box::new(ExecuteCommandTool::new(
+                                reg,
+                                ks,
+                                agent_id.to_string(),
+                                agent_name.to_string(),
+                                agent_version.to_string(), // <-- Pass agent_version
+                                bind_address.to_string(),
+                                port,
+                                llm.clone(), // Pass LLM if available
+                                             // task_service.clone(), // Omit TaskService for now
+                            )),
+                        );
+                        tracing::debug!("Tool 'execute_command' registered.");
+                    } else {
+                        tracing::warn!("Cannot register 'execute_command' tool: known_servers map not provided.");
+                    }
+                } else {
+                    tracing::warn!("Cannot register 'execute_command' tool: agent_registry not provided.");
+                }
+            }
+        }
+        
+        // Log any unknown tools in the configuration list if not an exclusion list
+        if !is_exclusion_list {
+            for name in tool_list {
+                match name.as_str() {
+                    "echo" | "human_input" | "llm" | "summarize" | "list_agents" | "remember_agent" | "execute_command" => {
+                        // Known tool, already handled
+                    },
+                    unknown => {
+                        tracing::warn!("Unknown tool '{}' in tool configuration list. Ignoring.", unknown);
+                    }
+                }
+            }
+        }
 
-        tracing::info!("ToolExecutor initialized with tools: {:?}", map.keys());
+        tracing::debug!("ToolExecutor initialized with tools: {:?}", map.keys());
         Self {
             tools: Arc::new(map),
             agent_registry, // Store the registry
@@ -935,11 +959,11 @@ impl ToolExecutor {
         tracing::trace!(?params, "Parameters for tool execution."); // Add tracing
         match self.tools.get(tool_name) {
             Some(tool) => {
-                tracing::info!("Executing tool."); // Add tracing
+                tracing::debug!("Executing tool."); // Changed to debug
                 let result = tool.execute(params).await;
                 match &result {
                     Ok(v) => {
-                        tracing::info!("Tool execution successful."); // Add tracing
+                        tracing::debug!("Tool execution successful."); // Changed to debug
                         tracing::trace!(output = %v, "Tool output value."); // Add tracing
                     }
                     Err(e) => {
@@ -993,7 +1017,7 @@ impl ToolExecutor {
         debug!("Executing tool '{}'.", tool_name); // Changed to debug
         match self.execute_tool(tool_name, params).await {
             Ok(result_value) => {
-                info!("Tool execution successful."); // Keep info for success
+                debug!("Tool execution successful."); // Changed to debug
                 tracing::trace!(result = %result_value, "Tool result value."); // Add tracing
 
                 // Create result parts (Text and potentially Data)
@@ -1067,7 +1091,7 @@ impl ToolExecutor {
                         metadata: None,
                     }),
                 };
-                info!("Updated task status to Completed."); // Keep info for state change
+                debug!("Updated task status to Completed."); // Changed to debug
                 tracing::trace!(?task.status, "Final task status."); // Add tracing
                 Ok(())
             }
@@ -1092,7 +1116,7 @@ impl ToolExecutor {
                         metadata: Some(serde_json::json!({ "error_context": tool_error.to_string() }).as_object().unwrap().clone()),
                     }),
                 };
-                info!("Updated task status to InputRequired due to tool error.");
+                debug!("Updated task status to InputRequired due to tool error.");
                 tracing::trace!(?task.status, "Final task status after tool error.");
 
                 // Return Ok because the task flow continues, waiting for input.
@@ -1137,7 +1161,7 @@ impl ToolExecutor {
         debug!("Executing follow-up tool '{}'.", tool_name); // Changed to debug
         match self.execute_tool(tool_name, params).await {
             Ok(result_value) => {
-                info!("Follow-up tool execution successful."); // Keep info for success
+                debug!("Follow-up tool execution successful."); // Changed to debug
                 tracing::trace!(result = %result_value, "Follow-up tool result value."); // Add tracing
 
                 // Create a text part for the result
@@ -1182,7 +1206,7 @@ impl ToolExecutor {
                         metadata: None,
                     }),
                 };
-                info!("Updated task status to Completed after follow-up."); // Keep info for state change
+                debug!("Updated task status to Completed after follow-up."); // Changed to debug
                 tracing::trace!(?task.status, "Final task status after follow-up."); // Add tracing
                 Ok(())
             }
@@ -1202,7 +1226,7 @@ impl ToolExecutor {
                         metadata: None,
                     }),
                 };
-                info!("Updated task status to Failed due to follow-up tool error."); // Keep info for state change
+                debug!("Updated task status to Failed due to follow-up tool error."); // Changed to debug
                 tracing::trace!(?task.status, "Final task status after follow-up."); // Add tracing
                 Err(tool_error.into())
             }

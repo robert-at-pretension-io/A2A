@@ -7,6 +7,7 @@ use crate::types::{
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -61,6 +62,9 @@ impl MockLlmClient {
 
 #[async_trait]
 impl LlmClient for MockLlmClient {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     async fn complete(
         &self,
         prompt_text: &str,

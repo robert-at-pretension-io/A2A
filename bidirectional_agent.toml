@@ -36,10 +36,24 @@ Always think step-by-step about the best way to handle each request.
 
 # Tool configuration
 [tools]
-# List the tools you want to enable. Available: "llm", "summarize", "echo", "list_agents", "remember_agent", "execute_command"
-# If empty or missing, only "echo" will be available.
-enabled = ["llm", "echo", "summarize", "list_agents", "remember_agent", "execute_command"]
-# REMOVED agent_directory_path
+# List of tools to enable or disable (depending on is_exclusion_list).
+# Available tools: "llm", "summarize", "echo", "list_agents", "remember_agent", "execute_command"
+# If enabled list is empty and is_exclusion_list=false, ALL tools will be enabled.
+# If enabled list is empty and is_exclusion_list=true, NO tools will be disabled (all enabled).
+enabled = []
+
+# If true, the 'enabled' list is treated as an exclusion list (enable all EXCEPT these).
+# If false, the 'enabled' list is treated as an inclusion list (ONLY enable these).
+# Default is false (inclusion list behavior).
+is_exclusion_list = false
+
+# Example: To enable all tools EXCEPT llm and remember_agent:
+# enabled = ["llm", "remember_agent"]
+# is_exclusion_list = true
+
+# Example: To ONLY enable echo, llm and summarize tools:
+# enabled = ["echo", "llm", "summarize"]
+# is_exclusion_list = false
 
 # Mode configuration - uncomment the mode you want to use
 # If no mode is specified, the agent runs in standard server mode

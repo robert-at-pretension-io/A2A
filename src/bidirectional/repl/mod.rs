@@ -143,7 +143,7 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
     // Start server automatically if auto-listen is enabled
     // Use the calculated should_auto_listen variable
     if should_auto_listen {
-        info!(port = %agent.port, bind_address = %agent.bind_address, "Auto-starting server."); // Keep info for server start
+        debug!(port = %agent.port, bind_address = %agent.bind_address, "Auto-starting server."); // Changed to debug
         println!("🚀 Auto-starting server on port {}...", agent.port);
 
         // Create a cancellation token
@@ -223,7 +223,7 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
         match tokio::time::timeout(server_start_timeout, rx).await {
             Ok(Ok(Ok(()))) => {
                 server_running = true;
-                info!(bind_address = %agent.bind_address, port = %agent.port, "Auto-started server successfully confirmed by REPL."); // Keep info for confirmation
+                debug!(bind_address = %agent.bind_address, port = %agent.port, "Auto-started server successfully confirmed by REPL."); // Changed to debug
                 println!(
                     "✅ Server started on http://{}:{}",
                     agent.bind_address, agent.port

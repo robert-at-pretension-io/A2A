@@ -1,0 +1,20 @@
+[server]
+port = 4201
+bind_address = "0.0.0.0"
+agent_id = "bidirectional-agent-debug-2"
+agent_name = "Agent Two (Debug)"
+
+# [client]
+# target_url = "http://localhost:4200" # Example: Agent 2 could target Agent 1
+
+[llm]
+# API key set via environment variable
+system_prompt = "You are Agent Two (Debug). Your primary function is to connect requestors with the right specialized agents based on the task requirements."
+
+[mode]
+repl = true
+get_agent_card = false
+repl_log_file = "shared_agent_interactions_debug.log" # Use a different log file
+
+[tools]
+enabled = ["echo", "llm", "list_agents", "execute_command", "remember_agent"]

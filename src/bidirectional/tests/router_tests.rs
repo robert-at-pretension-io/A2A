@@ -6,10 +6,10 @@ use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision};
 use crate::types::{
     AgentCapabilities, AgentCard, AgentSkill, Message, Part, Role, Task, TaskSendParams, TaskState,
-    TaskStatus, TextPart, Value,
+    TaskStatus, TextPart,
 };
 use chrono::Utc;
-use serde_json::json; // Import json macro
+use serde_json::{json, Value}; // Import json macro and Value
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -239,8 +239,9 @@ async fn test_router_needs_clarification() {
     // Mock LLM response for NP1 (clarification check)
     let llm = Arc::new(
         MockLlmClient::new()
+            // Use the exact phrase from task_router.rs line 472
             .with_structured_response(
-                "judge whether the request is specific and complete",
+                "Analyze the LATEST_REQUEST in the context of CONVERSATION_HISTORY and AGENT_MEMORY",
                 json!({
                     "clarity": "NEEDS_CLARIFY",
                     "question": "What specific topic are you asking about?"
@@ -273,7 +274,7 @@ async fn test_router_needs_clarification() {
         "Expected only one LLM call for clarification check"
     );
     let (prompt_text, schema) = &calls[0];
-    assert!(prompt_text.contains("judge whether the request is specific and complete"));
+    assert!(prompt_text.contains("Analyze the LATEST_REQUEST in the context of CONVERSATION_HISTORY"));
     assert!(prompt_text.contains("Tell me about it."));
     assert!(schema.is_some());
     assert_eq!(

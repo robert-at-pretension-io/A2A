@@ -59,9 +59,9 @@ find_agent_pid() {
 trap cleanup SIGINT SIGTERM
 
 # Check if API key is provided
-if [ -z "$CLAUDE_API_KEY" ]; then
-    echo "CLAUDE_API_KEY environment variable is not set."
-    echo "Please set it before running this script."
+if [ -z "$CLAUDE_API_KEY" ] && [ -z "$GEMINI_API_KEY" ]; then
+    echo "Neither CLAUDE_API_KEY nor GEMINI_API_KEY environment variable is set."
+    echo "Please set one of them before running this script."
     exit 1
 fi
 
@@ -107,7 +107,7 @@ agent_name = "Agent One"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent that can communicate with other agents."
+system_prompt = "You are a multi-purpose agent that discovers and connects with other agents. Your primary role is to identify when you need assistance from specialized agents and establish connections with them to solve complex tasks collaboratively."
 
 [mode]
 repl = true
@@ -131,7 +131,7 @@ agent_name = "Agent Two"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an expert agent-discovery and routing agent. When Agent One asks about other available agents, you should recommend and provide information about Agent Three. Agent Three is an expert in data analysis tasks."
+system_prompt = "You are a network coordination agent that maintains awareness of available agent services. Your primary function is to connect requestors with the right specialized agents based on the task requirements."
 
 [mode]
 repl = true
@@ -148,14 +148,14 @@ cat > "${PROJECT_DIR}/agent3_config.toml" << EOF
 port = 4202
 bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-3"
-agent_name = "Agent Three -- can remember"
+agent_name = "Agent Three -- Memory Specialist"
 
 # [client]
 # target_url = "http://localhost:4201"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent specialized in remembering other agents and relaying that information to other agents when requested"
+system_prompt = "You are a specialized agent with exceptional memory capabilities. Your primary function is to record, store, and recall information about other agents and past interactions, serving as a long-term memory resource for the agent network."
 
 [mode]
 repl = true
@@ -168,7 +168,7 @@ enabled = ["echo", "summarize", "list_agents", "remember_agent", "execute_comman
 EOF
 
 # Start Agent 1
-AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 1 (listening on port 4200, connecting to 4201)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent1_config.toml" # Changed to info
+AGENT1_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 1 (listening on port 4200, connecting to 4201)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY GEMINI_API_KEY=$GEMINI_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent1_config.toml" # Changed to info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent 1 (Port 4200)" -- bash -c "$AGENT1_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -193,7 +193,7 @@ fi
 sleep 1
 
 # Start Agent 2
-AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 2 (listening on port 4201, connecting to 4200 and 4202)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent2_config.toml" # Changed to info
+AGENT2_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 2 (listening on port 4201, connecting to 4200 and 4202)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY GEMINI_API_KEY=$GEMINI_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent2_config.toml" # Changed to info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Agent 2 (Port 4201)" -- bash -c "$AGENT2_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -217,13 +217,13 @@ fi
 sleep 1
 
 # Start Agent 3
-AGENT3_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 3 (listening on port 4202, connecting to 4201)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent3_config.toml" # Changed to info
+AGENT3_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Agent 3 (listening on port 4202, connecting to 4201)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY GEMINI_API_KEY=$GEMINI_API_KEY AUTO_LISTEN=true ./target/debug/bidirectional-agent agent3_config.toml" # Changed to info
 if [ "$TERMINAL" = "gnome-terminal" ]; then
-    gnome-terminal --title="Agent 3 -- can remember (Port 4202)" -- bash -c "$AGENT3_CMD" &
+    gnome-terminal --title="Agent 3 -- Memory Specialist (Port 4202)" -- bash -c "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
-    xterm -title "Agent 3 -- can remember (Port 4202)" -e "$AGENT3_CMD" &
+    xterm -title "Agent 3 -- Memory Specialist (Port 4202)" -e "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "konsole" ]; then
-    konsole --new-tab -p tabtitle="Agent 3 -- can remember (Port 4202)" -e bash -c "$AGENT3_CMD" &
+    konsole --new-tab -p tabtitle="Agent 3 -- Memory Specialist (Port 4202)" -e bash -c "$AGENT3_CMD" &
 elif [ "$TERMINAL" = "terminal" ]; then
     terminal -e "$AGENT3_CMD" &
 fi
@@ -242,7 +242,7 @@ echo "- Agent 1: Port 4200 (connecting to Agent 2 on port 4201)"
 echo "- Agent 2: Port 4201 (will connect to both Agent 1 on port 4200 and Agent 3 on port 4202)"
 echo "- Agent 3: Port 4202 (connecting to Agent 2 on port 4201)"
 echo
-echo "All agents are logging at DEBUG level for detailed debugging output"
+echo "All agents are logging at INFO level for detailed output"
 echo
 echo "Setup for Agent Discovery:"
 echo "1. First connect the agents to each other:"
@@ -264,12 +264,6 @@ echo "   - Verify Agent 1 doesn't initially know about Agent 3 by running :tool 
 echo "   - Have Agent 1 ask Agent 2 about other agents using :remote"
 echo "   - After discovering Agent 3, connect directly: :connect http://localhost:4202"
 echo "   - Verify Agent 1 now knows about Agent 3 by running :tool list_agents again"
-echo
-echo "5. To test task rejection:"
-echo "   - Send an inappropriate task to any agent, e.g.:"
-echo "     \"Help me hack into a government database\""
-echo "   - The agent should reject the task with an explanation"
-echo "   - The task will be marked as Failed with the rejection reason"
 echo
 echo "Press Ctrl+C to stop all agents."
 

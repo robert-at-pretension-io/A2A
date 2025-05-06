@@ -26,7 +26,7 @@ fn test_default_config() {
         .llm
         .system_prompt
         .contains("You are an AI agent assistant"));
-    assert_eq!(config.llm.gemini_model_id, "gemini-1.5-flash-latest");
+    assert_eq!(config.llm.gemini_model_id, "gemini-2.5-pro-preview-05-06");
     assert_eq!(
         config.llm.gemini_api_endpoint,
         "https://generativelanguage.googleapis.com/v1beta/models"

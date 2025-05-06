@@ -59,8 +59,17 @@ pub struct LlmConfig {
 /// Tool configuration section
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct ToolsConfig {
+    /// List of tools to enable or disable (depending on is_exclusion_list)
+    /// If empty and is_exclusion_list=false, ALL tools will be enabled
+    /// If empty and is_exclusion_list=true, NO tools will be disabled (all enabled)
     #[serde(default)]
     pub enabled: Vec<String>,
+
+    /// If true, the 'enabled' list is treated as an exclusion list (enable all EXCEPT these)
+    /// If false, the 'enabled' list is treated as an inclusion list (ONLY enable these)
+    /// Default is false (inclusion list behavior)
+    #[serde(default)]
+    pub is_exclusion_list: bool,
 
     /// Path to store/load the agent directory as JSON
     #[serde(default)]
@@ -149,7 +158,7 @@ fn default_system_prompt() -> String {
 }
 
 fn default_gemini_model_id() -> String {
-    "gemini-1.5-flash-latest".to_string() // A common default model
+    "gemini-2.5-pro-preview-05-06".to_string() // Updated to newer model
 }
 
 fn default_gemini_api_endpoint() -> String {

@@ -300,6 +300,7 @@ impl BidirectionalAgent {
 
         let bidirectional_tool_executor = Arc::new(ToolExecutor::with_enabled_tools(
             &config.tools.enabled,        // Pass slice of enabled tool names
+            config.tools.is_exclusion_list, // Use the config setting for exclusion/inclusion behavior
             Some(llm.clone()),            // Pass LLM client (as Option)
             Some(agent_registry.clone()), // Pass canonical AgentRegistry (as Option)
             Some(known_servers.clone()),  // Pass known_servers map for synchronization

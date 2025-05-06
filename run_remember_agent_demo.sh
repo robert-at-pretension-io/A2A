@@ -58,9 +58,9 @@ find_agent_pid() {
 trap cleanup SIGINT SIGTERM
 
 # Check if API key is provided (needed for LLM tool if enabled, good practice)
-if [ -z "$CLAUDE_API_KEY" ]; then
-    echo "CLAUDE_API_KEY environment variable is not set."
-    echo "Please set it before running this script, even if only using remember_agent."
+if [ -z "$CLAUDE_API_KEY" ] && [ -z "$GEMINI_API_KEY" ]; then
+    echo "Neither CLAUDE_API_KEY nor GEMINI_API_KEY environment variable is set."
+    echo "Please set one of them before running this script."
     exit 1
 fi
 
@@ -106,7 +106,7 @@ agent_name = "Central Hub"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are the Central Hub agent that maintains a registry of all other agents. Your primary role is to remember and connect with other agents, and provide information about the agents you know."
+system_prompt = "You are a central registry agent that maintains information about other agents in the network. Your primary function is to respond to agent registration requests and provide information about connected agents when asked. Act as the single source of truth for network connectivity."
 
 [mode]
 repl = true
@@ -128,7 +128,7 @@ agent_name = "Knowledge Seeker"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are the Knowledge Seeker agent. Your role is to ask other agents to remember you, and to query other agents for information. You specialize in initiating connections with new agents."
+system_prompt = "You are an agent that initiates connections with new services. Your primary role is to discover and register with other agents in the network, particularly central registry agents. You request to be remembered by registry hubs and establish new connections."
 
 [mode]
 repl = true
@@ -149,7 +149,7 @@ agent_name = "Network Explorer"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are the Network Explorer agent. Your role is to discover information about other agents in the network by querying hub agents about their known connections."
+system_prompt = "You are an agent that maps the network of connected services. Your primary function is to discover information about the agent network by querying central registries about their known connections and building a comprehensive map of available services."
 
 [mode]
 repl = true
@@ -161,7 +161,7 @@ enabled = ["echo", "list_agents", "remember_agent", "llm", "execute_command", "s
 EOF
 
 # Start Knowledge Seeker Agent (listens on 4301)
-SEEKER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Knowledge Seeker Agent (listening on port 4301)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY  ./target/debug/bidirectional-agent agent_target_config.toml"
+SEEKER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Knowledge Seeker Agent (listening on port 4301)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY GEMINI_API_KEY=$GEMINI_API_KEY ./target/debug/bidirectional-agent agent_target_config.toml"
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Knowledge Seeker (Port 4301)" -- bash -c "$SEEKER_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -173,7 +173,7 @@ elif [ "$TERMINAL" = "terminal" ]; then
 fi
 
 # Start Network Explorer Agent (listens on 4302)
-EXPLORER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Network Explorer Agent (listening on port 4302)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY  ./target/debug/bidirectional-agent agent_gamma_config.toml"
+EXPLORER_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Network Explorer Agent (listening on port 4302)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY GEMINI_API_KEY=$GEMINI_API_KEY ./target/debug/bidirectional-agent agent_gamma_config.toml"
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Network Explorer (Port 4302)" -- bash -c "$EXPLORER_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -201,7 +201,7 @@ else
 fi
 
 # Start Central Hub Agent (listens on 4300)
-HUB_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Central Hub Agent (listening on port 4300)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY  ./target/debug/bidirectional-agent agent_remember_config.toml"
+HUB_CMD="cd \"$PROJECT_DIR\" && echo -e \"Starting Central Hub Agent (listening on port 4300)...\n\" && RUST_LOG=info CLAUDE_API_KEY=$CLAUDE_API_KEY GEMINI_API_KEY=$GEMINI_API_KEY ./target/debug/bidirectional-agent agent_remember_config.toml"
 if [ "$TERMINAL" = "gnome-terminal" ]; then
     gnome-terminal --title="Central Hub (Port 4300)" -- bash -c "$HUB_CMD" &
 elif [ "$TERMINAL" = "xterm" ]; then
@@ -230,15 +230,19 @@ echo "   - In Central Hub terminal: :tool list_agents"
 echo "   - You should see an empty list or only the Hub itself."
 echo
 echo "2. In the Knowledge Seeker terminal (Port 4301), request to be remembered by the Hub:"
+echo "   - Type: :listen"
+echo "   - Then type: :connect http://localhost:4300"
 echo "   - Type: please tell the Central Hub to remember me at http://localhost:4301"
 echo "   - The Seeker will send this request to the Hub."
 echo
 echo "3. In the Central Hub terminal, you should see the request. Respond with:"
+echo "   - Type: :listen"
 echo "   - Type: I'll remember you"
 echo "   - The Hub should understand from context and remember the Seeker URL."
 echo
 echo "4. In the Network Explorer terminal (Port 4302), ask the Hub about known agents:"
-echo "   - Type: connect to http://localhost:4300"
+echo "   - Type: :listen"
+echo "   - Type: :connect http://localhost:4300"
 echo "   - Then type: what agents do you know about?"
 echo "   - The Hub should respond with information about the Seeker agent."
 echo

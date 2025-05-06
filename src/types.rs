@@ -218,7 +218,7 @@ impl AgentAuthentication {
 #[doc = "}"]
 #[doc = r" ```"]
 #[doc = r" </details>"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default)]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
 pub struct AgentCapabilities {
     #[serde(rename = "pushNotifications", default)]
     pub push_notifications: bool,
@@ -230,6 +230,15 @@ pub struct AgentCapabilities {
 impl ::std::convert::From<&AgentCapabilities> for AgentCapabilities {
     fn from(value: &AgentCapabilities) -> Self {
         value.clone()
+    }
+}
+impl ::std::default::Default for AgentCapabilities {
+    fn default() -> Self {
+        Self {
+            push_notifications: Default::default(),
+            state_transition_history: Default::default(),
+            streaming: Default::default(),
+        }
     }
 }
 impl AgentCapabilities {
@@ -1015,7 +1024,7 @@ impl DataPart {
 #[doc = "}"]
 #[doc = r" ```"]
 #[doc = r" </details>"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default)]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
 pub struct FileContent {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub bytes: ::std::option::Option<::std::string::String>,
@@ -1033,6 +1042,16 @@ pub struct FileContent {
 impl ::std::convert::From<&FileContent> for FileContent {
     fn from(value: &FileContent) -> Self {
         value.clone()
+    }
+}
+impl ::std::default::Default for FileContent {
+    fn default() -> Self {
+        Self {
+            bytes: Default::default(),
+            mime_type: Default::default(),
+            name: Default::default(),
+            uri: Default::default(),
+        }
     }
 }
 impl FileContent {
@@ -2696,16 +2715,19 @@ impl SendTaskStreamingResponse {
 #[doc = r" </details>"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
 #[serde(untagged)]
-#[derive(Default)]
 pub enum SendTaskStreamingResponseResult {
     Variant0(TaskStatusUpdateEvent),
     Variant1(TaskArtifactUpdateEvent),
-    #[default]
     Variant2,
 }
 impl ::std::convert::From<&Self> for SendTaskStreamingResponseResult {
     fn from(value: &SendTaskStreamingResponseResult) -> Self {
         value.clone()
+    }
+}
+impl ::std::default::Default for SendTaskStreamingResponseResult {
+    fn default() -> Self {
+        SendTaskStreamingResponseResult::Variant2
     }
 }
 impl ::std::convert::From<TaskStatusUpdateEvent> for SendTaskStreamingResponseResult {

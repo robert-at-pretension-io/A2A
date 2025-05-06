@@ -2,14 +2,14 @@
 port = 4202
 bind_address = "0.0.0.0"
 agent_id = "bidirectional-agent-3"
-agent_name = "Agent Three -- can remember"
+agent_name = "Agent Three -- Memory Specialist"
 
 # [client]
 # target_url = "http://localhost:4201"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are an AI agent specialized in remembering other agents and relaying that information to other agents when requested"
+system_prompt = "You are a specialized agent with exceptional memory capabilities. Your primary function is to record, store, and recall information about other agents and past interactions, serving as a long-term memory resource for the agent network."
 
 [mode]
 repl = true
