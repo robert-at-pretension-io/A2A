@@ -1,14 +1,17 @@
 // Import from task_router
-use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
-use crate::bidirectional::task_router::BidirectionalTaskRouter;
-use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
-use crate::bidirectional::tests::mocks::MockLlmClient;
 use crate::bidirectional::config::BidirectionalAgentConfig;
-use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities, AgentSkill, TaskSendParams};
-use std::sync::Arc;
-use serde_json::json; // Import json macro
-use uuid::Uuid;
+use crate::bidirectional::task_router::BidirectionalTaskRouter;
+use crate::bidirectional::tests::mocks::MockLlmClient;
+use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
+use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision};
+use crate::types::{
+    AgentCapabilities, AgentCard, AgentSkill, Message, Part, Role, Task, TaskSendParams, TaskState,
+    TaskStatus, TextPart,
+};
 use chrono::Utc;
+use serde_json::json; // Import json macro
+use std::sync::Arc;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_router_local_decision() {
@@ -17,17 +20,25 @@ async fn test_router_local_decision() {
     // 2. For DP3 (tool choice): echo tool with "hello"
     let llm = Arc::new(
         MockLlmClient::new()
-            .with_structured_response("decide the best course of action", json!({
-                "decision_type": "LOCAL"
-            }))
-            .with_structured_response("choose the SINGLE most appropriate tool", json!({
-                "tool_name": "echo",
-                "params": { "text": "hello" }
-            }))
+            .with_structured_response(
+                "decide the best course of action",
+                json!({
+                    "decision_type": "LOCAL"
+                }),
+            )
+            .with_structured_response(
+                "choose the SINGLE most appropriate tool",
+                json!({
+                    "tool_name": "echo",
+                    "params": { "text": "hello" }
+                }),
+            )
             // Add a default in case prompt matching is too brittle or for unexpected calls
-            .with_default_structured_response(json!({"decision_type": "LOCAL", "tool_name": "llm", "params": {}}))
+            .with_default_structured_response(
+                json!({"decision_type": "LOCAL", "tool_name": "llm", "params": {}}),
+            ),
     );
-    
+
     let registry = Arc::new(AgentRegistry::new());
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
     let config = BidirectionalAgentConfig::default();
@@ -50,20 +61,22 @@ async fn test_router_local_decision() {
 async fn test_router_remote_decision() {
     // Mock LLM response for DP2 (routing decision)
     let llm = Arc::new(
-        MockLlmClient::new()
-            .with_default_structured_response(json!({
-                "decision_type": "REMOTE",
-                "agent_id": "test-agent"
-            }))
+        MockLlmClient::new().with_default_structured_response(json!({
+            "decision_type": "REMOTE",
+            "agent_id": "test-agent"
+        })),
     );
-    
+
     let registry = Arc::new(AgentRegistry::new());
-    
+
     let agent_card = create_test_agent_card("http://example.com/agent");
-    registry.agents.insert("test-agent".to_string(), CachedAgentInfo {
-        card: agent_card.clone(),
-        last_checked: Utc::now(),
-    });
+    registry.agents.insert(
+        "test-agent".to_string(),
+        CachedAgentInfo {
+            card: agent_card.clone(),
+            last_checked: Utc::now(),
+        },
+    );
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
     let config = BidirectionalAgentConfig::default();
 
@@ -79,13 +92,12 @@ async fn test_router_remote_decision() {
 async fn test_router_fallback_to_local_for_unknown_agent() {
     // Mock LLM response for DP2: delegates to an unknown agent
     let llm = Arc::new(
-        MockLlmClient::new()
-            .with_default_structured_response(json!({
-                "decision_type": "REMOTE",
-                "agent_id": "unknown-agent"
-            }))
+        MockLlmClient::new().with_default_structured_response(json!({
+            "decision_type": "REMOTE",
+            "agent_id": "unknown-agent"
+        })),
     );
-    
+
     let registry = Arc::new(AgentRegistry::new()); // Empty registry
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
     let config = BidirectionalAgentConfig::default();
@@ -97,7 +109,10 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
 
     // Fallback should be Local with 'llm' tool
     match decision {
-        RoutingDecision::Local { tool_name, params: _ } => {
+        RoutingDecision::Local {
+            tool_name,
+            params: _,
+        } => {
             assert_eq!(tool_name, "llm");
         }
         other => panic!("Expected Local decision, got {:?}", other),
@@ -108,13 +123,12 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
 async fn test_router_fallback_to_local_for_unclear_decision() {
     // Mock LLM response for DP2: unclear decision_type
     let llm = Arc::new(
-        MockLlmClient::new()
-            .with_default_structured_response(json!({
-                "decision_type": "MAYBE_REMOTE_OR_LOCAL", // Invalid enum value
-                "agent_id": "some-agent"
-            }))
+        MockLlmClient::new().with_default_structured_response(json!({
+            "decision_type": "MAYBE_REMOTE_OR_LOCAL", // Invalid enum value
+            "agent_id": "some-agent"
+        })),
     );
-    
+
     let registry = Arc::new(AgentRegistry::new());
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
     let config = BidirectionalAgentConfig::default();
@@ -123,10 +137,13 @@ async fn test_router_fallback_to_local_for_unclear_decision() {
 
     let task = create_test_task("What should I do with this?");
     let decision = router.decide(&task.into_send_params()).await.unwrap();
-    
+
     // Fallback should be Local with 'llm' tool
     match decision {
-        RoutingDecision::Local { tool_name, params: _ } => {
+        RoutingDecision::Local {
+            tool_name,
+            params: _,
+        } => {
             assert_eq!(tool_name, "llm");
         }
         other => panic!("Expected Local decision, got {:?}", other),
@@ -137,32 +154,42 @@ async fn test_router_fallback_to_local_for_unclear_decision() {
 async fn test_router_prompt_formatting() {
     // Create a mock LLM client to capture calls
     let llm = Arc::new(MockLlmClient::new()); // Uses default structured response
-    
+
     let registry = Arc::new(AgentRegistry::new());
-    
+
     let agent_card1 = create_test_agent_card("http://example.com/agent1");
     let agent_card2 = create_test_agent_card("http://example.com/agent2");
-    registry.agents.insert("test-agent-1".to_string(), CachedAgentInfo {
-        card: agent_card1.clone(),
-        last_checked: Utc::now(),
-    });
-    registry.agents.insert("test-agent-2".to_string(), CachedAgentInfo {
-        card: agent_card2.clone(),
-        last_checked: Utc::now(),
-    });
+    registry.agents.insert(
+        "test-agent-1".to_string(),
+        CachedAgentInfo {
+            card: agent_card1.clone(),
+            last_checked: Utc::now(),
+        },
+    );
+    registry.agents.insert(
+        "test-agent-2".to_string(),
+        CachedAgentInfo {
+            card: agent_card2.clone(),
+            last_checked: Utc::now(),
+        },
+    );
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
     let config = BidirectionalAgentConfig::default();
 
     let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools, None, &config);
 
     let task = create_test_task("Please route this task appropriately");
-    
+
     // The default mock response is LOCAL, then tool choice 'llm'.
     let _ = router.decide(&task.into_send_params()).await.unwrap();
-    
+
     let calls = llm.calls.lock().unwrap();
-    assert_eq!(calls.len(), 2, "Expected two LLM calls (routing + tool choice if local)");
-    
+    assert_eq!(
+        calls.len(),
+        2,
+        "Expected two LLM calls (routing + tool choice if local)"
+    );
+
     // Check the first prompt (routing - DP2)
     let (routing_prompt_text, routing_schema) = &calls[0];
     assert!(routing_prompt_text.contains("decide the best course of action"));
@@ -170,28 +197,56 @@ async fn test_router_prompt_formatting() {
     assert!(routing_prompt_text.contains("test-agent-1")); // Check if agent info is in prompt
     assert!(routing_prompt_text.contains("test-agent-2"));
     assert!(routing_schema.is_some());
-    assert_eq!(routing_schema.as_ref().unwrap().get("properties").unwrap().get("decision_type").unwrap().get("enum").unwrap().as_array().unwrap().len(), 3); // LOCAL, REMOTE, REJECT
+    assert_eq!(
+        routing_schema
+            .as_ref()
+            .unwrap()
+            .get("properties")
+            .unwrap()
+            .get("decision_type")
+            .unwrap()
+            .get("enum")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    ); // LOCAL, REMOTE, REJECT
 
     // Check the second prompt (tool choice - DP3, because default mock is LOCAL)
     let (tool_choice_prompt_text, tool_choice_schema) = &calls[1];
     assert!(tool_choice_prompt_text.contains("choose the SINGLE most appropriate tool"));
     assert!(tool_choice_prompt_text.contains("AVAILABLE LOCAL TOOLS:"));
     assert!(tool_choice_schema.is_some());
-    assert!(tool_choice_schema.as_ref().unwrap().get("properties").unwrap().get("tool_name").is_some());
-    assert!(tool_choice_schema.as_ref().unwrap().get("properties").unwrap().get("params").is_some());
+    assert!(tool_choice_schema
+        .as_ref()
+        .unwrap()
+        .get("properties")
+        .unwrap()
+        .get("tool_name")
+        .is_some());
+    assert!(tool_choice_schema
+        .as_ref()
+        .unwrap()
+        .get("properties")
+        .unwrap()
+        .get("params")
+        .is_some());
 }
-
 
 #[tokio::test]
 async fn test_router_needs_clarification() {
     // Mock LLM response for NP1 (clarification check)
     let llm = Arc::new(
         MockLlmClient::new()
-            .with_structured_response("judge whether the request is specific and complete", json!({
-                "clarity": "NEEDS_CLARIFY",
-                "question": "What specific topic are you asking about?"
-            }))
-            .with_default_structured_response(json!({"clarity": "CLEAR"})) // Default if no specific match
+            .with_structured_response(
+                "judge whether the request is specific and complete",
+                json!({
+                    "clarity": "NEEDS_CLARIFY",
+                    "question": "What specific topic are you asking about?"
+                }),
+            )
+            .with_default_structured_response(json!({"clarity": "CLEAR"})), // Default if no specific match
     );
 
     let registry = Arc::new(AgentRegistry::new());
@@ -212,14 +267,31 @@ async fn test_router_needs_clarification() {
     }
 
     let calls = llm.calls.lock().unwrap();
-    assert_eq!(calls.len(), 1, "Expected only one LLM call for clarification check");
+    assert_eq!(
+        calls.len(),
+        1,
+        "Expected only one LLM call for clarification check"
+    );
     let (prompt_text, schema) = &calls[0];
     assert!(prompt_text.contains("judge whether the request is specific and complete"));
     assert!(prompt_text.contains("Tell me about it."));
     assert!(schema.is_some());
-    assert_eq!(schema.as_ref().unwrap().get("properties").unwrap().get("clarity").unwrap().get("enum").unwrap().as_array().unwrap().len(), 2); // CLEAR, NEEDS_CLARIFY
+    assert_eq!(
+        schema
+            .as_ref()
+            .unwrap()
+            .get("properties")
+            .unwrap()
+            .get("clarity")
+            .unwrap()
+            .get("enum")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    ); // CLEAR, NEEDS_CLARIFY
 }
-
 
 // Helper function to create a test task
 fn create_test_task(message_text: &str) -> Task {
@@ -233,7 +305,7 @@ fn create_test_task(message_text: &str) -> Task {
         })],
         metadata: None,
     };
-    
+
     Task {
         id: task_id.clone(),
         status: TaskStatus {
@@ -253,17 +325,27 @@ impl Task {
     pub fn into_send_params(self) -> TaskSendParams {
         TaskSendParams {
             id: self.id,
-            message: self.history.unwrap_or_default().last().cloned().unwrap_or_else(|| Message {
-                role: Role::User, parts: vec![Part::TextPart(TextPart{ type_: "text".to_string(), text: "".to_string(), metadata: None })], metadata: None
-            }), // Use last history message or empty
+            message: self
+                .history
+                .unwrap_or_default()
+                .last()
+                .cloned()
+                .unwrap_or_else(|| Message {
+                    role: Role::User,
+                    parts: vec![Part::TextPart(TextPart {
+                        type_: "text".to_string(),
+                        text: "".to_string(),
+                        metadata: None,
+                    })],
+                    metadata: None,
+                }), // Use last history message or empty
             session_id: self.session_id,
             metadata: self.metadata,
-            history_length: None, // Not relevant for sending
+            history_length: None,    // Not relevant for sending
             push_notification: None, // Not relevant for sending
         }
     }
 }
-
 
 // Helper function to create a test agent card
 fn create_test_agent_card(url: &str) -> AgentCard {
@@ -282,16 +364,14 @@ fn create_test_agent_card(url: &str) -> AgentCard {
         default_output_modes: vec!["text".to_string()],
         documentation_url: None,
         provider: None,
-        skills: vec![
-            AgentSkill {
-                id: "echo".to_string(),
-                name: "Echo Tool".to_string(),
-                description: Some("Echoes back the input text".to_string()),
-                examples: None,
-                input_modes: Some(vec!["text".to_string()]),
-                output_modes: Some(vec!["text".to_string()]),
-                tags: Some(vec!["echo".to_string(), "text_manipulation".to_string()]),
-            }
-        ],
+        skills: vec![AgentSkill {
+            id: "echo".to_string(),
+            name: "Echo Tool".to_string(),
+            description: Some("Echoes back the input text".to_string()),
+            examples: None,
+            input_modes: Some(vec!["text".to_string()]),
+            output_modes: Some(vec!["text".to_string()]),
+            tags: Some(vec!["echo".to_string(), "text_manipulation".to_string()]),
+        }],
     }
 }

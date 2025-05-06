@@ -4,13 +4,17 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest;
 use serde_json::{json, Value};
-use tracing::{debug, error, /* info, */ trace, instrument}; // Removed info
+use tracing::{debug, error, instrument, /* info, */ trace}; // Removed info
 
 /// Simple LLM client interface
 #[async_trait]
 pub trait LlmClient: Send + Sync {
     /// Generates a text completion for the given prompt.
-    async fn complete(&self, prompt_text: &str, system_prompt_override: Option<&str>) -> Result<String>;
+    async fn complete(
+        &self,
+        prompt_text: &str,
+        system_prompt_override: Option<&str>,
+    ) -> Result<String>;
 
     /// Generates a structured JSON completion for the given prompt and schema.
     async fn complete_structured(
@@ -39,7 +43,11 @@ impl ClaudeLlmClient {
 #[async_trait]
 impl LlmClient for ClaudeLlmClient {
     #[instrument(skip(self, prompt_text, system_prompt_override), fields(prompt_len = prompt_text.len()))]
-    async fn complete(&self, prompt_text: &str, system_prompt_override: Option<&str>) -> Result<String> {
+    async fn complete(
+        &self,
+        prompt_text: &str,
+        system_prompt_override: Option<&str>,
+    ) -> Result<String> {
         debug!("Sending request to Claude LLM for text completion.");
         trace!(?prompt_text, "LLM prompt content.");
         let client = reqwest::Client::new();
@@ -57,7 +65,8 @@ impl LlmClient for ClaudeLlmClient {
 
         // Send the request to the Claude API
         debug!("Posting request to Claude API endpoint.");
-        let response = client.post("https://api.anthropic.com/v1/messages")
+        let response = client
+            .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key) // API key is sensitive, not logged
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -70,7 +79,9 @@ impl LlmClient for ClaudeLlmClient {
         // Check if the request was successful
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await
+            let error_text = response
+                .text()
+                .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             error!(%status, error_body = %error_text, "Claude API request failed.");
             return Err(anyhow!("Claude API error ({}): {}", status, error_text));
@@ -78,15 +89,21 @@ impl LlmClient for ClaudeLlmClient {
 
         // Parse the response
         trace!("Parsing Claude API JSON response.");
-        let response_json: Value = response.json().await
+        let response_json: Value = response
+            .json()
+            .await
             .context("Failed to parse Claude API response")?;
         trace!(response_json = %response_json, "Parsed Claude API response.");
 
         // Extract the completion
         trace!("Extracting completion text from response.");
-        let completion = response_json["content"][0]["text"].as_str()
+        let completion = response_json["content"][0]["text"]
+            .as_str()
             .ok_or_else(|| anyhow!("Failed to extract completion from response"))?;
-        debug!(completion_len = completion.len(), "Extracted completion from Claude API.");
+        debug!(
+            completion_len = completion.len(),
+            "Extracted completion from Claude API."
+        );
         trace!(completion = %completion, "Completion content.");
 
         Ok(completion.to_string())
@@ -108,7 +125,7 @@ impl LlmClient for ClaudeLlmClient {
         // Attempt to parse the text response as JSON
         // Use the helper from task_router to extract JSON even if there's surrounding text.
         let json_str = crate::bidirectional::task_router::extract_json_from_text(&text_response);
-        
+
         serde_json::from_str(&json_str)
             .map_err(|e| {
                 error!(error = %e, raw_response = %text_response, extracted_json = %json_str, "Failed to parse Claude's text response as JSON.");
@@ -126,7 +143,12 @@ pub struct GeminiLlmClient {
 }
 
 impl GeminiLlmClient {
-    pub fn new(api_key: String, model_id: String, api_endpoint: String, system_prompt: String) -> Self {
+    pub fn new(
+        api_key: String,
+        model_id: String,
+        api_endpoint: String,
+        system_prompt: String,
+    ) -> Self {
         Self {
             api_key,
             model_id,
@@ -139,7 +161,11 @@ impl GeminiLlmClient {
 #[async_trait]
 impl LlmClient for GeminiLlmClient {
     #[instrument(skip(self, system_prompt_override), fields(prompt_len = prompt_text.len()))]
-    async fn complete(&self, prompt_text: &str, system_prompt_override: Option<&str>) -> Result<String> {
+    async fn complete(
+        &self,
+        prompt_text: &str,
+        system_prompt_override: Option<&str>,
+    ) -> Result<String> {
         debug!("Sending request to Gemini LLM for text completion.");
         // For text completion, we use complete_structured with a simple text schema.
         let schema = json!({
@@ -152,8 +178,10 @@ impl LlmClient for GeminiLlmClient {
             "required": ["response"]
         });
 
-        let structured_response = self.complete_structured(prompt_text, system_prompt_override, schema).await?;
-        
+        let structured_response = self
+            .complete_structured(prompt_text, system_prompt_override, schema)
+            .await?;
+
         structured_response.get("response")
             .and_then(Value::as_str)
             .map(String::from)
@@ -168,16 +196,23 @@ impl LlmClient for GeminiLlmClient {
         output_schema: Value,
     ) -> Result<Value> {
         debug!("Sending request to Gemini LLM for structured (JSON) completion.");
-        trace!(?prompt_text, ?output_schema, "LLM prompt content and output schema.");
+        trace!(
+            ?prompt_text,
+            ?output_schema,
+            "LLM prompt content and output schema."
+        );
 
         let client = reqwest::Client::new();
         let system_instruction = system_prompt_override.unwrap_or(&self.system_prompt);
 
         // API endpoint for non-streaming generation
-        let generate_api = "generateContent"; 
-        let url = format!("{}/{}:{}?key={}", self.api_endpoint, self.model_id, generate_api, self.api_key);
+        let generate_api = "generateContent";
+        let url = format!(
+            "{}/{}:{}?key={}",
+            self.api_endpoint, self.model_id, generate_api, self.api_key
+        );
         trace!(%url, "Gemini API URL.");
-        
+
         let mut contents = Vec::new();
 
         // System instructions are typically provided as part of the initial user/model turns
@@ -191,7 +226,7 @@ impl LlmClient for GeminiLlmClient {
                 "parts": [{"text": "Understood. I will respond according to the provided schema and instructions."}]
             }));
         }
-        
+
         // Add the main user prompt
         contents.push(json!({
             "role": "user",
@@ -207,7 +242,8 @@ impl LlmClient for GeminiLlmClient {
         });
         trace!(payload = %payload, "Gemini API request payload.");
 
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -217,12 +253,18 @@ impl LlmClient for GeminiLlmClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             error!(%status, error_body = %error_text, "Gemini API request failed.");
             return Err(anyhow!("Gemini API error ({}): {}", status, error_text));
         }
 
-        let response_json: Value = response.json().await.context("Failed to parse Gemini API response as JSON")?;
+        let response_json: Value = response
+            .json()
+            .await
+            .context("Failed to parse Gemini API response as JSON")?;
         trace!(response_json = %response_json, "Parsed Gemini API response.");
 
         // Extract the structured JSON from the response
@@ -231,11 +273,11 @@ impl LlmClient for GeminiLlmClient {
         if let Some(text_json_str) = response_json
             .get("candidates")
             .and_then(Value::as_array)
-            .and_then(|arr| arr.get(0))
+            .and_then(|arr| arr.first())
             .and_then(|cand| cand.get("content"))
             .and_then(|cont| cont.get("parts"))
             .and_then(Value::as_array)
-            .and_then(|parts_arr| parts_arr.get(0))
+            .and_then(|parts_arr| parts_arr.first())
             .and_then(|part| part.get("text"))
             .and_then(Value::as_str)
         {
@@ -245,8 +287,10 @@ impl LlmClient for GeminiLlmClient {
                     anyhow!("Gemini response part was not valid JSON: {}. Content: '{}'", e, text_json_str)
                 });
         }
-        
+
         error!(full_response = %response_json, "Could not extract structured JSON from Gemini response. Unexpected format.");
-        Err(anyhow!("Failed to extract structured JSON from Gemini response. Response format unexpected."))
+        Err(anyhow!(
+            "Failed to extract structured JSON from Gemini response. Response format unexpected."
+        ))
     }
 }

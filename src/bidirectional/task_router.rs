@@ -1,22 +1,21 @@
 //! Bidirectional Task Router Implementation
 
+use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
 use crate::bidirectional::llm_client::LlmClient;
 use crate::server::agent_registry::AgentRegistry;
 use crate::server::error::ServerError;
 use crate::server::repositories::task_repository::TaskRepository;
-use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
 use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision, SubtaskDefinition};
 use crate::types::{Message, Part, Role, Task, TaskSendParams, TaskState, TaskStatus};
-use crate::bidirectional::agent_helpers::extract_text_from_task;
 
-use anyhow::{anyhow, Result}; // Add anyhow
+use anyhow::Result; // Add anyhow
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument, trace, warn};
-use regex::Regex; // Add regex for URL extraction
+// Add regex for URL extraction
 
 /// Utility function to extract JSON objects from text where the LLM might add
 /// explanatory text before or after the actual JSON object.
@@ -26,12 +25,12 @@ pub fn extract_json_from_text(text: &str) -> String {
         if start < end {
             // Extract the substring and validate it's valid JSON
             let json_candidate = &text[start..=end];
-            if let Ok(_) = serde_json::from_str::<serde_json::Value>(json_candidate) {
+            if serde_json::from_str::<serde_json::Value>(json_candidate).is_ok() {
                 return json_candidate.to_string();
             }
         }
     }
-    
+
     // If no valid JSON found, return the original text
     text.to_string()
 }
@@ -88,66 +87,87 @@ impl BidirectionalTaskRouter {
 
     // Helper to format conversation history for prompts
     fn format_history(&self, history: Option<&Vec<Message>>) -> String {
-        history.map(|h| {
-            h.iter().map(|message| {
-                let role_str = match message.role {
-                    Role::User => "User",
-                    Role::Agent => "Agent",
-                };
-                let content = message.parts.iter()
-                    .filter_map(|part| match part {
-                        Part::TextPart(tp) => Some(tp.text.as_str()),
-                        Part::FilePart(_) => Some("[File Content]"),
-                        Part::DataPart(_) => Some("[Structured Data]"),
+        history
+            .map(|h| {
+                h.iter()
+                    .map(|message| {
+                        let role_str = match message.role {
+                            Role::User => "User",
+                            Role::Agent => "Agent",
+                        };
+                        let content = message
+                            .parts
+                            .iter()
+                            .filter_map(|part| match part {
+                                Part::TextPart(tp) => Some(tp.text.as_str()),
+                                Part::FilePart(_) => Some("[File Content]"),
+                                Part::DataPart(_) => Some("[Structured Data]"),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        format!("{}: {}", role_str, content)
                     })
                     .collect::<Vec<_>>()
-                    .join(" ");
-                format!("{}: {}", role_str, content)
-            }).collect::<Vec<_>>().join("\n")
-        }).unwrap_or_else(|| "".to_string())
+                    .join("\n")
+            })
+            .unwrap_or_default()
     }
 
     // Helper to format available agents for prompts
     fn format_agents(&self) -> String {
         let available_agents = self.agent_registry.list_all_agents();
-        
+
         // First add a notice about agent names
-        let mut result = String::from("=== IMPORTANT: AGENT IDs MUST BE USED EXACTLY AS SHOWN BELOW ===\n\n");
-        
+        let mut result =
+            String::from("=== IMPORTANT: AGENT IDs MUST BE USED EXACTLY AS SHOWN BELOW ===\n\n");
+
         // Format each agent with more emphasis on ID
-        let agent_descriptions = available_agents.iter()
+        let agent_descriptions = available_agents
+            .iter()
             .map(|(agent_id, card)| {
                 let mut caps = Vec::new();
-                if card.capabilities.push_notifications { caps.push("pushNotifications"); }
-                if card.capabilities.state_transition_history { caps.push("stateTransitionHistory"); }
-                if card.capabilities.streaming { caps.push("streaming"); }
-                
-                format!("AGENT ID: \"{}\"\nName: {}\nDescription: {}\nCapabilities: {}\nURL: {}",
-                        agent_id, // Put in quotes to make it clear this is the exact string to use
-                        card.name.as_str(),
-                        card.description.as_deref().unwrap_or(""),
-                        caps.join(", "),
-                        card.url)
+                if card.capabilities.push_notifications {
+                    caps.push("pushNotifications");
+                }
+                if card.capabilities.state_transition_history {
+                    caps.push("stateTransitionHistory");
+                }
+                if card.capabilities.streaming {
+                    caps.push("streaming");
+                }
+
+                format!(
+                    "AGENT ID: \"{}\"\nName: {}\nDescription: {}\nCapabilities: {}\nURL: {}",
+                    agent_id, // Put in quotes to make it clear this is the exact string to use
+                    card.name.as_str(),
+                    card.description.as_deref().unwrap_or(""),
+                    caps.join(", "),
+                    card.url
+                )
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        
+
         result.push_str(&agent_descriptions);
-        
+
         // If there are agents listed, add a reminder
         if !available_agents.is_empty() {
             result.push_str("\n\n=== REMINDER: USE EXACT AGENT ID FOR ROUTING ===");
         }
-        
+
         result
     }
 
     // Helper to format rolling memory context for LLM prompts
-    pub fn format_rolling_memory(&self, rolling_memory_tasks: &[Task], limit: Option<usize>) -> String {
+    pub fn format_rolling_memory(
+        &self,
+        rolling_memory_tasks: &[Task],
+        limit: Option<usize>,
+    ) -> String {
         if rolling_memory_tasks.is_empty() {
             return "No previous outgoing requests found.".to_string();
         }
-        
+
         // Limit the number of tasks if specified
         let tasks_to_include = if let Some(max_tasks) = limit {
             // Get the most recent tasks by taking from the end if we have too many
@@ -160,20 +180,26 @@ impl BidirectionalTaskRouter {
             // Use all tasks if no limit specified
             rolling_memory_tasks
         };
-        
+
         // Format header
-        let mut result = format!("=== AGENT MEMORY: {} PREVIOUS OUTGOING REQUESTS ===\n\n", 
-                              tasks_to_include.len());
-        
+        let mut result = format!(
+            "=== AGENT MEMORY: {} PREVIOUS OUTGOING REQUESTS ===\n\n",
+            tasks_to_include.len()
+        );
+
         // Format each task
         for (i, task) in tasks_to_include.iter().enumerate() {
             // Extract original request text
-            let request_text = task.history.as_ref()
+            let request_text = task
+                .history
+                .as_ref()
                 .and_then(|history| {
-                    history.iter()
+                    history
+                        .iter()
                         .find(|msg| msg.role == Role::User)
                         .map(|msg| {
-                            msg.parts.iter()
+                            msg.parts
+                                .iter()
                                 .filter_map(|part| match part {
                                     Part::TextPart(tp) => Some(tp.text.as_str()),
                                     _ => None,
@@ -183,11 +209,15 @@ impl BidirectionalTaskRouter {
                         })
                 })
                 .unwrap_or_else(|| "Unknown request".to_string());
-            
+
             // Extract response text
-            let response_text = task.status.message.as_ref()
+            let response_text = task
+                .status
+                .message
+                .as_ref()
                 .map(|msg| {
-                    msg.parts.iter()
+                    msg.parts
+                        .iter()
                         .filter_map(|part| match part {
                             Part::TextPart(tp) => Some(tp.text.as_str()),
                             _ => None,
@@ -196,43 +226,46 @@ impl BidirectionalTaskRouter {
                         .join("\n")
                 })
                 .unwrap_or_else(|| "No response recorded".to_string());
-            
+
             // Truncate texts if they're too long
             let truncated_request = if request_text.len() > 200 {
                 format!("{}...", &request_text[..197])
             } else {
                 request_text
             };
-            
+
             let truncated_response = if response_text.len() > 300 {
                 format!("{}...", &response_text[..297])
             } else {
                 response_text
             };
-            
+
             // Format the task entry
-            result.push_str(&format!("Memory #{}: Agent requested information about: \"{}\"\n", 
-                                   i + 1, truncated_request));
-            
+            result.push_str(&format!(
+                "Memory #{}: Agent requested information about: \"{}\"\n",
+                i + 1,
+                truncated_request
+            ));
+
             result.push_str(&format!("Response received: \"{}\"\n", truncated_response));
-            
+
             // Add a separator between tasks
             if i < tasks_to_include.len() - 1 {
                 result.push_str("\n---\n\n");
             }
         }
-        
+
         result.push_str("\n=== END OF AGENT MEMORY ===\n");
         result
     }
-    
+
     // Helper to format local tools for prompts
     fn format_tools(&self, include_params: bool) -> String {
         let mut tools_description = String::new();
-        
+
         // Add special header for tool usage guidance
         tools_description.push_str("=== IMPORTANT TOOL USAGE GUIDANCE ===\n\n");
-        
+
         // Convert to Vec for ordering and special handling
         let mut tools: Vec<(String, String, String)> = self.enabled_tools.iter()
             .map(|tool_name| {
@@ -248,49 +281,69 @@ impl BidirectionalTaskRouter {
                 (tool_name.clone(), description.to_string(), params_hint.to_string())
             })
             .collect();
-            
+
         // Sort so key tools appear first
         tools.sort_by(|(a, _, _), (b, _, _)| {
             // Custom sort order - put remember_agent near the top
-            if a == "remember_agent" { return std::cmp::Ordering::Less; }
-            if b == "remember_agent" { return std::cmp::Ordering::Greater; }
+            if a == "remember_agent" {
+                return std::cmp::Ordering::Less;
+            }
+            if b == "remember_agent" {
+                return std::cmp::Ordering::Greater;
+            }
             // Then put execute_command next
-            if a == "execute_command" { return std::cmp::Ordering::Less; }
-            if b == "execute_command" { return std::cmp::Ordering::Greater; }
+            if a == "execute_command" {
+                return std::cmp::Ordering::Less;
+            }
+            if b == "execute_command" {
+                return std::cmp::Ordering::Greater;
+            }
             // Otherwise alphabetical
             a.cmp(b)
         });
-        
+
         // Format each tool
         for (tool_name, description, params_hint) in tools {
             if include_params {
-                tools_description.push_str(&format!("- {}: {} Expects {}\n", tool_name, description, params_hint));
+                tools_description.push_str(&format!(
+                    "- {}: {} Expects {}\n",
+                    tool_name, description, params_hint
+                ));
             } else {
                 tools_description.push_str(&format!("- {}: {}\n", tool_name, description));
             }
         }
-        
+
         // Add special section for using remember_agent
-        if self.enabled_tools.contains(&"remember_agent".to_string()) && 
-           self.enabled_tools.contains(&"execute_command".to_string()) {
+        if self.enabled_tools.contains(&"remember_agent".to_string())
+            && self.enabled_tools.contains(&"execute_command".to_string())
+        {
             tools_description.push_str("\n=== AGENT CONNECTION WORKFLOW ===\n");
-            tools_description.push_str("For users asking to connect to or interact with an agent:\n");
+            tools_description
+                .push_str("For users asking to connect to or interact with an agent:\n");
             tools_description.push_str("1. Use 'remember_agent' with the agent's URL to store it in the registry AND connect to it\n");
-            tools_description.push_str("   The agent will be automatically remembered and connected in one step\n");
-            tools_description.push_str("Example: If user says \"connect to agent at http://localhost:4202\"\n");
-            tools_description.push_str("  - Use 'remember_agent' with {\"agent_base_url\": \"http://localhost:4202\"}\n");
-            tools_description.push_str("  - This will both remember AND connect to the agent in one operation\n");
+            tools_description.push_str(
+                "   The agent will be automatically remembered and connected in one step\n",
+            );
+            tools_description
+                .push_str("Example: If user says \"connect to agent at http://localhost:4202\"\n");
+            tools_description.push_str(
+                "  - Use 'remember_agent' with {\"agent_base_url\": \"http://localhost:4202\"}\n",
+            );
+            tools_description.push_str(
+                "  - This will both remember AND connect to the agent in one operation\n",
+            );
         }
-        
+
         tools_description
     }
-    
+
     // Helper to extract rolling memory tasks from metadata and repository
     // Extract rolling memory tasks from metadata and repository
     // Only tasks that were successfully retrieved are included in the result
     async fn extract_rolling_memory(&self, task: &Task) -> Vec<Task> {
         let mut memory_tasks = Vec::new();
-        
+
         if let Some(metadata) = &task.metadata {
             if let Some(memory_ids_value) = metadata.get("_rolling_memory") {
                 debug!("Found rolling memory task IDs in metadata");
@@ -301,8 +354,12 @@ impl BidirectionalTaskRouter {
                             if let Some(id_str) = id_value.as_str() {
                                 match repo.get_task(id_str).await {
                                     Ok(Some(found_task)) => memory_tasks.push(found_task),
-                                    Ok(None) => warn!(task_id = %id_str, "Memory task not found in repository"),
-                                    Err(e) => warn!(task_id = %id_str, error = %e, "Failed to retrieve memory task from repository"),
+                                    Ok(None) => {
+                                        warn!(task_id = %id_str, "Memory task not found in repository")
+                                    }
+                                    Err(e) => {
+                                        warn!(task_id = %id_str, error = %e, "Failed to retrieve memory task from repository")
+                                    }
                                 }
                             }
                         }
@@ -310,28 +367,31 @@ impl BidirectionalTaskRouter {
                 }
             }
         }
-        
+
         memory_tasks
     }
-
 
     // Helper function to extract URLs from conversation history
     // This is used to improve the "remember them" handling when URLs aren't explicitly provided
     fn extract_url_from_history(&self, history_text: &str) -> Option<String> {
         debug!("Attempting to extract URL from conversation history");
-        
+
         // Define regex pattern to match URLs (simple pattern, can be improved)
-        let url_pattern = regex::Regex::new(r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?::\d+)?(?:/[-\w%!$&'()*+,;=:@/~]*)?").ok()?;
-        
+        let url_pattern = regex::Regex::new(
+            r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?::\d+)?(?:/[-\w%!$&'()*+,;=:@/~]*)?",
+        )
+        .ok()?;
+
         // Split history into lines and search from most recent to oldest
         let lines: Vec<&str> = history_text.lines().collect();
-        
+
         // First search for URLs in messages about "connect to" or similar terms
         for line in lines.iter().rev() {
             // Check if this line contains "connect" or "agent at" and a URL
-            if line.to_lowercase().contains("connect") || 
-               line.to_lowercase().contains("agent at") || 
-               line.to_lowercase().contains("remember") {
+            if line.to_lowercase().contains("connect")
+                || line.to_lowercase().contains("agent at")
+                || line.to_lowercase().contains("remember")
+            {
                 // Look for URL in this line
                 if let Some(url_match) = url_pattern.find(line) {
                     debug!(url = %url_match.as_str(), "Found URL in relevant line of conversation history");
@@ -339,7 +399,7 @@ impl BidirectionalTaskRouter {
                 }
             }
         }
-        
+
         // If no URL found in relevant lines, look for any URL in history
         for line in lines.iter().rev() {
             if let Some(url_match) = url_pattern.find(line) {
@@ -347,14 +407,17 @@ impl BidirectionalTaskRouter {
                 return Some(url_match.as_str().to_string());
             }
         }
-        
+
         debug!("No URL found in conversation history");
         None
     }
-    
+
     // NP1: Check if the request needs clarification
     #[instrument(skip(self, task), fields(task_id = %task.id))]
-    async fn check_clarification(&self, task: &Task) -> Result<Option<RoutingDecision>, ServerError> {
+    async fn check_clarification(
+        &self,
+        task: &Task,
+    ) -> Result<Option<RoutingDecision>, ServerError> {
         if !self.experimental_clarification {
             trace!("Skipping clarification check (disabled by config).");
             return Ok(None); // Skip if disabled
@@ -362,12 +425,21 @@ impl BidirectionalTaskRouter {
 
         debug!("NP1: Checking if task requires clarification.");
         let history_text = self.format_history(task.history.as_ref());
-        let latest_request = task.history.as_ref()
+        let latest_request = task
+            .history
+            .as_ref()
             .and_then(|h| h.last())
-            .map(|m| m.parts.iter().filter_map(|p| match p {
-                Part::TextPart(tp) => Some(tp.text.as_str()), _ => None
-            }).collect::<Vec<_>>().join(" "))
-            .unwrap_or_else(|| "".to_string());
+            .map(|m| {
+                m.parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        Part::TextPart(tp) => Some(tp.text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
 
         if latest_request.is_empty() {
             warn!("Latest request text is empty, cannot check clarification.");
@@ -377,14 +449,16 @@ impl BidirectionalTaskRouter {
         // Get memory context
         let memory_tasks = self.extract_rolling_memory(task).await;
         let memory_text = if !memory_tasks.is_empty() {
-            format!("\nAGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:\n{}\n", 
-                    self.format_rolling_memory(&memory_tasks, Some(3)))
+            format!(
+                "\nAGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:\n{}\n",
+                self.format_rolling_memory(&memory_tasks, Some(3))
+            )
         } else {
             String::new()
         };
 
         let prompt = format!(
-r#"SYSTEM:
+            r#"SYSTEM:
 You are an autonomous AI agent preparing to process a user request.
 Your first task is to judge whether the request is specific and complete.{}
 
@@ -422,10 +496,14 @@ Do not add any explanations or text outside the JSON object."#,
         });
 
         trace!(prompt = %prompt, "NP1: Clarity check prompt.");
-        let decision_val = self.llm.complete_structured(&prompt, None, schema.clone()).await.map_err(|e| {
-            error!(error = %e, "NP1: LLM structured call failed during clarification check.");
-            ServerError::Internal(format!("LLM error during clarification: {}", e))
-        })?;
+        let decision_val = self
+            .llm
+            .complete_structured(&prompt, None, schema.clone())
+            .await
+            .map_err(|e| {
+                error!(error = %e, "NP1: LLM structured call failed during clarification check.");
+                ServerError::Internal(format!("LLM error during clarification: {}", e))
+            })?;
         trace!(?decision_val, "NP1: LLM structured response received.");
 
         if let Some(clarity_str) = decision_val.get("clarity").and_then(Value::as_str) {
@@ -433,7 +511,9 @@ Do not add any explanations or text outside the JSON object."#,
                 if let Some(question) = decision_val.get("question").and_then(Value::as_str) {
                     if !question.is_empty() {
                         info!(clarification_question = %question, "NP1: Task needs clarification.");
-                        return Ok(Some(RoutingDecision::NeedsClarification { question: question.to_string() }));
+                        return Ok(Some(RoutingDecision::NeedsClarification {
+                            question: question.to_string(),
+                        }));
                     } else {
                         warn!(?decision_val, "NP1: LLM indicated clarification needed but question was empty. Proceeding without clarification.");
                     }
@@ -443,19 +523,27 @@ Do not add any explanations or text outside the JSON object."#,
             } else if clarity_str == "CLEAR" {
                 debug!("NP1: Task is clear, proceeding to next step.");
             } else {
-                warn!(?decision_val, "NP1: Unexpected 'clarity' value in LLM response. Assuming clear.");
+                warn!(
+                    ?decision_val,
+                    "NP1: Unexpected 'clarity' value in LLM response. Assuming clear."
+                );
             }
         } else {
-            warn!(?decision_val, "NP1: LLM response missing 'clarity' field or not a string. Assuming clear.");
+            warn!(
+                ?decision_val,
+                "NP1: LLM response missing 'clarity' field or not a string. Assuming clear."
+            );
         }
 
         Ok(None) // Assume clear if check skipped, failed, or explicitly clear
     }
 
-
     // NP2: Check if the task should be decomposed and generate plan
     #[instrument(skip(self, task), fields(task_id = %task.id))]
-    async fn check_decomposition(&self, task: &Task) -> Result<Option<RoutingDecision>, ServerError> {
+    async fn check_decomposition(
+        &self,
+        task: &Task,
+    ) -> Result<Option<RoutingDecision>, ServerError> {
         if !self.experimental_decomposition {
             trace!("Skipping decomposition check (disabled by config).");
             return Ok(None); // Skip if disabled
@@ -463,12 +551,21 @@ Do not add any explanations or text outside the JSON object."#,
 
         debug!("NP2: Checking if task should be decomposed.");
         let history_text = self.format_history(task.history.as_ref()); // Reuse helper
-        let latest_request = task.history.as_ref()
+        let latest_request = task
+            .history
+            .as_ref()
             .and_then(|h| h.last())
-            .map(|m| m.parts.iter().filter_map(|p| match p {
-                Part::TextPart(tp) => Some(tp.text.as_str()), _ => None
-            }).collect::<Vec<_>>().join(" "))
-            .unwrap_or_else(|| "".to_string());
+            .map(|m| {
+                m.parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        Part::TextPart(tp) => Some(tp.text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
 
         if latest_request.is_empty() {
             warn!("Latest request text is empty, cannot check decomposition.");
@@ -478,8 +575,10 @@ Do not add any explanations or text outside the JSON object."#,
         // Get memory context
         let memory_tasks = self.extract_rolling_memory(task).await;
         let memory_text = if !memory_tasks.is_empty() {
-            format!("\nAGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:\n{}\n", 
-                    self.format_rolling_memory(&memory_tasks, Some(3)))
+            format!(
+                "\nAGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:\n{}\n",
+                self.format_rolling_memory(&memory_tasks, Some(3))
+            )
         } else {
             String::new()
         };
@@ -488,7 +587,7 @@ Do not add any explanations or text outside the JSON object."#,
         let tool_table = self.format_tools(false); // Don't need params hint here
         let agent_table = self.format_agents();
         let should_decompose_prompt = format!(
-r#"SYSTEM:
+            r#"SYSTEM:
 You are an expert AI planner.
 
 REQUEST_GOAL:
@@ -533,8 +632,15 @@ Do not add any explanations or text outside the JSON object."#,
         })?;
         trace!(?decision_val_a, "NP2.A: LLM structured response received.");
 
-        if !decision_val_a.get("should_decompose").and_then(|v| v.as_bool()).unwrap_or(false) {
-            debug!("NP2.A: LLM decided not to decompose. Reason: {:?}", decision_val_a.get("reason").and_then(|v| v.as_str()));
+        if !decision_val_a
+            .get("should_decompose")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            debug!(
+                "NP2.A: LLM decided not to decompose. Reason: {:?}",
+                decision_val_a.get("reason").and_then(|v| v.as_str())
+            );
             return Ok(None); // Don't decompose
         }
 
@@ -542,7 +648,7 @@ Do not add any explanations or text outside the JSON object."#,
 
         // --- NP2.B: Generate Decomposition Plan ---
         let plan_prompt = format!(
-r#"SYSTEM:
+            r#"SYSTEM:
 You chose to decompose.
 
 GOAL:
@@ -590,19 +696,33 @@ Produce a JSON array where each element is an object matching this schema:
         });
 
         trace!(prompt = %plan_prompt, "NP2.B: Decomposition plan prompt.");
-        let decision_val_b = self.llm.complete_structured(&plan_prompt, None, schema_b.clone()).await.map_err(|e| {
-            error!(error = %e, "NP2.B: LLM structured call failed during plan generation.");
-            ServerError::Internal(format!("LLM error during plan generation: {}", e))
-        })?;
-        trace!(?decision_val_b, "NP2.B: LLM structured response received (plan JSON).");
+        let decision_val_b = self
+            .llm
+            .complete_structured(&plan_prompt, None, schema_b.clone())
+            .await
+            .map_err(|e| {
+                error!(error = %e, "NP2.B: LLM structured call failed during plan generation.");
+                ServerError::Internal(format!("LLM error during plan generation: {}", e))
+            })?;
+        trace!(
+            ?decision_val_b,
+            "NP2.B: LLM structured response received (plan JSON)."
+        );
 
-        match serde_json::from_value::<Vec<SubtaskDefinition>>(decision_val_b.clone()) { // Clone decision_val_b for logging on error
+        match serde_json::from_value::<Vec<SubtaskDefinition>>(decision_val_b.clone()) {
+            // Clone decision_val_b for logging on error
             Ok(subtasks) if !subtasks.is_empty() => {
-                info!(subtask_count = subtasks.len(), "NP2.B: Successfully parsed decomposition plan.");
+                info!(
+                    subtask_count = subtasks.len(),
+                    "NP2.B: Successfully parsed decomposition plan."
+                );
                 Ok(Some(RoutingDecision::Decompose { subtasks }))
             }
             Ok(_) => {
-                warn!(?decision_val_b, "NP2.B: LLM returned empty subtask list. Proceeding without decomposition.");
+                warn!(
+                    ?decision_val_b,
+                    "NP2.B: LLM returned empty subtask list. Proceeding without decomposition."
+                );
                 Ok(None)
             }
             Err(e) => {
@@ -612,16 +732,18 @@ Produce a JSON array where each element is an object matching this schema:
         }
     }
 
-
     async fn decide_simple_routing(&self, task: &Task) -> Result<RoutingDecision, ServerError> {
         debug!("DP2/DP3: Performing simple routing decision (Local/Remote/Reject + Tool Choice).");
         let history_text = self.format_history(task.history.as_ref());
 
         if history_text.is_empty() {
             warn!("Extracted conversation history is empty. Falling back to local 'echo'.");
-            return Ok(RoutingDecision::Local { tool_name: "echo".to_string(), params: json!({}) });
+            return Ok(RoutingDecision::Local {
+                tool_name: "echo".to_string(),
+                params: json!({}),
+            });
         }
-        
+
         // Get memory context if available in metadata
         let memory_tasks = self.extract_rolling_memory(task).await;
         let has_memory = !memory_tasks.is_empty();
@@ -635,11 +757,11 @@ Produce a JSON array where each element is an object matching this schema:
         // --- DP2: Local vs Remote vs Reject ---
         let local_tools_desc = self.format_tools(false);
         let remote_agents_desc = self.format_agents();
-        
+
         // Build the routing prompt with memory context if available
         let routing_prompt = if has_memory {
             format!(
-r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
+                r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
 
 YOUR LOCAL TOOLS:
 {}
@@ -671,7 +793,7 @@ Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, o
             )
         } else {
             format!(
-r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
+                r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
 
 YOUR LOCAL TOOLS:
 {}
@@ -708,19 +830,29 @@ Do not add any explanations or text outside the JSON object."#,
             },
             "required": ["decision_type"]
         });
-        
+
         trace!(prompt = %routing_prompt, "DP2: Routing prompt.");
 
         info!("DP2: Requesting routing decision from LLM.");
-        let decision_val = match self.llm.complete_structured(&routing_prompt, None, schema_dp2.clone()).await {
+        let decision_val = match self
+            .llm
+            .complete_structured(&routing_prompt, None, schema_dp2.clone())
+            .await
+        {
             Ok(val) => val,
             Err(e) => {
                 error!(error = %e, "DP2: LLM structured routing decision failed. Falling back to local 'llm'.");
-                return Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) });
+                return Ok(RoutingDecision::Local {
+                    tool_name: "llm".to_string(),
+                    params: json!({"text": history_text}),
+                });
             }
         };
-        
-        info!(?decision_val, "DP2: LLM structured routing decision response received.");
+
+        info!(
+            ?decision_val,
+            "DP2: LLM structured routing decision response received."
+        );
 
         // --- Parse DP2 Decision ---
         match decision_val.get("decision_type").and_then(Value::as_str) {
@@ -728,10 +860,10 @@ Do not add any explanations or text outside the JSON object."#,
                 // --- DP3: Choose Local Tool & Parameters ---
                 info!("DP2 decided LOCAL. Proceeding to DP3 (Tool Selection).");
                 let local_tools_with_params_desc = self.format_tools(true); // Include param hints
-                
+
                 let tool_param_prompt = if has_memory {
                     format!(
-r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
+                        r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
 {}
 
 AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
@@ -760,7 +892,7 @@ Do not add any explanations or text outside the JSON object."#,
                     )
                 } else {
                     format!(
-r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
+                        r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
 {}
 
 Based on the CONVERSATION HISTORY (especially the latest request) and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
@@ -797,42 +929,65 @@ Do not add any explanations or text outside the JSON object."#,
                 trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
 
                 info!("DP3: Asking LLM to choose tool and extract parameters.");
-                
-                match self.llm.complete_structured(&tool_param_prompt, None, schema_dp3.clone()).await {
+
+                match self
+                    .llm
+                    .complete_structured(&tool_param_prompt, None, schema_dp3.clone())
+                    .await
+                {
                     Ok(json_value) => {
                         trace!(?json_value, "DP3: Received tool/param JSON from LLM.");
                         if let (Some(tool_name), Some(params)) = (
                             json_value.get("tool_name").and_then(Value::as_str),
-                            json_value.get("params").cloned() // Cloned as it's a Value
+                            json_value.get("params").cloned(), // Cloned as it's a Value
                         ) {
                             if self.enabled_tools.contains(&tool_name.to_string()) {
                                 info!(tool_name = %tool_name, ?params, "DP3: Successfully parsed tool and params.");
-                                if tool_name == "remember_agent" {
-                                    if params.get("agent_base_url").and_then(Value::as_str).is_none() {
-                                        debug!("remember_agent chosen but no URL in params, trying to extract from history.");
-                                        if let Some(url) = self.extract_url_from_history(&history_text) {
-                                            debug!(extracted_url = %url, "Found URL in history for remember_agent.");
-                                            let enhanced_params = json!({"agent_base_url": url});
-                                            return Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params: enhanced_params });
-                                        }
+                                if tool_name == "remember_agent"
+                                    && params
+                                        .get("agent_base_url")
+                                        .and_then(Value::as_str)
+                                        .is_none()
+                                {
+                                    debug!("remember_agent chosen but no URL in params, trying to extract from history.");
+                                    if let Some(url) = self.extract_url_from_history(&history_text)
+                                    {
+                                        debug!(extracted_url = %url, "Found URL in history for remember_agent.");
+                                        let enhanced_params = json!({"agent_base_url": url});
+                                        return Ok(RoutingDecision::Local {
+                                            tool_name: tool_name.to_string(),
+                                            params: enhanced_params,
+                                        });
                                     }
                                 }
-                                Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params })
+                                Ok(RoutingDecision::Local {
+                                    tool_name: tool_name.to_string(),
+                                    params,
+                                })
                             } else {
                                 warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm'.");
-                                Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
+                                Ok(RoutingDecision::Local {
+                                    tool_name: "llm".to_string(),
+                                    params: json!({"text": history_text}),
+                                })
                             }
                         } else {
                             warn!(?json_value, "DP3: LLM JSON missing 'tool_name' or 'params'. Falling back to 'llm'.");
-                            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
+                            Ok(RoutingDecision::Local {
+                                tool_name: "llm".to_string(),
+                                params: json!({"text": history_text}),
+                            })
                         }
-                    },
+                    }
                     Err(e) => {
                         warn!(error = %e, "DP3: LLM failed to choose tool/extract params. Falling back to 'llm'.");
-                        Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
+                        Ok(RoutingDecision::Local {
+                            tool_name: "llm".to_string(),
+                            params: json!({"text": history_text}),
+                        })
                     }
                 }
-            },
+            }
             Some("REMOTE") => {
                 if let Some(agent_id) = decision_val.get("agent_id").and_then(Value::as_str) {
                     info!(remote_agent_id = %agent_id, "DP2 decided REMOTE execution.");
@@ -843,8 +998,9 @@ Do not add any explanations or text outside the JSON object."#,
                     } else {
                         let known_agents = self.agent_registry.list_all_agents();
                         for (known_id, _) in known_agents {
-                            if known_id.to_lowercase().contains(&agent_id.to_lowercase()) || 
-                               agent_id.to_lowercase().contains(&known_id.to_lowercase()) {
+                            if known_id.to_lowercase().contains(&agent_id.to_lowercase())
+                                || agent_id.to_lowercase().contains(&known_id.to_lowercase())
+                            {
                                 info!(requested_agent = %agent_id, matched_agent = %known_id, "Found partial match for agent name");
                                 actual_agent_id = Some(known_id);
                                 break;
@@ -853,36 +1009,65 @@ Do not add any explanations or text outside the JSON object."#,
                     }
                     if let Some(actual_id) = actual_agent_id {
                         info!(remote_agent_id = %actual_id, "DP2: Remote delegation confirmed.");
-                        Ok(RoutingDecision::Remote { agent_id: actual_id })
+                        Ok(RoutingDecision::Remote {
+                            agent_id: actual_id,
+                        })
                     } else {
                         warn!(remote_agent_id = %agent_id, "DP2: LLM delegated to unknown agent. Falling back to local 'llm'.");
-                        Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
+                        Ok(RoutingDecision::Local {
+                            tool_name: "llm".to_string(),
+                            params: json!({"text": history_text}),
+                        })
                     }
                 } else {
-                    warn!(?decision_val, "DP2: REMOTE decision missing 'agent_id'. Falling back to local 'llm'.");
-                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
+                    warn!(
+                        ?decision_val,
+                        "DP2: REMOTE decision missing 'agent_id'. Falling back to local 'llm'."
+                    );
+                    Ok(RoutingDecision::Local {
+                        tool_name: "llm".to_string(),
+                        params: json!({"text": history_text}),
+                    })
                 }
-            },
+            }
             Some("REJECT") => {
-                let reason = decision_val.get("reason").and_then(Value::as_str).unwrap_or("No reason provided.").to_string();
+                let reason = decision_val
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("No reason provided.")
+                    .to_string();
                 info!(%reason, "DP2 decided REJECT.");
                 Ok(RoutingDecision::Reject { reason })
-            },
+            }
             _ => {
                 warn!(?decision_val, "DP2: LLM routing decision_type unclear or missing. Falling back to local 'llm'.");
-                Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
+                Ok(RoutingDecision::Local {
+                    tool_name: "llm".to_string(),
+                    params: json!({"text": history_text}),
+                })
             }
         }
     }
-    
+
     // DP1: Process follow-up message for tasks with memory context
     #[instrument(skip(self, message), fields(task_id = %task_id))]
-    async fn process_follow_up_with_memory(&self, task_id: &str, message: &Message, memory_tasks: &[Task]) -> Result<RoutingDecision, ServerError> {
+    async fn process_follow_up_with_memory(
+        &self,
+        task_id: &str,
+        message: &Message,
+        memory_tasks: &[Task],
+    ) -> Result<RoutingDecision, ServerError> {
         debug!("Processing follow-up message for task with memory context.");
-        trace!(?message, memory_task_count = memory_tasks.len(), "Follow-up message details.");
+        trace!(
+            ?message,
+            memory_task_count = memory_tasks.len(),
+            "Follow-up message details."
+        );
 
         // Extract text from the follow-up message
-        let follow_up_text = message.parts.iter()
+        let follow_up_text = message
+            .parts
+            .iter()
             .filter_map(|p| match p {
                 Part::TextPart(tp) => Some(tp.text.as_str()),
                 _ => None,
@@ -899,7 +1084,7 @@ Do not add any explanations or text outside the JSON object."#,
             debug!("No task_repository available, cannot access task details");
             return Ok(RoutingDecision::Local {
                 tool_name: "llm".to_string(),
-                params: json!({"text": follow_up_text})
+                params: json!({"text": follow_up_text}),
             });
         };
 
@@ -914,9 +1099,9 @@ Do not add any explanations or text outside the JSON object."#,
         if let Ok(Some(task)) = task_result {
             // Check task metadata to determine if it's a remote task coming back to us
             let is_returning_remote_task = if let Some(md) = &task.metadata {
-                md.get("delegated_from").is_some() ||
-                md.get("remote_agent_id").is_some() ||
-                md.get("source_agent_id").is_some()
+                md.get("delegated_from").is_some()
+                    || md.get("remote_agent_id").is_some()
+                    || md.get("source_agent_id").is_some()
             } else {
                 false
             };
@@ -930,14 +1115,17 @@ Do not add any explanations or text outside the JSON object."#,
 
                 if let Some(history) = &task.history {
                     // Create prompt for the LLM asking it to decide if we can handle this ourselves
-                    let history_text = history.iter()
+                    let history_text = history
+                        .iter()
                         .map(|msg| {
                             let role_str = match msg.role {
                                 Role::User => "User",
                                 Role::Agent => "Agent",
                             };
 
-                            let content = msg.parts.iter()
+                            let content = msg
+                                .parts
+                                .iter()
                                 .filter_map(|p| match p {
                                     Part::TextPart(tp) => Some(tp.text.as_str()),
                                     _ => None,
@@ -952,7 +1140,8 @@ Do not add any explanations or text outside the JSON object."#,
 
                     // Get the current status message which often describes why input is required
                     let status_message = if let Some(msg) = &task.status.message {
-                        msg.parts.iter()
+                        msg.parts
+                            .iter()
                             .filter_map(|p| match p {
                                 Part::TextPart(tp) => Some(tp.text.as_str()),
                                 _ => None,
@@ -1002,7 +1191,7 @@ Do not add any explanations or text outside the JSON object."#,
                         )
                     } else {
                         format!(
-r#"You are assisting with handling a returning delegated task that requires additional input.
+                            r#"You are assisting with handling a returning delegated task that requires additional input.
 
 TASK HISTORY:
 {}
@@ -1040,23 +1229,30 @@ Do not add any explanations or text outside the JSON object."#,
                         "required": ["decision_type"]
                     });
 
-                    let decision_val_follow_up = match llm.complete_structured(&decision_prompt, None, schema_follow_up.clone()).await {
+                    let decision_val_follow_up = match llm
+                        .complete_structured(&decision_prompt, None, schema_follow_up.clone())
+                        .await
+                    {
                         Ok(val) => val,
                         Err(e) => {
                             warn!("LLM structured decision failed for follow-up: {}, defaulting to NEED_HUMAN_INPUT", e);
                             json!({"decision_type": "NEED_HUMAN_INPUT"})
                         }
                     };
-                    
-                    match decision_val_follow_up.get("decision_type").and_then(Value::as_str) {
+
+                    match decision_val_follow_up
+                        .get("decision_type")
+                        .and_then(Value::as_str)
+                    {
                         Some("HANDLE_DIRECTLY") => {
                             info!("LLM decided to handle the InputRequired task directly");
                             return Ok(RoutingDecision::Local {
                                 tool_name: "llm".to_string(),
-                                params: json!({"text": follow_up_text})
+                                params: json!({"text": follow_up_text}),
                             });
-                        },
-                        Some("NEED_HUMAN_INPUT") | _ => { // Default to human input
+                        }
+                        Some("NEED_HUMAN_INPUT") | _ => {
+                            // Default to human input
                             info!("LLM decided to request human input for the task (or decision was unclear).");
                             return Ok(RoutingDecision::Local {
                                 tool_name: "human_input".to_string(),
@@ -1064,7 +1260,7 @@ Do not add any explanations or text outside the JSON object."#,
                                     "text": follow_up_text,
                                     "require_human_input": true,
                                     "prompt": status_message
-                                })
+                                }),
                             });
                         }
                     }
@@ -1074,21 +1270,21 @@ Do not add any explanations or text outside the JSON object."#,
 
         // Default case: Handle locally with LLM tool but include memory context
         info!("DP1: Routing follow-up to LOCAL execution using 'llm' tool with memory context.");
-        
+
         // Set up parameters to include memory context if available
         let mut params = json!({
             "text": follow_up_text
         });
-        
+
         if has_memory {
             if let Value::Object(ref mut map) = params {
                 map.insert("memory_context".to_string(), Value::String(memory_text));
             }
         }
-        
+
         Ok(RoutingDecision::Local {
             tool_name: "llm".to_string(),
-            params
+            params,
         })
     }
 }
@@ -1107,7 +1303,8 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
         trace!("Constructing temporary Task object for routing decision.");
         let task = Task {
             id: params.id.clone(),
-            status: TaskStatus { // Default status for routing decision
+            status: TaskStatus {
+                // Default status for routing decision
                 state: TaskState::Submitted,
                 timestamp: Some(Utc::now()),
                 message: None, // Status message is usually set later
@@ -1147,16 +1344,19 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
         Ok(final_decision)
     }
 
-
     // DP1: Process follow-up message for tasks, including enhanced InputRequired handling
     #[instrument(skip(self, message), fields(task_id = %task_id))]
-    async fn process_follow_up(&self, task_id: &str, message: &Message) -> Result<RoutingDecision, ServerError> {
+    async fn process_follow_up(
+        &self,
+        task_id: &str,
+        message: &Message,
+    ) -> Result<RoutingDecision, ServerError> {
         debug!("Processing follow-up message for task.");
         trace!(?message, "Follow-up message details.");
 
         // Extract memory tasks from the task if available
         let mut memory_tasks = Vec::new();
-        
+
         if let Some(repo) = &self.task_repository {
             if let Ok(Some(task)) = repo.get_task(task_id).await {
                 if let Some(metadata) = &task.metadata {
@@ -1174,11 +1374,12 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
                 }
             }
         }
-        
+
         debug!(memory_task_count = %memory_tasks.len(), "Retrieved memory tasks for follow-up");
-        
+
         // Use the enhanced process_follow_up with memory context
-        self.process_follow_up_with_memory(task_id, message, memory_tasks.as_slice()).await
+        self.process_follow_up_with_memory(task_id, message, memory_tasks.as_slice())
+            .await
     }
 
     // --- Trait Methods Implementation ---
@@ -1202,48 +1403,72 @@ impl LlmTaskRouterTrait for BidirectionalTaskRouter {
         // Construct temporary task to call check_decomposition helper
         let task = Task {
             id: params.id.clone(),
-            status: TaskStatus { state: TaskState::Submitted, timestamp: Some(Utc::now()), message: None },
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                timestamp: Some(Utc::now()),
+                message: None,
+            },
             history: Some(vec![params.message.clone()]),
-            artifacts: None, metadata: params.metadata.clone(), session_id: params.session_id.clone(),
+            artifacts: None,
+            metadata: params.metadata.clone(),
+            session_id: params.session_id.clone(),
         };
-        trace!(?task, "Temporary Task object created for should_decompose check.");
+        trace!(
+            ?task,
+            "Temporary Task object created for should_decompose check."
+        );
         match self.check_decomposition(&task).await? {
             Some(RoutingDecision::Decompose { .. }) => {
                 debug!("Decomposition check returned YES.");
                 Ok(true)
-            },
+            }
             _ => {
                 debug!("Decomposition check returned NO or None.");
                 Ok(false)
-            },
+            }
         }
     }
 
     // `decompose_task` now uses the LLM plan generation if enabled
     #[instrument(skip(self, params), fields(task_id = %params.id))]
-    async fn decompose_task(&self, params: &TaskSendParams) -> Result<Vec<SubtaskDefinition>, ServerError> {
+    async fn decompose_task(
+        &self,
+        params: &TaskSendParams,
+    ) -> Result<Vec<SubtaskDefinition>, ServerError> {
         debug!("'decompose_task' method called.");
         if !self.experimental_decomposition {
-             trace!("Decomposition disabled by config, returning empty list.");
+            trace!("Decomposition disabled by config, returning empty list.");
             return Ok(Vec::new());
         }
         // Construct temporary task to call check_decomposition helper
         let task = Task {
             id: params.id.clone(),
-            status: TaskStatus { state: TaskState::Submitted, timestamp: Some(Utc::now()), message: None },
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                timestamp: Some(Utc::now()),
+                message: None,
+            },
             history: Some(vec![params.message.clone()]),
-            artifacts: None, metadata: params.metadata.clone(), session_id: params.session_id.clone(),
+            artifacts: None,
+            metadata: params.metadata.clone(),
+            session_id: params.session_id.clone(),
         };
-         trace!(?task, "Temporary Task object created for decompose_task execution.");
+        trace!(
+            ?task,
+            "Temporary Task object created for decompose_task execution."
+        );
         match self.check_decomposition(&task).await? {
             Some(RoutingDecision::Decompose { subtasks }) => {
-                info!(subtask_count = subtasks.len(), "Returning decomposition plan.");
+                info!(
+                    subtask_count = subtasks.len(),
+                    "Returning decomposition plan."
+                );
                 Ok(subtasks)
-            },
+            }
             _ => {
                 warn!("Decomposition check did not yield a plan. Returning empty list.");
                 Ok(Vec::new()) // Return empty if check didn't result in decomposition
-            },
+            }
         }
     }
 }
