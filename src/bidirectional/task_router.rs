@@ -911,8 +911,8 @@ Do not add any explanations or text outside the JSON object."#,
                 let tool_param_prompt = if has_memory {
                     format!(
                         r#"SYSTEM:
-You are an AI agent. Your previous step decided to handle the LATEST USER REQUEST locally using one of YOUR tools.
-Your current role is to select the SINGLE most appropriate tool and extract its parameters.
+You are an AI agent. Your previous step decided to handle the LATEST USER REQUEST locally.
+Your current role is to determine if this local handling involves executing a standard TOOL or performing an AGENT_ACTION (an internal operation specific to your agent's state or control).
 
 LATEST USER REQUEST (from human, to YOU, Agent '{current_agent_id}'):
 "{latest_request_text}"
@@ -923,24 +923,36 @@ YOUR (Agent '{current_agent_id}') MEMORY OF PREVIOUS OUTGOING REQUESTS TO OTHER 
 YOUR (Agent '{current_agent_id}') AVAILABLE LOCAL TOOLS:
 {local_tools_with_params_desc}
 
+YOUR (Agent '{current_agent_id}') AVAILABLE AGENT_ACTIONS (Internal Operations):
+- connect_agent: Connects to a remote agent. Params: {{"url": "http://..."}}
+- disconnect_agent: Disconnects from the current remote agent. Params: {{}}
+- create_session: Creates a new conversation session. Params: {{}}
+- (Note: 'list_servers', 'show_agent_card' are now TOOLS, not AGENT_ACTIONS)
+
 TASK:
-Based on the LATEST USER REQUEST, YOUR MEMORY, and YOUR AVAILABLE LOCAL TOOLS, choose the SINGLE most appropriate tool and extract its required parameters.
+Based on the LATEST USER REQUEST, YOUR MEMORY, YOUR LOCAL TOOLS, and YOUR AGENT_ACTIONS, decide the execution type, name (tool or action), and parameters.
 
 RESPONSE FORMAT:
 Respond with a JSON object matching this schema:
 {{
   "type": "object",
   "properties": {{
-    "tool_name": {{ "type": "string", "description": "The name of the chosen tool from YOUR AVAILABLE LOCAL TOOLS." }},
-    "params": {{ "type": "object", "description": "A JSON object containing parameters for the chosen tool. Can be an empty object {{}} if no parameters are needed." }}
+    "execution_type": {{ "type": "string", "enum": ["TOOL", "AGENT_ACTION"] }},
+    "name": {{ "type": "string", "description": "If TOOL, the tool_name. If AGENT_ACTION, the action_name (e.g., 'connect_agent')." }},
+    "params": {{ "type": "object", "description": "A JSON object containing parameters for the chosen tool or action. Can be an empty object {{}} if no parameters are needed." }}
   }},
-  "required": ["tool_name", "params"]
+  "required": ["execution_type", "name", "params"]
 }}
 
 CRITICAL INSTRUCTIONS:
-1. Agent Connection: If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), YOU MUST FIRST use YOUR 'remember_agent' tool.
-2. Internal Commands: If the LATEST USER REQUEST is an internal command for YOU (Agent '{current_agent_id}') (like connecting, listing servers, managing sessions), use YOUR 'execute_command' tool.
-3. Agent Management: ALWAYS use YOUR 'remember_agent' tool for any request that involves remembering, storing, or registering an agent URL.
+1. Agent Connection:
+   - If the request is to *remember* or *discover* an agent by URL (e.g., "remember agent at http://..."), use the 'remember_agent' TOOL.
+   - If the request is to *connect* to an already known/remembered agent or a new URL, use the 'connect_agent' AGENT_ACTION.
+2. Agent Disconnection: If the request is to disconnect, use the 'disconnect_agent' AGENT_ACTION.
+3. Session Management: If the request is to start a new session, use the 'create_session' AGENT_ACTION.
+4. Listing Servers/Card: If the request is to list known servers or show your agent card, use the 'list_servers' or 'show_agent_card' TOOLS respectively.
+5. Other Tools: For other functionalities, select the appropriate TOOL from YOUR AVAILABLE LOCAL TOOLS.
+6. Fallback: If unsure, or if it's a general query, use the 'llm' TOOL.
 
 Do not add any explanations or text outside the JSON object."#,
                         current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
@@ -951,8 +963,8 @@ Do not add any explanations or text outside the JSON object."#,
                 } else {
                     format!(
                         r#"SYSTEM:
-You are an AI agent. Your previous step decided to handle the LATEST USER REQUEST locally using one of YOUR tools.
-Your current role is to select the SINGLE most appropriate tool and extract its parameters.
+You are an AI agent. Your previous step decided to handle the LATEST USER REQUEST locally.
+Your current role is to determine if this local handling involves executing a standard TOOL or performing an AGENT_ACTION (an internal operation specific to your agent's state or control).
 
 LATEST USER REQUEST (from human, to YOU, Agent '{current_agent_id}'):
 "{latest_request_text}"
@@ -960,24 +972,36 @@ LATEST USER REQUEST (from human, to YOU, Agent '{current_agent_id}'):
 YOUR (Agent '{current_agent_id}') AVAILABLE LOCAL TOOLS:
 {local_tools_with_params_desc}
 
+YOUR (Agent '{current_agent_id}') AVAILABLE AGENT_ACTIONS (Internal Operations):
+- connect_agent: Connects to a remote agent. Params: {{"url": "http://..."}}
+- disconnect_agent: Disconnects from the current remote agent. Params: {{}}
+- create_session: Creates a new conversation session. Params: {{}}
+- (Note: 'list_servers', 'show_agent_card' are now TOOLS, not AGENT_ACTIONS)
+
 TASK:
-Based on the LATEST USER REQUEST and YOUR AVAILABLE LOCAL TOOLS, choose the SINGLE most appropriate tool and extract its required parameters.
+Based on the LATEST USER REQUEST, YOUR LOCAL TOOLS, and YOUR AGENT_ACTIONS, decide the execution type, name (tool or action), and parameters.
 
 RESPONSE FORMAT:
 Respond with a JSON object matching this schema:
 {{
   "type": "object",
   "properties": {{
-    "tool_name": {{ "type": "string", "description": "The name of the chosen tool from YOUR AVAILABLE LOCAL TOOLS." }},
-    "params": {{ "type": "object", "description": "A JSON object containing parameters for the chosen tool. Can be an empty object {{}} if no parameters are needed." }}
+    "execution_type": {{ "type": "string", "enum": ["TOOL", "AGENT_ACTION"] }},
+    "name": {{ "type": "string", "description": "If TOOL, the tool_name. If AGENT_ACTION, the action_name (e.g., 'connect_agent')." }},
+    "params": {{ "type": "object", "description": "A JSON object containing parameters for the chosen tool or action. Can be an empty object {{}} if no parameters are needed." }}
   }},
-  "required": ["tool_name", "params"]
+  "required": ["execution_type", "name", "params"]
 }}
 
 CRITICAL INSTRUCTIONS:
-1. Agent Connection: If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), YOU MUST FIRST use YOUR 'remember_agent' tool.
-2. Internal Commands: If the LATEST USER REQUEST is an internal command for YOU (Agent '{current_agent_id}') (like connecting, listing servers, managing sessions), use YOUR 'execute_command' tool.
-3. Agent Management: ALWAYS use YOUR 'remember_agent' tool for any request that involves remembering, storing, or registering an agent URL.
+1. Agent Connection:
+   - If the request is to *remember* or *discover* an agent by URL (e.g., "remember agent at http://..."), use the 'remember_agent' TOOL.
+   - If the request is to *connect* to an already known/remembered agent or a new URL, use the 'connect_agent' AGENT_ACTION.
+2. Agent Disconnection: If the request is to disconnect, use the 'disconnect_agent' AGENT_ACTION.
+3. Session Management: If the request is to start a new session, use the 'create_session' AGENT_ACTION.
+4. Listing Servers/Card: If the request is to list known servers or show your agent card, use the 'list_servers' or 'show_agent_card' TOOLS respectively.
+5. Other Tools: For other functionalities, select the appropriate TOOL from YOUR AVAILABLE LOCAL TOOLS.
+6. Fallback: If unsure, or if it's a general query, use the 'llm' TOOL.
 
 Do not add any explanations or text outside the JSON object."#,
                         current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
