@@ -1115,7 +1115,7 @@ Do not add any explanations or text outside the JSON object."#,
 
                 if let Some(history) = &task.history {
                     // Create prompt for the LLM asking it to decide if we can handle this ourselves
-                    let history_text = history
+                    let history_text_for_prompt = history // Renamed to avoid confusion with the unused history_text at outer scope
                         .iter()
                         .map(|msg| {
                             let role_str = match msg.role {
@@ -1187,7 +1187,7 @@ Respond with a JSON object matching this schema:
   "required": ["decision_type"]
 }}
 Do not add any explanations or text outside the JSON object."#,
-                            memory_text, history_text, status_message, follow_up_text
+                            memory_text, history_text_for_prompt, status_message, follow_up_text
                         )
                     } else {
                         format!(
@@ -1217,7 +1217,7 @@ Respond with a JSON object matching this schema:
   "required": ["decision_type"]
 }}
 Do not add any explanations or text outside the JSON object."#,
-                            history_text, status_message, follow_up_text
+                            history_text_for_prompt, status_message, follow_up_text
                         )
                     };
 
