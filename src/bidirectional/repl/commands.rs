@@ -398,7 +398,7 @@ pub(super) async fn handle_cancel_task(
 
 /// Handles the ':tool NAME [PARAMS]' REPL command logic.
 #[instrument(skip(agent, tool_name, params_str), fields(agent_id = %agent.agent_id))]
-pub(super) async fn handle_tool_command(
+pub(super) async fn handle_tool_command( // This remains as it's a direct tool invocation
     agent: &BidirectionalAgent,
     tool_name: &str,
     params_str: &str,
