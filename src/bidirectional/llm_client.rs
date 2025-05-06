@@ -154,7 +154,8 @@ impl GeminiLlmClient {
             model_id,
             api_endpoint,
             system_prompt,
-        }
+    }
+    
     /// Removes fields from a JSON schema that are incompatible with the Gemini API
     fn clean_schema_for_gemini(&self, schema: &Value) -> Value {
         let mut cleaned_schema = schema.clone();
