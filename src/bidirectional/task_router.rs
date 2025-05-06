@@ -98,10 +98,10 @@ impl BidirectionalTaskRouter {
                         let content = message
                             .parts
                             .iter()
-                            .filter_map(|part| match part {
-                                Part::TextPart(tp) => Some(tp.text.as_str()),
-                                Part::FilePart(_) => Some("[File Content]"),
-                                Part::DataPart(_) => Some("[Structured Data]"),
+                            .map(|part| match part {
+                                Part::TextPart(tp) => tp.text.as_str(),
+                                Part::FilePart(_) => "[File Content]",
+                                Part::DataPart(_) => "[Structured Data]",
                             })
                             .collect::<Vec<_>>()
                             .join(" ");
@@ -1251,9 +1251,19 @@ Do not add any explanations or text outside the JSON object."#,
                                 params: json!({"text": follow_up_text}),
                             });
                         }
-                        Some("NEED_HUMAN_INPUT") | _ => {
-                            // Default to human input
-                            info!("LLM decided to request human input for the task (or decision was unclear).");
+                        Some("NEED_HUMAN_INPUT") => {
+                            info!("LLM decided to request human input for the task.");
+                            return Ok(RoutingDecision::Local {
+                                tool_name: "human_input".to_string(),
+                                params: json!({
+                                    "text": follow_up_text,
+                                    "require_human_input": true,
+                                    "prompt": status_message
+                                }),
+                            });
+                        }
+                        _ => { // Catches None or any other unexpected string value
+                            info!("LLM decision for follow-up was unclear. Defaulting to human input.");
                             return Ok(RoutingDecision::Local {
                                 tool_name: "human_input".to_string(),
                                 params: json!({

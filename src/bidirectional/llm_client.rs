@@ -221,7 +221,7 @@ impl LlmClient for GeminiLlmClient {
                 "role": "user",
                 "parts": [{"text": system_instruction}]
             }));
-            contents.push(json!({ 
+            contents.push(json!({
                 "role": "model",
                 "parts": [{"text": "Understood. I will respond according to the provided schema and instructions."}]
             }));

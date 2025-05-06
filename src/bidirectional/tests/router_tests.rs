@@ -6,7 +6,7 @@ use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision};
 use crate::types::{
     AgentCapabilities, AgentCard, AgentSkill, Message, Part, Role, Task, TaskSendParams, TaskState,
-    TaskStatus, TextPart,
+    TaskStatus, TextPart, Value,
 };
 use chrono::Utc;
 use serde_json::json; // Import json macro
@@ -317,33 +317,6 @@ fn create_test_task(message_text: &str) -> Task {
         artifacts: None,
         metadata: None,
         session_id: None,
-    }
-}
-
-// Add helper to convert Task to TaskSendParams for router input
-impl Task {
-    pub fn into_send_params(self) -> TaskSendParams {
-        TaskSendParams {
-            id: self.id,
-            message: self
-                .history
-                .unwrap_or_default()
-                .last()
-                .cloned()
-                .unwrap_or_else(|| Message {
-                    role: Role::User,
-                    parts: vec![Part::TextPart(TextPart {
-                        type_: "text".to_string(),
-                        text: "".to_string(),
-                        metadata: None,
-                    })],
-                    metadata: None,
-                }), // Use last history message or empty
-            session_id: self.session_id,
-            metadata: self.metadata,
-            history_length: None,    // Not relevant for sending
-            push_notification: None, // Not relevant for sending
-        }
     }
 }
 
