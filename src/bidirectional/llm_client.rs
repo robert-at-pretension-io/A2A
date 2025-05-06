@@ -178,8 +178,15 @@ impl LlmClient for GeminiLlmClient {
         system_prompt_override: Option<&str>,
     ) -> Result<String> {
         debug!("Sending request to Gemini LLM for text completion.");
-        // For text completion, we use complete_structured with a simple text schema.
-        let schema = json!({
+        
+        // Modify the prompt to ask for the specific JSON structure, as the schema is no longer sent to the API.
+        let structured_prompt = format!(
+            "Please provide a text response to the following: \"{}\". Format your entire response as a single JSON object with a single key \"response\" whose value is your text response. For example: {{\"response\": \"Your text response here.\"}}",
+            prompt_text
+        );
+
+        // This schema defines what we expect to parse locally, but it's not sent to the Gemini API.
+        let expected_schema_for_parsing = json!({
             "type": "object",
             "properties": {
                 "response": {
@@ -190,13 +197,16 @@ impl LlmClient for GeminiLlmClient {
         });
 
         let structured_response = self
-            .complete_structured(prompt_text, system_prompt_override, schema)
+            .complete_structured(&structured_prompt, system_prompt_override, expected_schema_for_parsing)
             .await?;
 
         structured_response.get("response")
             .and_then(Value::as_str)
             .map(String::from)
-            .ok_or_else(|| anyhow!("Gemini structured response for text completion did not contain a 'response' string field."))
+            .ok_or_else(|| {
+                error!(?structured_response, "Gemini structured response for text completion did not contain a 'response' string field or it was not a string.");
+                anyhow!("Gemini structured response for text completion did not contain a 'response' string field or it was not a string.")
+            })
     }
 
     #[instrument(skip(self, _output_schema), fields(prompt_len = prompt_text.len(), system_prompt_override = ?system_prompt_override))]
