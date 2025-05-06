@@ -695,90 +695,112 @@ Based on the full CONVERSATION HISTORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE A
 
 3. Reject the task ONLY if it's inappropriate, harmful, impossible, OR if it's an internal command that cannot be handled by the 'execute_command' tool (e.g., ':listen', ':stop', ':quit'). Provide a brief explanation for rejection.
 
-Your response should be exactly one of those formats (LOCAL, REMOTE: agent-id, or REJECT: reason), with no additional text."#,
+Your response should be a JSON object matching this schema:
+{{
+  "type": "object",
+  "properties": {{
+    "decision_type": {{ "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] }},
+    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. Must be an exact ID from AVAILABLE REMOTE AGENTS." }},
+    "reason": {{ "type": "string", "description": "Required if decision_type is REJECT. A brief explanation." }}
+  }},
+  "required": ["decision_type"]
+}}
+Do not add any explanations or text outside the JSON object."#,
+                local_tools_desc, remote_agents_desc, memory_text, history_text
+            )
+        } else {
+            format!(
+r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
+
+YOUR LOCAL TOOLS:
+{}
+
+AVAILABLE REMOTE AGENTS:
+{}
+
+CONVERSATION HISTORY (User/Agent turns):
+{}
+
+Based on the full CONVERSATION HISTORY, YOUR LOCAL TOOLS, and AVAILABLE REMOTE AGENTS, decide the best course of action for the *latest* user request.
+
+Your response should be a JSON object matching this schema:
+{{
+  "type": "object",
+  "properties": {{
+    "decision_type": {{ "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] }},
+    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. Must be an exact ID from AVAILABLE REMOTE AGENTS." }},
+    "reason": {{ "type": "string", "description": "Required if decision_type is REJECT. A brief explanation." }}
+  }},
+  "required": ["decision_type"]
+}}
+Do not add any explanations or text outside the JSON object."#,
                 local_tools_desc, remote_agents_desc, history_text
             )
         };
+
+        let schema_dp2 = json!({
+            "type": "object",
+            "properties": {
+                "decision_type": { "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] },
+                "agent_id": { "type": "string" },
+                "reason": { "type": "string" }
+            },
+            "required": ["decision_type"]
+        });
         
         trace!(prompt = %routing_prompt, "DP2: Routing prompt.");
 
         info!("DP2: Requesting routing decision from LLM.");
-        let decision_result = self.llm.complete(&routing_prompt).await;
-        let decision = match decision_result {
-            Ok(d) => d.trim().to_string(),
+        let structured_decision = self.llm.complete_structured(&routing_prompt, None, schema_dp2).await;
+        
+        let decision_val = match structured_decision {
+            Ok(val) => val,
             Err(e) => {
-                error!(error = %e, "DP2: LLM routing decision failed. Falling back to local 'llm'.");
+                error!(error = %e, "DP2: LLM structured routing decision failed. Falling back to local 'llm'.");
                 return Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) });
             }
         };
         
-        info!(llm_response = %decision, "DP2: LLM routing decision response received.");
+        info!(?decision_val, "DP2: LLM structured routing decision response received.");
 
         // --- Parse DP2 Decision ---
-        if decision.starts_with("LOCAL") {
-            // --- DP3: Choose Local Tool & Parameters ---
-            info!("DP2 decided LOCAL. Proceeding to DP3 (Tool Selection).");
-            let local_tools_with_params_desc = self.format_tools(true); // Include param hints
-            
-            // Use memory context in the tool parameter prompt if available
-            let tool_param_prompt = if has_memory {
-                // With memory context
-                format!(
+        match decision_val.get("decision_type").and_then(Value::as_str) {
+            Some("LOCAL") => {
+                // --- DP3: Choose Local Tool & Parameters ---
+                info!("DP2 decided LOCAL. Proceeding to DP3 (Tool Selection).");
+                let local_tools_with_params_desc = self.format_tools(true); // Include param hints
+                
+                let tool_param_prompt = if has_memory {
+                    format!(
 r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
 {}
 
 AGENT MEMORY OF PREVIOUS OUTGOING REQUESTS:
 {}
 
-Based on the CONVERSATION HISTORY (especially the latest request), AGENT MEMORY of previous requests, and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
+Based on the CONVERSATION HISTORY (especially the latest request), AGENT MEMORY, and the AVAILABLE LOCAL TOOLS listed below, choose the SINGLE most appropriate tool and extract its required parameters.
 
 AVAILABLE LOCAL TOOLS:
 {}
 
-!! CRITICAL FORMATTING INSTRUCTION !!
-DO NOT include any explanations, reasoning, or text before or after your JSON.
-Your ENTIRE response must consist ONLY of a valid JSON object and NOTHING else.
-DO NOT wrap the JSON in markdown code blocks or quotes.
-
-RESPOND EXACTLY AND ONLY with this JSON structure:
+Respond with a JSON object matching this schema:
 {{
-  "tool_name": "<chosen_tool_name>",
-  "params": {{ <parameters_object> }}
+  "type": "object",
+  "properties": {{
+    "tool_name": {{ "type": "string", "description": "The name of the chosen tool." }},
+    "params": {{ "type": "object", "description": "A JSON object containing parameters for the tool. Can be empty {{}} if no params needed." }}
+  }},
+  "required": ["tool_name", "params"]
 }}
-
 CRITICAL INSTRUCTIONS:
-
-1. For agent connection tasks:
-   - If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), you MUST FIRST use the 'remember_agent' tool
-   - The remember_agent tool will store the agent in the registry, making it available for future delegation
-   - This step is essential before attempting to connect using execute_command
-
-2. For internal commands:
-   - If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), use the 'execute_command' tool
-   - Extract the command name and arguments into the 'params' object (e.g., {{"command": "connect", "args": "http://..."}}). 
-   - Do NOT select the 'llm' tool for these internal commands.
-
-3. For agent management:
-   - ALWAYS use 'remember_agent' for any request that involves remembering, storing, or registering an agent URL
-   - This is critical for proper agent delegation functionality in the future
-
-Examples:
-- For a task like "connect to agent at http://foo.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://foo.com"}}}}
-- For a task like "remember agent at http://foo.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://foo.com"}}}}
-- For a task like "list known agents simply": {{"tool_name": "list_agents", "params": {{"format": "simple"}}}}
-- For a task like "echo hello": {{"tool_name": "echo", "params": {{"text": "hello"}}}}
-- For a task like "connect to http://bar.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://bar.com"}}}}
-- For a task like "list servers": {{"tool_name": "execute_command", "params": {{"command": "servers", "args": ""}}}}
-- For a task like "start a new session": {{"tool_name": "execute_command", "params": {{"command": "session", "args": "new"}}}}
-- For a task like "list known agents": {{"tool_name": "list_agents", "params": {{}}}}
-- For a general question: {{"tool_name": "llm", "params": {{"text": "original question text..."}}}}
-
-Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
-                    history_text, memory_text, local_tools_with_params_desc
-                )
-            } else {
-                // Without memory context
-                format!(
+1. For agent connection tasks: If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), you MUST FIRST use the 'remember_agent' tool.
+2. For internal commands: If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), use the 'execute_command' tool.
+3. For agent management: ALWAYS use 'remember_agent' for any request that involves remembering, storing, or registering an agent URL.
+Do not add any explanations or text outside the JSON object."#,
+                        history_text, memory_text, local_tools_with_params_desc
+                    )
+                } else {
+                    format!(
 r#"You have decided to handle the latest request in the following CONVERSATION HISTORY locally:
 {}
 
@@ -787,161 +809,111 @@ Based on the CONVERSATION HISTORY (especially the latest request) and the AVAILA
 AVAILABLE LOCAL TOOLS:
 {}
 
-!! CRITICAL FORMATTING INSTRUCTION !!
-DO NOT include any explanations, reasoning, or text before or after your JSON.
-Your ENTIRE response must consist ONLY of a valid JSON object and NOTHING else.
-DO NOT wrap the JSON in markdown code blocks or quotes.
-
-RESPOND EXACTLY AND ONLY with this JSON structure:
+Respond with a JSON object matching this schema:
 {{
-  "tool_name": "<chosen_tool_name>",
-  "params": {{ <parameters_object> }}
+  "type": "object",
+  "properties": {{
+    "tool_name": {{ "type": "string", "description": "The name of the chosen tool." }},
+    "params": {{ "type": "object", "description": "A JSON object containing parameters for the tool. Can be empty {{}} if no params needed." }}
+  }},
+  "required": ["tool_name", "params"]
 }}
-
 CRITICAL INSTRUCTIONS:
+1. For agent connection tasks: If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), you MUST FIRST use the 'remember_agent' tool.
+2. For internal commands: If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), use the 'execute_command' tool.
+3. For agent management: ALWAYS use 'remember_agent' for any request that involves remembering, storing, or registering an agent URL.
+Do not add any explanations or text outside the JSON object."#,
+                        history_text, local_tools_with_params_desc
+                    )
+                };
 
-1. For agent connection tasks:
-   - If the request mentions an agent URL (e.g., "connect to agent at http://localhost:4202"), you MUST FIRST use the 'remember_agent' tool
-   - The remember_agent tool will store the agent in the registry, making it available for future delegation
-   - This step is essential before attempting to connect using execute_command
+                let schema_dp3 = json!({
+                    "type": "object",
+                    "properties": {
+                        "tool_name": { "type": "string" },
+                        "params": { "type": "object" }
+                    },
+                    "required": ["tool_name", "params"]
+                });
+                trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
 
-2. For internal commands:
-   - If the original TASK was a request to perform an internal agent action (like connecting, listing servers, managing sessions), use the 'execute_command' tool
-   - Extract the command name and arguments into the 'params' object (e.g., {{"command": "connect", "args": "http://..."}}). 
-   - Do NOT select the 'llm' tool for these internal commands.
+                info!("DP3: Asking LLM to choose tool and extract parameters.");
+                let tool_param_structured_result = self.llm.complete_structured(&tool_param_prompt, None, schema_dp3).await;
 
-3. For agent management:
-   - ALWAYS use 'remember_agent' for any request that involves remembering, storing, or registering an agent URL
-   - This is critical for proper agent delegation functionality in the future
-
-Examples:
-- For a task like "connect to agent at http://foo.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://foo.com"}}}}
-- For a task like "remember agent at http://foo.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://foo.com"}}}}
-- For a task like "list known agents simply": {{"tool_name": "list_agents", "params": {{"format": "simple"}}}}
-- For a task like "echo hello": {{"tool_name": "echo", "params": {{"text": "hello"}}}}
-- For a task like "connect to http://bar.com": {{"tool_name": "remember_agent", "params": {{"agent_base_url": "http://bar.com"}}}}
-- For a task like "list servers": {{"tool_name": "execute_command", "params": {{"command": "servers", "args": ""}}}}
-- For a task like "start a new session": {{"tool_name": "execute_command", "params": {{"command": "session", "args": "new"}}}}
-- For a task like "list known agents": {{"tool_name": "list_agents", "params": {{}}}}
-- For a general question: {{"tool_name": "llm", "params": {{"text": "original question text..."}}}}
-
-Ensure the 'params' value is always a JSON object (even if empty: {{}})."#,
-                    history_text, local_tools_with_params_desc
-                )
-            };
-            trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
-
-            info!("DP3: Asking LLM to choose tool and extract parameters.");
-            let tool_param_result = self.llm.complete(&tool_param_prompt).await;
-
-            match tool_param_result {
-                Ok(json_str_raw) => {
-                    let json_str = json_str_raw.trim();
-                    trace!(raw_json = %json_str_raw, trimmed_json = %json_str, "DP3: Received tool/param JSON string from LLM.");
-                    
-                    // Extract JSON to handle LLM responses with text before/after JSON
-                    let extracted_json = extract_json_from_text(json_str);
-                    trace!(extracted_json = %extracted_json, "DP3: Extracted JSON from LLM response.");
-                    
-                    match serde_json::from_str::<Value>(&extracted_json) {
-                        Ok(json_value) => {
-                            if let (Some(tool_name), Some(params)) = (
-                                json_value.get("tool_name").and_then(Value::as_str),
-                                json_value.get("params").cloned()
-                            ) {
-                                if self.enabled_tools.contains(&tool_name.to_string()) {
-                                    info!(tool_name = %tool_name, ?params, "DP3: Successfully parsed tool and params.");
-                                    
-                                    // Remember_agent now connects automatically, but still provide helpful context
-                                    if tool_name == "remember_agent" {
-                                        // Extract the URL from remember_agent parameters for logging
-                                        if let Some(url) = params.get("agent_base_url").and_then(|u| u.as_str()) {
-                                            debug!(url = %url, "Processing remember_agent which will automatically connect as well.");
-                                        } else {
-                                            // Special handling for vague "remember" requests - try to extract URL from history
-                                            debug!("remember_agent doesn't have valid URL parameter, will try to extract from history");
-                                            let extracted_url = self.extract_url_from_history(&history_text);
-                                            
-                                            if let Some(url) = extracted_url {
-                                                debug!(extracted_url = %url, "Found URL in conversation history for remember_agent");
-                                                // Create new params with the extracted URL
-                                                let enhanced_params = json!({
-                                                    "agent_base_url": url
-                                                });
-                                                return Ok(RoutingDecision::Local { 
-                                                    tool_name: tool_name.to_string(), 
-                                                    params: enhanced_params 
-                                                });
-                                            } else {
-                                                debug!("No URL found in history for remember_agent, proceeding with original params");
-                                            }
+                match tool_param_structured_result {
+                    Ok(json_value) => {
+                        trace!(?json_value, "DP3: Received tool/param JSON from LLM.");
+                        if let (Some(tool_name), Some(params)) = (
+                            json_value.get("tool_name").and_then(Value::as_str),
+                            json_value.get("params").cloned() // Cloned as it's a Value
+                        ) {
+                            if self.enabled_tools.contains(&tool_name.to_string()) {
+                                info!(tool_name = %tool_name, ?params, "DP3: Successfully parsed tool and params.");
+                                if tool_name == "remember_agent" {
+                                    if params.get("agent_base_url").and_then(Value::as_str).is_none() {
+                                        debug!("remember_agent chosen but no URL in params, trying to extract from history.");
+                                        if let Some(url) = self.extract_url_from_history(&history_text) {
+                                            debug!(extracted_url = %url, "Found URL in history for remember_agent.");
+                                            let enhanced_params = json!({"agent_base_url": url});
+                                            return Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params: enhanced_params });
                                         }
-                                        
-                                        // We process the tool normally since it now handles both remembering and connecting
-                                        Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params })
-                                    } else {
-                                        // For all other tools, proceed normally
-                                        Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params })
                                     }
-                                } else {
-                                    warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm'.");
-                                    Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                                 }
+                                Ok(RoutingDecision::Local { tool_name: tool_name.to_string(), params })
                             } else {
-                                warn!(json_response = %extracted_json, original_response = %json_str, "DP3: LLM JSON missing 'tool_name' or 'params'. Falling back to 'llm'.");
+                                warn!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm'.");
                                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                             }
-                        },
-                        Err(e) => {
-                            warn!(error = %e, json_response = %extracted_json, original_response = %json_str, "DP3: LLM returned invalid JSON for tool/params. Falling back to 'llm'.");
+                        } else {
+                            warn!(?json_value, "DP3: LLM JSON missing 'tool_name' or 'params'. Falling back to 'llm'.");
                             Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                         }
+                    },
+                    Err(e) => {
+                        warn!(error = %e, "DP3: LLM failed to choose tool/extract params. Falling back to 'llm'.");
+                        Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                     }
-                },
-                Err(e) => {
-                    warn!(error = %e, "DP3: LLM failed to choose tool/extract params. Falling back to 'llm'.");
+                }
+            },
+            Some("REMOTE") => {
+                if let Some(agent_id) = decision_val.get("agent_id").and_then(Value::as_str) {
+                    info!(remote_agent_id = %agent_id, "DP2 decided REMOTE execution.");
+                    // Exact agent ID matching logic (as before)
+                    let mut actual_agent_id = None;
+                    if self.agent_registry.get(agent_id).is_some() {
+                        actual_agent_id = Some(agent_id.to_string());
+                    } else {
+                        let known_agents = self.agent_registry.list_all_agents();
+                        for (known_id, _) in known_agents {
+                            if known_id.to_lowercase().contains(&agent_id.to_lowercase()) || 
+                               agent_id.to_lowercase().contains(&known_id.to_lowercase()) {
+                                info!(requested_agent = %agent_id, matched_agent = %known_id, "Found partial match for agent name");
+                                actual_agent_id = Some(known_id);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(actual_id) = actual_agent_id {
+                        info!(remote_agent_id = %actual_id, "DP2: Remote delegation confirmed.");
+                        Ok(RoutingDecision::Remote { agent_id: actual_id })
+                    } else {
+                        warn!(remote_agent_id = %agent_id, "DP2: LLM delegated to unknown agent. Falling back to local 'llm'.");
+                        Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
+                    }
+                } else {
+                    warn!(?decision_val, "DP2: REMOTE decision missing 'agent_id'. Falling back to local 'llm'.");
                     Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
                 }
-            }
-        } else if decision.starts_with("REMOTE: ") {
-            let agent_id = decision.strip_prefix("REMOTE: ").unwrap().trim().to_string();
-            info!(remote_agent_id = %agent_id, "DP2 decided REMOTE execution.");
-            
-            // Get the exact agent ID by attempting partial matching
-            let mut actual_agent_id = None;
-            
-            // First try exact match
-            if self.agent_registry.get(&agent_id).is_some() {
-                actual_agent_id = Some(agent_id.clone());
-            } else {
-                // If no exact match, try to find an agent whose name contains the requested agent ID
-                let known_agents = self.agent_registry.list_all_agents();
-                for (known_id, _) in known_agents {
-                    // Case-insensitive contains check
-                    if known_id.to_lowercase().contains(&agent_id.to_lowercase()) || 
-                       agent_id.to_lowercase().contains(&known_id.to_lowercase()) {
-                        info!(requested_agent = %agent_id, matched_agent = %known_id, 
-                             "Found partial match for agent name");
-                        actual_agent_id = Some(known_id);
-                        break;
-                    }
-                }
-            }
-            
-            if let Some(actual_id) = actual_agent_id {
-                info!(remote_agent_id = %actual_id, "DP2: Remote delegation confirmed.");
-                Ok(RoutingDecision::Remote { agent_id: actual_id })
-            } else {
-                warn!(remote_agent_id = %agent_id, "DP2: LLM delegated to unknown agent. Falling back to local 'llm'.");
+            },
+            Some("REJECT") => {
+                let reason = decision_val.get("reason").and_then(Value::as_str).unwrap_or("No reason provided.").to_string();
+                info!(%reason, "DP2 decided REJECT.");
+                Ok(RoutingDecision::Reject { reason })
+            },
+            _ => {
+                warn!(?decision_val, "DP2: LLM routing decision_type unclear or missing. Falling back to local 'llm'.");
                 Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
             }
-        } else if decision.starts_with("REJECT: ") {
-            let reason = decision.strip_prefix("REJECT: ").unwrap().trim().to_string();
-            info!(reason = %reason, "DP2 decided REJECT.");
-            Ok(RoutingDecision::Reject { reason })
-        } else {
-            warn!(llm_decision = %decision, "DP2: LLM routing decision unclear. Falling back to local 'llm'.");
-            Ok(RoutingDecision::Local { tool_name: "llm".to_string(), params: json!({"text": history_text}) })
         }
     }
     
