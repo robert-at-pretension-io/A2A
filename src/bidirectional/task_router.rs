@@ -985,7 +985,7 @@ Do not add any explanations or text outside the JSON object."#,
                     "type": "object",
                     "properties": {
                         "tool_name": { "type": "string" },
-                        "params": { "type": "object" }
+                        "params": { "type": "object", "additionalProperties": true }
                     },
                     "required": ["tool_name", "params"]
                 });
