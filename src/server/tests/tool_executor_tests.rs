@@ -285,10 +285,11 @@ async fn test_tool_executor_with_list_agents() {
 
     // Create tool executor with list_agents enabled, passing the registry
     let executor = ToolExecutor::with_enabled_tools(
-        &["echo".to_string(), "list_agents".to_string()],
-        Some(llm),
-        Some(registry), // Pass the registry
-        None,
+        &["echo".to_string(), "list_agents".to_string()], // tool_list
+        false, // is_exclusion_list (false means tool_list is an inclusion list)
+        Some(llm), // llm
+        Some(registry), // agent_registry
+        None, // known_servers
         "test-agent", // agent_id
         "Test Agent", // agent_name
         "1.0.0",      // agent_version
