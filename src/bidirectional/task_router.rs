@@ -736,7 +736,7 @@ Your response should be a JSON object matching this schema:
 Do not add any explanations or text outside the JSON object."#,
                 local_tools_desc, remote_agents_desc, history_text
             )
-        };
+        }); // Close parenthesis for the if-else expression
 
         let schema_dp2 = json!({
             "type": "object",

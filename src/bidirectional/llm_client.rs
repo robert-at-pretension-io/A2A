@@ -138,7 +138,7 @@ impl GeminiLlmClient {
 
 #[async_trait]
 impl LlmClient for GeminiLlmClient {
-    #[instrument(skip(self, prompt_text, system_prompt_override), fields(prompt_len = prompt_text.len()))]
+    #[instrument(skip(self, system_prompt_override), fields(prompt_len = prompt_text.len()))]
     async fn complete(&self, prompt_text: &str, system_prompt_override: Option<&str>) -> Result<String> {
         debug!("Sending request to Gemini LLM for text completion.");
         // For text completion, we use complete_structured with a simple text schema.
