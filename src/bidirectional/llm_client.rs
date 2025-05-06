@@ -160,7 +160,7 @@ impl LlmClient for GeminiLlmClient {
             .ok_or_else(|| anyhow!("Gemini structured response for text completion did not contain a 'response' string field."))
     }
 
-    #[instrument(skip(self, prompt_text, system_prompt_override, output_schema), fields(prompt_len = prompt_text.len()))]
+    #[instrument(skip(self, system_prompt_override, output_schema), fields(prompt_len = prompt_text.len()))]
     async fn complete_structured(
         &self,
         prompt_text: &str,

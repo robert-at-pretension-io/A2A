@@ -637,7 +637,7 @@ Produce a JSON array where each element is an object matching this schema:
         let remote_agents_desc = self.format_agents();
         
         // Build the routing prompt with memory context if available
-        let routing_prompt = if has_memory {
+        let routing_prompt = (if has_memory {
             format!(
 r#"You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely.
 

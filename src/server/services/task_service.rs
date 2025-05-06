@@ -243,7 +243,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                             );
                             trace!(prompt = %rewrite_prompt, "Sending rewrite prompt to LLM.");
 
-                            match llm.complete(&rewrite_prompt).await {
+                            match llm.complete(&rewrite_prompt, None).await {
                                 Ok(rewritten_text) => {
                                     debug!("Successfully rewrote message for delegation."); // Changed to debug
                                     trace!(rewritten_text = %rewritten_text, "Rewritten message content.");
@@ -566,7 +566,7 @@ Respond ONLY with the rewritten message text, suitable for sending directly to A
                                                      Respond ONLY with the rewritten message text, suitable for sending directly to Agent '{agent_id}'."#
                                                  );
                                                  
-                                                 match llm.complete(&rewrite_prompt).await {
+                                                 match llm.complete(&rewrite_prompt, None).await {
                                                      Ok(rewritten_text) => {
                                                          debug!("Successfully rewrote follow-up message for delegation.");
                                                          trace!(rewritten_text = %rewritten_text, "Rewritten follow-up message content.");

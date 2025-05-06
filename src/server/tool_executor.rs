@@ -219,7 +219,7 @@ impl Tool for LlmTool {
             return Err(ToolError::InvalidParams("llm".to_string(), "'text' parameter cannot be empty".to_string()));
         }
         // Use ? to propagate anyhow::Error, which will be converted by From<anyhow::Error> for ToolError
-        let result = self.llm.complete(prompt).await?;
+        let result = self.llm.complete(prompt, None).await?;
         Ok(json!(result))
     }
     fn capabilities(&self) -> &[&'static str] { &["llm", "chat", "general_purpose"] }
@@ -240,7 +240,7 @@ impl Tool for SummarizeTool {
         }
         let prompt = format!("Briefly summarize the following text:\n\n{}", text);
         // Use ? to propagate anyhow::Error
-        let result = self.llm.complete(&prompt).await?;
+        let result = self.llm.complete(&prompt, None).await?;
         Ok(json!(result))
     }
     fn capabilities(&self) -> &[&'static str] { &["summarize", "text_manipulation"] }
