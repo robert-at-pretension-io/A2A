@@ -89,6 +89,14 @@ pub enum RoutingDecision {
         /// The question to ask the user for clarification
         question: String,
     },
+
+    /// Perform an internal agent action (e.g., connect, disconnect)
+    AgentAction {
+        /// Name of the action to perform (e.g., "connect_agent")
+        action: String,
+        /// JSON parameters for the action
+        params: Value,
+    },
 }
 
 /// Trait for task routers that use LLM capabilities

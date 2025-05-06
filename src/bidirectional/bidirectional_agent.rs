@@ -426,42 +426,6 @@ impl BidirectionalAgent {
         debug!("Processing message locally.");
         trace!(message = %message_text, "Message content.");
 
-        // --- Command Interception ---
-        let trimmed_text = message_text.trim();
-        let (command, args) = match trimmed_text.split_once(' ') {
-            Some((cmd, arguments)) => (cmd.to_lowercase(), arguments.trim()),
-            None => (trimmed_text.to_lowercase(), ""),
-        };
-
-        // Check if the input matches a known command keyword
-        // Note: :listen and :stop are excluded here as they need direct access to run_repl state
-        let is_command = [
-            "help", "card", "servers", "connect", "disconnect", "remote",
-            "session", "history", "tasks", "task", "artifacts", "cancelTask", "tool"
-        ].contains(&command.as_str())
-        // Special case for session commands
-        || (command == "session" && ["new", "show"].contains(&args));
-
-        if is_command {
-            info!(command = %command, args_len = args.len(), "Input matches command keyword. Handling directly.");
-            // Call the central command handler from the repl module
-            // We need to pass the *original* arguments string, not the potentially empty one
-            let full_args = if command == trimmed_text.to_lowercase() {
-                ""
-            } else {
-                trimmed_text.split_once(' ').map_or("", |(_, a)| a)
-            };
-            // Call the function directly, passing the mutable agent reference
-            return crate::bidirectional::repl::commands::handle_repl_command(
-                self, &command, full_args,
-            )
-            .await;
-        }
-        // --- End Command Interception ---
-
-        // --- Original Logic (if not intercepted as a command) ---
-        debug!("Input does not match command keyword. Proceeding with standard task processing.");
-
         // Ensure we have an active session before processing
         debug!("Ensuring session exists before processing message.");
         agent_helpers::ensure_session(self).await; // Call helper function
@@ -584,41 +548,82 @@ impl BidirectionalAgent {
         }
 
         // Use task_service to process the task
-        // Instrument the call to task_service
-        let task_result = async { self.task_service.process_task(enhanced_params).await }
-            .instrument(tracing::info_span!("task_service_process", task_id = %task_id_clone))
-            .await;
+        // The task_service now contains the BidirectionalTaskRouter which will make the decision.
+        // If the decision is an AgentAction, the TaskService might handle it or it might
+        // be indicated in the task result for the agent to handle.
+        // For this iteration, we assume TaskService handles it or returns a task
+        // whose status/message reflects the action or tool execution.
 
-        let task = match task_result {
-            Ok(t) => {
-                debug!(task_id = %t.id, status = ?t.status.state, "Task processing completed by task_service."); // Changed to debug
-                t
-            }
-            Err(e) => {
-                error!(task_id = %task_id, error = %e, "Task processing failed.");
-                // Return the error to the REPL
-                return Err(anyhow!("Task processing failed: {}", e));
-            }
+        // Let's get the routing decision first to see if it's an AgentAction
+        // This is a temporary step. Ideally, TaskService.process_task would return this.
+        // We need a TaskRouter instance. The TaskService holds one.
+        // This is a bit of a hack to get the router.
+        let router = self.task_service.task_router.as_ref()
+            .ok_or_else(|| anyhow!("TaskRouter not available in TaskService for local processing"))?
+            .clone(); // Clone Arc
+
+        let temp_task_for_routing_decision = Task {
+            id: task_id.clone(),
+            status: TaskStatus { state: TaskState::Submitted, timestamp: Some(Utc::now()), message: None },
+            history: Some(vec![initial_message.clone()]),
+            artifacts: None,
+            metadata: enhanced_params.metadata.clone(), // Use metadata from enhanced_params
+            session_id: self.current_session_id.clone(),
         };
-        trace!(?task, "Resulting task object after processing.");
 
-        // Save task to history
-        debug!(task_id = %task.id, "Saving task to session history.");
-        agent_helpers::save_task_to_history(self, task.clone()).await?; // Call helper
+        // Get the routing decision
+        let routing_decision = router.decide(&enhanced_params).await?;
+        debug!(?routing_decision, "Routing decision made for local message.");
 
-        // Extract response from task
-        debug!(task_id = %task.id, "Extracting text response from task.");
-        let mut response = agent_helpers::extract_text_from_task(self, &task); // Call helper
-        trace!(response = %response, "Extracted response text.");
+        match routing_decision {
+            crate::server::task_router::RoutingDecision::AgentAction { action, params } => {
+                debug!(action_name = %action, "Handling AgentAction directly.");
+                match action.as_str() {
+                    "connect_agent" => self.handle_connect_action(params).await,
+                    "disconnect_agent" => self.handle_disconnect_action().await,
+                    "create_session" => self.handle_create_session_action(),
+                    _ => {
+                        error!("Unknown agent action: {}", action);
+                        Err(anyhow!("Unknown agent action: {}", action))
+                    }
+                }
+            }
+            _ => {
+                // If not an AgentAction, proceed with full task processing via TaskService
+                debug!("Decision is not an AgentAction, proceeding with full task processing via TaskService.");
+                let task_result = async { self.task_service.process_task(enhanced_params).await }
+                    .instrument(tracing::info_span!("task_service_process", task_id = %task_id_clone))
+                    .await;
 
-        // If the task is in InputRequired state, indicate that in the response
-        if task.status.state == TaskState::InputRequired {
-            debug!(task_id = %task.id, "Task requires more input. Appending message to response."); // Changed to debug
-            response.push_str("\n\n[The agent needs more information. Your next message will continue this task.]");
+                let task = match task_result {
+                    Ok(t) => {
+                        debug!(task_id = %t.id, status = ?t.status.state, "Task processing completed by task_service.");
+                        t
+                    }
+                    Err(e) => {
+                        error!(task_id = %task_id, error = %e, "Task processing failed.");
+                        return Err(anyhow!("Task processing failed: {}", e));
+                    }
+                };
+                trace!(?task, "Resulting task object after processing.");
+
+                // Save task to history
+                debug!(task_id = %task.id, "Saving task to session history.");
+                agent_helpers::save_task_to_history(self, task.clone()).await?;
+
+                // Extract response from task
+                debug!(task_id = %task.id, "Extracting text response from task.");
+                let mut response = agent_helpers::extract_text_from_task(self, &task);
+                trace!(response = %response, "Extracted response text.");
+
+                // If the task is in InputRequired state, indicate that in the response
+                if task.status.state == TaskState::InputRequired {
+                    debug!(task_id = %task.id, "Task requires more input. Appending message to response.");
+                    response.push_str("\n\n[The agent needs more information. Your next message will continue this task.]");
+                }
+                Ok(response)
+            }
         }
-
-        debug!(task_id = %task.id, "Local message processing complete. Returning response."); // Changed to debug
-        Ok(response) // Return the final response string
     }
 
     // REMOVED extract_text_from_task function
@@ -655,6 +660,85 @@ impl BidirectionalAgent {
     // No instrument macro needed here as it's synchronous and called from instrumented contexts.
     pub fn create_agent_card(&self) -> AgentCard {
         agent_helpers::create_agent_card(self)
+    }
+
+    // --- Agent Action Handlers ---
+    #[instrument(skip(self, params), fields(agent_id = %self.agent_id))]
+    async fn handle_connect_action(&mut self, params: Value) -> Result<String> {
+        debug!(?params, "Handling connect_agent action.");
+        let url = params.get("url").and_then(Value::as_str).ok_or_else(|| {
+            anyhow!("'url' parameter missing or not a string for connect_agent action")
+        })?;
+
+        // Logic moved from repl/commands.rs handle_connect (URL part)
+        let client = A2aClient::new(url);
+        match client.get_agent_card().await {
+            Ok(card) => {
+                let remote_agent_name = card.name.clone();
+                info!(remote_agent_name = %remote_agent_name, %url, "Successfully connected to agent via action.");
+                let success_msg =
+                    format!("✅ Successfully connected to agent: {}", remote_agent_name);
+
+                self.known_servers.insert(url.to_string(), remote_agent_name.clone());
+                self.client = Some(client);
+                self.client_config.target_url = Some(url.to_string());
+
+
+                // Update registry in background
+                let registry_clone = self.agent_registry.clone();
+                let url_clone = url.to_string();
+                let known_servers_clone = self.known_servers.clone();
+                let remote_agent_name_clone = remote_agent_name.clone();
+                tokio::spawn(async move {
+                    match registry_clone.discover(&url_clone).await {
+                        Ok(discovered_agent_id) => {
+                            debug!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connect action.");
+                            if discovered_agent_id != remote_agent_name_clone {
+                                debug!(url = %url_clone, old_name = %remote_agent_name_clone, new_id = %discovered_agent_id, "Updating known_servers with discovered ID.");
+                                known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connect action.");
+                        }
+                    }
+                });
+                Ok(success_msg)
+            }
+            Err(e) => {
+                error!(%url, error = %e, "Failed to connect to agent via action.");
+                if !self.known_servers.contains_key(url) {
+                    self.known_servers.insert(url.to_string(), "Unknown Agent".to_string());
+                    info!(%url, "Added URL to known servers as 'Unknown Agent' after failed connect action.");
+                }
+                Err(anyhow!("Failed to connect to agent at {}: {}. Please check the server is running and the URL is correct.", url, e))
+            }
+        }
+    }
+
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    async fn handle_disconnect_action(&mut self) -> Result<String> {
+        debug!("Handling disconnect_agent action.");
+        // Logic moved from repl/commands.rs handle_disconnect
+        if self.client.is_some() {
+            let url = agent_helpers::client_url(self).unwrap_or_else(|| "unknown".to_string());
+            self.client = None;
+            self.client_config.target_url = None;
+            info!(disconnected_from = %url, "Disconnected from remote agent via action.");
+            Ok(format!("🔌 Disconnected from {}", url))
+        } else {
+            debug!("Attempted disconnect action but not connected.");
+            Ok("⚠️ Not connected to any server".to_string())
+        }
+    }
+
+    #[instrument(skip(self), fields(agent_id = %self.agent_id))]
+    fn handle_create_session_action(&mut self) -> Result<String> {
+        debug!("Handling create_session action.");
+        // Logic moved from repl/commands.rs handle_new_session
+        let session_id = agent_helpers::create_new_session(self);
+        info!(%session_id, "Created new session via action.");
+        Ok(format!("✅ Created new session: {}", session_id))
     }
 }
 

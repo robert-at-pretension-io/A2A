@@ -310,11 +310,11 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
             debug!(command = %input_trimmed, "Processing REPL command.");
 
             let parts: Vec<&str> = input_trimmed.splitn(2, ' ').collect();
-            let command = parts[0].trim_start_matches(':').to_lowercase(); // Lowercase for matching
-            let args = parts.get(1).map(|s| s.trim()).unwrap_or("");
+            let command_keyword = parts[0].trim_start_matches(':').to_lowercase();
+            let args_str = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
             // Handle commands that need direct access to run_repl state (:listen, :stop, :quit)
-            if command == "quit" {
+            if command_keyword == "quit" {
                 info!("User initiated :quit command.");
                 println!("👋 Exiting REPL. Goodbye!");
                 if let Some(token) = server_shutdown_token.take() {
@@ -324,14 +324,14 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                     trace!("Server cancellation token cancelled.");
                 }
                 break; // Exit loop
-            } else if command == "listen" {
-                debug!(port_str = %args, "Processing :listen command directly in run_repl.");
+            } else if command_keyword == "listen" {
+                debug!(port_str = %args_str, "Processing :listen command directly in run_repl.");
                 if server_running {
                     warn!("Attempted to listen while server already running.");
                     println!("⚠️ Server already running. Stop it first with :stop");
                     continue;
                 }
-                match args.parse::<u16>() {
+                match args_str.parse::<u16>() {
                     Ok(port) => {
                         agent.port = port; // Update agent's port config
                         let token = CancellationToken::new();
@@ -419,11 +419,11 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                         }
                     }
                     Err(parse_err) => {
-                        error!(input = %args, error = %parse_err, "Invalid port format for :listen command.");
+                        error!(input = %args_str, error = %parse_err, "Invalid port format for :listen command.");
                         println!("❌ Error: Invalid port number. Please provide a valid port.");
                     }
                 }
-            } else if command == "stop" {
+            } else if command_keyword == "stop" {
                 debug!("Processing :stop command directly in run_repl.");
                 if let Some(token) = server_shutdown_token.take() {
                     // Take token from local variable
@@ -437,16 +437,43 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                     println!("⚠️ No server currently running or already stopped.");
                 }
             } else {
-                // Handle other commands via the central handler in commands module
-                match handle_repl_command(agent, &command, args).await {
-                    Ok(response) => println!("{}", response),
+                // For other colon-prefixed commands, rephrase and send to process_message_locally
+                let natural_language_input = match command_keyword.as_str() {
+                    "connect" => format!("connect to agent at {}", args_str),
+                    "disconnect" => "disconnect from current agent".to_string(),
+                    "servers" => "list known servers".to_string(),
+                    "card" => "show my agent card".to_string(),
+                    "session" if args_str == "new" => "create a new session".to_string(),
+                    "session" if args_str == "show" => "show current session id".to_string(),
+                    "remote" => format!("send to remote agent: {}", args_str),
+                    "tool" => format!("use tool {} with parameters {}", args_str.split_once(' ').map_or(args_str, |(n,_)| n), args_str.split_once(' ').map_or("{}", |(_,p)| p)),
+                    // For commands like :history, :tasks, :task, :artifacts, :cancelTask, :memory, :memoryTask, :help
+                    // we can pass them through the central handler for now, or rephrase them.
+                    // For simplicity, let's pass them to the central handler which might then rephrase or handle directly.
+                    _ => {
+                        // Fallback to central command handler for other commands
+                        match handle_repl_command(agent, &command_keyword, args_str).await {
+                            Ok(response) => {
+                                println!("{}", response);
+                                continue; // Skip process_message_locally for these
+                            }
+                            Err(e) => {
+                                println!("❌ Error: {}", e);
+                                continue; // Skip process_message_locally for these
+                            }
+                        }
+                    }
+                };
+                debug!(rephrased_input = %natural_language_input, "Rephrased REPL command for local processing.");
+                match agent.process_message_locally(&natural_language_input).await {
+                    Ok(response) => println!("\n🤖 Agent response:\n{}\n", response),
                     Err(e) => println!("❌ Error: {}", e),
                 }
             }
         } else {
             // Input does not start with ':'
-            // Process as local message (which now also checks for command keywords)
-            debug!(message = %input_trimmed, "Processing input as local message/command.");
+            // Process as local message
+            debug!(message = %input_trimmed, "Processing input as local message.");
             match agent.process_message_locally(input_trimmed).await {
                 Ok(response) => {
                     println!("\n🤖 Agent response:\n{}\n", response);

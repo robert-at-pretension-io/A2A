@@ -21,7 +21,7 @@ use crate::{
 
 /// Prints the REPL help message to the console.
 #[instrument(skip(agent), fields(agent_id = %agent.agent_id))]
-pub(super) fn print_repl_help(agent: &BidirectionalAgent) {
+pub fn print_repl_help(agent: &BidirectionalAgent) { // Made pub for run_repl
     // Note: agent isn't strictly needed here, but kept for consistency
     debug!("Printing REPL help message.");
     println!("\n========================================");
@@ -54,218 +54,11 @@ pub(super) fn print_repl_help(agent: &BidirectionalAgent) {
     println!("========================================\n");
 }
 
-/// Handles the ':connect' REPL command logic.
-#[instrument(skip(agent, target), fields(agent_id = %agent.agent_id))]
-pub(super) async fn handle_connect(agent: &mut BidirectionalAgent, target: &str) -> Result<String> {
-    debug!(target = %target, "Handling connect command.");
-
-    // Check if it's a number (referring to a server in the list)
-    if let Ok(server_idx) = target.parse::<usize>() {
-        // Read from shared known_servers map
-        let mut server_list: Vec<(String, String)> = agent
-            .known_servers
-            .iter()
-            .map(|entry| (entry.value().clone(), entry.key().clone())) // (Name, URL)
-            .collect();
-        server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name to match display order
-
-        if server_idx > 0 && server_idx <= server_list.len() {
-            let (name, url) = &server_list[server_idx - 1];
-            let url_clone = url.clone(); // Clone for async block
-
-            // Create a new client with the selected URL
-            agent.client = Some(A2aClient::new(&url_clone));
-            // Update client_config's target_url as well
-            agent.client_config.target_url = Some(url_clone.clone());
-            info!(server_name = %name, server_url = %url_clone, "Connecting to known server by number.");
-            let connect_msg = format!("🔗 Connecting to {}: {}", name, url_clone);
-
-            // Attempt to get card after connecting (spawn to avoid blocking REPL)
-            let agent_client = agent.client.as_mut().unwrap().clone(); // Clone client for task
-            let agent_registry_clone = agent.agent_registry.clone(); // Clone registry for update
-            let known_servers_clone = agent.known_servers.clone(); // Clone known_servers
-            let agent_id_clone = agent.agent_id.clone(); // For tracing span
-
-            tokio::spawn(async move {
-                let span = tracing::info_span!(
-                    "connect_get_card",
-                    agent_id = %agent_id_clone,
-                    remote_url = %url_clone
-                );
-                let _enter = span.enter();
-                match agent_client.get_agent_card().await {
-                    Ok(card) => {
-                        let remote_agent_name = card.name.clone();
-                        debug!(%remote_agent_name, "Successfully got card after connecting.");
-                        // Update known servers
-                        known_servers_clone.insert(url_clone.clone(), remote_agent_name.clone());
-                        // Update canonical registry using discover
-                        match agent_registry_clone.discover(&url_clone).await {
-                            Ok(discovered_agent_id) => {
-                                debug!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by number.");
-                                if discovered_agent_id != remote_agent_name {
-                                    debug!(url = %url_clone, old_name = %remote_agent_name, new_id = %discovered_agent_id, "Updating known_servers with discovered ID.");
-                                    known_servers_clone
-                                        .insert(url_clone.clone(), discovered_agent_id);
-                                }
-                            }
-                            Err(e) => {
-                                warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by number.");
-                            }
-                        }
-                        println!("📇 Remote agent verified: {}", remote_agent_name);
-                        // Still print verification
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Connected, but failed to get card.");
-                        println!("⚠️ Could not retrieve agent card after connecting: {}", e);
-                        // Still print warning
-                    }
-                }
-            });
-            Ok(connect_msg) // Return the initial connection message
-        } else {
-            error!(index = %server_idx, "Invalid server number provided.");
-            Err(anyhow!(
-                "Invalid server number. Use :servers to see available servers."
-            ))
-        }
-    } else {
-        // Treat as URL - Extract URL from potentially noisy args string
-        debug!(args = %target, "Attempting to extract URL from connect arguments.");
-        // Find the first word that looks like a URL
-        let extracted_url = target
-            .split_whitespace()
-            .find(|s| s.starts_with("http://") || s.starts_with("https://"))
-            .map(|s| {
-                s.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '/')
-                    .to_string()
-            }); // Basic cleanup
-
-        if extracted_url.is_none() {
-            error!(
-                "Could not extract a valid URL from connect arguments: '{}'",
-                target
-            );
-            return Err(anyhow!(
-                "No valid URL found in arguments. Use 'connect URL' or 'connect N'."
-            ));
-        }
-
-        let url_to_connect = extracted_url.unwrap();
-        if url_to_connect.is_empty() {
-            error!("Extracted URL is empty from arguments: '{}'", target);
-            return Err(anyhow!(
-                "Extracted URL is empty. Use 'connect URL' or 'connect N'."
-            ));
-        }
-        debug!(url = %url_to_connect, "Extracted URL. Attempting connection.");
-
-        let client = A2aClient::new(&url_to_connect); // Use the extracted URL
-
-        match client.get_agent_card().await {
-            Ok(card) => {
-                let remote_agent_name = card.name.clone();
-                info!(remote_agent_name = %remote_agent_name, url = %url_to_connect, "Successfully connected to agent.");
-                let success_msg =
-                    format!("✅ Successfully connected to agent: {}", remote_agent_name);
-
-                agent
-                    .known_servers
-                    .insert(url_to_connect.clone(), remote_agent_name.clone());
-                agent.client = Some(client);
-
-                // Update registry in background
-                let registry_clone = agent.agent_registry.clone();
-                let url_clone = url_to_connect.clone(); // Use url_to_connect
-                let known_servers_clone = agent.known_servers.clone();
-                let remote_agent_name_clone = remote_agent_name.clone();
-                tokio::spawn(async move {
-                    match registry_clone.discover(&url_clone).await {
-                        Ok(discovered_agent_id) => {
-                            debug!(url = %url_clone, %discovered_agent_id, "Successfully updated canonical registry after connecting by URL.");
-                            if discovered_agent_id != remote_agent_name_clone {
-                                debug!(url = %url_clone, old_name = %remote_agent_name_clone, new_id = %discovered_agent_id, "Updating known_servers with discovered ID.");
-                                known_servers_clone.insert(url_clone.clone(), discovered_agent_id);
-                            }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, url = %url_clone, "Failed to update canonical registry after connecting by URL.");
-                        }
-                    }
-                });
-                Ok(success_msg)
-            }
-            Err(e) => {
-                error!(url = %url_to_connect, error = %e, "Failed to connect to agent via URL.");
-                // Don't ask y/n here, just return error
-                if !agent.known_servers.contains_key(&url_to_connect) {
-                    let unknown_name = "Unknown Agent".to_string();
-                    agent
-                        .known_servers
-                        .insert(url_to_connect.clone(), unknown_name.clone());
-                    info!(url = %url_to_connect, "Added URL to known servers as 'Unknown Agent' after failed connection attempt.");
-                }
-                Err(anyhow!("Failed to connect to agent at {}: {}. Please check the server is running and the URL is correct. URL added to known servers as 'Unknown Agent'.", url_to_connect, e))
-            }
-        }
-    }
-}
-
-/// Handles the ':disconnect' REPL command logic.
-#[instrument(skip(agent), fields(agent_id = %agent.agent_id))]
-pub(super) fn handle_disconnect(agent: &mut BidirectionalAgent) -> Result<String> {
-    debug!("Handling disconnect command.");
-    if agent.client.is_some() {
-        let url = agent_helpers::client_url(agent).unwrap_or_else(|| "unknown".to_string()); // Call helper
-        agent.client = None;
-        // Also clear the target_url in config
-        agent.client_config.target_url = None;
-        info!(disconnected_from = %url, "Disconnected from remote agent.");
-        Ok(format!("🔌 Disconnected from {}", url))
-    } else {
-        debug!("Attempted disconnect but not connected.");
-        Ok("⚠️ Not connected to any server".to_string()) // Return as Ok string
-    }
-}
-
-/// Handles the ':servers' REPL command logic.
-#[instrument(skip(agent), fields(agent_id = %agent.agent_id))]
-pub(super) fn handle_list_servers(agent: &BidirectionalAgent) -> Result<String> {
-    debug!("Handling list_servers command.");
-    if agent.known_servers.is_empty() {
-        info!("No known servers found.");
-        Ok(
-            "📡 No known servers. Connect to a server or wait for background connection attempt."
-                .to_string(),
-        )
-    } else {
-        info!(count = %agent.known_servers.len(), "Formatting known servers list.");
-        let mut output = String::from("\n📡 Known Servers:\n");
-        let mut server_list: Vec<(String, String)> = agent
-            .known_servers
-            .iter()
-            .map(|entry| (entry.value().clone(), entry.key().clone())) // (Name, URL)
-            .collect();
-        server_list.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by name
-
-        for (i, (name, url)) in server_list.iter().enumerate() {
-            let marker = if Some(url) == agent_helpers::client_url(agent).as_ref() {
-                // Call helper
-                "*"
-            } else {
-                " "
-            };
-            output.push_str(&format!("  {}{}: {} - {}\n", marker, i + 1, name, url));
-        }
-        output.push_str("\nUse :connect N to connect to a server by number\n");
-        Ok(output)
-    }
-}
+// Removed handle_connect, handle_disconnect, handle_list_servers
 
 /// Handles the ':remote' REPL command logic.
 #[instrument(skip(agent, message), fields(agent_id = %agent.agent_id))]
-pub(super) async fn handle_remote_message(
+pub(super) async fn handle_remote_message( // Keep this as it's specific to REPL's remote interaction
     agent: &mut BidirectionalAgent,
     message: &str,
 ) -> Result<String> {
@@ -301,17 +94,11 @@ pub(super) async fn handle_remote_message(
     Ok(response)
 }
 
-/// Handles the ':session new' REPL command logic.
-#[instrument(skip(agent), fields(agent_id = %agent.agent_id))]
-pub(super) fn handle_new_session(agent: &mut BidirectionalAgent) -> Result<String> {
-    let session_id = agent_helpers::create_new_session(agent); // Call helper
-    info!("Created new session: {}", session_id);
-    Ok(format!("✅ Created new session: {}", session_id))
-}
+// Removed handle_new_session, handle_show_session
 
 /// Handles the ':session show' REPL command logic.
 #[instrument(skip(agent), fields(agent_id = %agent.agent_id))]
-pub(super) fn handle_show_session(agent: &BidirectionalAgent) -> Result<String> {
+pub(super) fn handle_show_session(agent: &BidirectionalAgent) -> Result<String> { // Keep for now, or make it a tool
     if let Some(session_id) = &agent.current_session_id {
         debug!(session_id = %session_id, "Displaying current session ID.");
         Ok(format!("🔍 Current session: {}", session_id))
@@ -660,48 +447,11 @@ pub(super) async fn handle_tool_command(
     }
 }
 
-/// Handles the ':card' REPL command logic.
-#[instrument(skip(agent), fields(agent_id = %agent.agent_id))]
-pub(super) fn handle_show_card(agent: &BidirectionalAgent) -> Result<String> {
-    debug!("Handling show card command.");
-    let card = agent.create_agent_card(); // Logs internally
-    info!(agent_name = %card.name, "Formatting agent card.");
-    let mut output = String::from("\n📇 Agent Card:\n");
-    output.push_str(&format!("  Name: {}\n", card.name));
-    output.push_str(&format!(
-        "  Description: {}\n",
-        card.description.as_deref().unwrap_or("None")
-    ));
-    output.push_str(&format!("  URL: {}\n", card.url));
-    output.push_str(&format!("  Version: {}\n", card.version));
-    output.push_str("  Capabilities:\n");
-    output.push_str(&format!(
-        "    - Streaming: {}\n",
-        card.capabilities.streaming
-    ));
-    output.push_str(&format!(
-        "    - Push Notifications: {}\n",
-        card.capabilities.push_notifications
-    ));
-    output.push_str(&format!(
-        "    - State Transition History: {}\n",
-        card.capabilities.state_transition_history
-    ));
-    output.push_str(&format!(
-        "  Input Modes: {}\n",
-        card.default_input_modes.join(", ")
-    ));
-    output.push_str(&format!(
-        "  Output Modes: {}\n",
-        card.default_output_modes.join(", ")
-    ));
-    output.push('\n');
-    Ok(output)
-}
+// Removed handle_show_card
 
 /// Handles the ':memory' REPL command logic.
 #[instrument(skip(agent, args), fields(agent_id = %agent.agent_id))]
-pub fn handle_memory(agent: &mut BidirectionalAgent, args: &str) -> Result<String> {
+pub fn handle_memory(agent: &mut BidirectionalAgent, args: &str) -> Result<String> { // Keep this, it's REPL specific state
     debug!(args = %args, "Handling memory command.");
 
     // Check if this is a clear command
@@ -891,20 +641,18 @@ pub async fn handle_repl_command(
     args: &str,
 ) -> Result<String> {
     debug!(%command, %args, "Handling REPL command via central handler.");
+    // Most commands will now be rephrased and sent to process_message_locally
+    // Only truly REPL-specific commands or those needing direct REPL state remain.
     match command {
-        "help" => handle_help(agent),
-        "card" => handle_show_card(agent),
-        "servers" => handle_list_servers(agent),
-        "connect" => handle_connect(agent, args).await,
-        "disconnect" => handle_disconnect(agent),
-        "remote" => handle_remote_message(agent, args).await,
-        "session" => match args {
-            "new" => handle_new_session(agent),
-            "show" => handle_show_session(agent),
-            _ => Err(anyhow!(
-                "Unknown session command. Use ':session new' or ':session show'"
-            )),
-        },
+        "help" => handle_help(agent), // Stays as it's REPL specific UI
+        "remote" => handle_remote_message(agent, args).await, // Stays as it directly uses agent.client
+        "session" if args == "show" => handle_show_session(agent), // Read-only, could be a tool but simple enough here
+        // "session new" will become "create new session" and go through process_message_locally
+        // "card" will become "show my agent card" -> tool
+        // "servers" will become "list known servers" -> tool
+        // "connect", "disconnect" will become natural language -> agent action
+
+        // These remain as they interact with TaskService directly for now
         "history" => handle_history(agent).await,
         "tasks" => handle_list_tasks(agent).await,
         "task" => handle_show_task(agent, args).await,

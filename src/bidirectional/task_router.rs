@@ -989,16 +989,17 @@ Do not add any explanations or text outside the JSON object."#,
                 let mut schema_dp3 = json!({
                     "type": "object",
                     "properties": {
-                        "tool_name": { "type": "string" },
-                        "params": { "type": "object" }
+                        "execution_type": { "type": "string", "enum": ["TOOL", "AGENT_ACTION"] },
+                        "name": { "type": "string", "description": "If TOOL, the tool_name. If AGENT_ACTION, the action_name (e.g., 'connect_agent')." },
+                        "params": { "type": "object", "description": "Parameters for the tool or action. Can be an empty object {} if no parameters are needed." }
                     },
-                    "required": ["tool_name", "params"]
+                    "required": ["execution_type", "name", "params"]
                 });
                 // Schema cleaning for Gemini was removed as it's no longer sent to the API.
                 // if let Some(gemini_client) = self.llm.as_any().downcast_ref::<GeminiLlmClient>() {
                 //     schema_dp3 = gemini_client.clean_schema_for_gemini(&schema_dp3);
                 // }
-                trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
+                trace!(prompt = %tool_param_prompt, "DP3: Tool/param/action extraction prompt.");
 
                 debug!("DP3: Asking LLM to choose tool and extract parameters.");
 
@@ -1008,43 +1009,55 @@ Do not add any explanations or text outside the JSON object."#,
                     .await
                 {
                     Ok(json_value) => {
-                        trace!(?json_value, "DP3: Received tool/param JSON from LLM.");
-                        if let (Some(tool_name), Some(params)) = (
-                            json_value.get("tool_name").and_then(Value::as_str),
-                            json_value.get("params").cloned(), // Cloned as it's a Value
+                        trace!(?json_value, "DP3: Received execution decision JSON from LLM.");
+                        if let (
+                            Some(execution_type_str),
+                            Some(name_str),
+                            Some(params_val),
+                        ) = (
+                            json_value.get("execution_type").and_then(Value::as_str),
+                            json_value.get("name").and_then(Value::as_str),
+                            json_value.get("params").cloned(),
                         ) {
-                            if self.enabled_tools.contains(&tool_name.to_string()) {
-                                debug!(tool_name = %tool_name, ?params, "DP3: Successfully parsed tool and params.");
-                                if tool_name == "remember_agent"
-                                    && params
-                                        .get("agent_base_url")
-                                        .and_then(Value::as_str)
-                                        .is_none()
-                                {
-                                    debug!("remember_agent chosen but no URL in params, trying to extract from history.");
-                                    if let Some(url) = self.extract_url_from_history(&latest_request_text) // Use latest_request_text
-                                    {
-                                        debug!(extracted_url = %url, "Found URL in history for remember_agent.");
-                                        let enhanced_params = json!({"agent_base_url": url});
-                                        return Ok(RoutingDecision::Local {
-                                            tool_name: tool_name.to_string(),
-                                            params: enhanced_params,
-                                        });
+                            match execution_type_str {
+                                "TOOL" => {
+                                    let tool_name = name_str.to_string();
+                                    if self.enabled_tools.contains(&tool_name) {
+                                        debug!(%tool_name, ?params_val, "DP3: Decided TOOL execution.");
+                                        // Special handling for remember_agent if URL is missing
+                                        if tool_name == "remember_agent" && params_val.get("agent_base_url").and_then(Value::as_str).is_none() {
+                                            debug!("remember_agent tool chosen but no URL in params, trying to extract from history.");
+                                            if let Some(url) = self.extract_url_from_history(&latest_request_text) {
+                                                debug!(extracted_url = %url, "Found URL in history for remember_agent tool.");
+                                                let enhanced_params = json!({"agent_base_url": url});
+                                                return Ok(RoutingDecision::Local { tool_name, params: enhanced_params });
+                                            }
+                                        }
+                                        Ok(RoutingDecision::Local { tool_name, params: params_val })
+                                    } else {
+                                        debug!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm' tool.");
+                                        Ok(RoutingDecision::Local {
+                                            tool_name: "llm".to_string(),
+                                            params: json!({"text": latest_request_text}),
+                                        })
                                     }
                                 }
-                                Ok(RoutingDecision::Local {
-                                    tool_name: tool_name.to_string(),
-                                    params,
-                                })
-                            } else {
-                                debug!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm'.");
-                                Ok(RoutingDecision::Local {
-                                    tool_name: "llm".to_string(),
-                                    params: json!({"text": latest_request_text}),
-                                })
+                                "AGENT_ACTION" => {
+                                    let action_name = name_str.to_string();
+                                    debug!(%action_name, ?params_val, "DP3: Decided AGENT_ACTION execution.");
+                                    // TODO: Validate action_name against a list of known agent actions if desired
+                                    Ok(RoutingDecision::AgentAction { action: action_name, params: params_val })
+                                }
+                                _ => {
+                                    warn!(?json_value, "DP3: LLM JSON 'execution_type' invalid. Falling back to 'llm' tool.");
+                                    Ok(RoutingDecision::Local {
+                                        tool_name: "llm".to_string(),
+                                        params: json!({"text": latest_request_text}),
+                                    })
+                                }
                             }
                         } else {
-                            warn!(?json_value, "DP3: LLM JSON missing 'tool_name' or 'params'. Falling back to 'llm'.");
+                            warn!(?json_value, "DP3: LLM JSON missing 'execution_type', 'name', or 'params'. Falling back to 'llm' tool.");
                             Ok(RoutingDecision::Local {
                                 tool_name: "llm".to_string(),
                                 params: json!({"text": latest_request_text}),
@@ -1052,7 +1065,7 @@ Do not add any explanations or text outside the JSON object."#,
                         }
                     }
                     Err(e) => {
-                        warn!(error = %e, "DP3: LLM failed to choose tool/extract params. Falling back to 'llm'.");
+                        warn!(error = %e, "DP3: LLM failed to choose execution type/name/params. Falling back to 'llm' tool.");
                         Ok(RoutingDecision::Local {
                             tool_name: "llm".to_string(),
                             params: json!({"text": latest_request_text}),

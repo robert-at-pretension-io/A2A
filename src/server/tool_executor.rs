@@ -481,6 +481,119 @@ impl Tool for HumanInputTool {
     }
 }
 
+/// Tool to list known servers
+pub struct ListServersTool {
+    known_servers: Arc<DashMap<String, String>>,
+}
+
+impl ListServersTool {
+    pub fn new(known_servers: Arc<DashMap<String, String>>) -> Self {
+        Self { known_servers }
+    }
+}
+
+#[async_trait]
+impl Tool for ListServersTool {
+    fn name(&self) -> &str {
+        "list_servers"
+    }
+
+    fn description(&self) -> &str {
+        "Lists all known remote servers this agent can connect to."
+    }
+
+    async fn execute(&self, _params: Value) -> Result<Value, ToolError> {
+        if self.known_servers.is_empty() {
+            Ok(json!("No known servers found."))
+        } else {
+            let mut server_list: Vec<HashMap<String, String>> = self
+                .known_servers
+                .iter()
+                .map(|entry| {
+                    let mut map = HashMap::new();
+                    map.insert("name".to_string(), entry.value().clone());
+                    map.insert("url".to_string(), entry.key().clone());
+                    map
+                })
+                .collect();
+            server_list.sort_by(|a, b| a.get("name").unwrap_or(&String::new()).cmp(b.get("name").unwrap_or(&String::new())));
+            Ok(json!({
+                "count": server_list.len(),
+                "servers": server_list
+            }))
+        }
+    }
+
+    fn capabilities(&self) -> &[&'static str] {
+        &["agent_discovery", "meta"]
+    }
+}
+
+/// Tool to show the agent's own card
+pub struct ShowCardTool {
+    agent_name: String,
+    agent_id: String,
+    agent_version: String,
+    bind_address: String,
+    port: u16,
+}
+
+impl ShowCardTool {
+    pub fn new(
+        agent_name: String,
+        agent_id: String,
+        agent_version: String,
+        bind_address: String,
+        port: u16,
+    ) -> Self {
+        Self {
+            agent_name,
+            agent_id,
+            agent_version,
+            bind_address,
+            port,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for ShowCardTool {
+    fn name(&self) -> &str {
+        "show_agent_card"
+    }
+
+    fn description(&self) -> &str {
+        "Displays the current agent's own information card."
+    }
+
+    async fn execute(&self, _params: Value) -> Result<Value, ToolError> {
+        let capabilities = AgentCapabilities {
+            push_notifications: true,
+            state_transition_history: true,
+            streaming: true,
+        };
+        let card = AgentCard {
+            name: self.agent_name.clone(),
+            description: Some(format!("Bidirectional A2A Agent (ID: {})", self.agent_id)),
+            url: format!("http://{}:{}", self.bind_address, self.port),
+            version: self.agent_version.clone(),
+            capabilities,
+            authentication: None,
+            default_input_modes: vec!["text".to_string()],
+            default_output_modes: vec!["text".to_string()],
+            documentation_url: None,
+            provider: None,
+            skills: vec![], // Skills could be dynamically added if ToolExecutor knows them
+        };
+        serde_json::to_value(card).map_err(|e| ToolError::ExecutionFailed("show_agent_card".to_string(), e.to_string()))
+    }
+
+    fn capabilities(&self) -> &[&'static str] {
+        &["meta", "self_info"]
+    }
+}
+
+
 /// Tool to execute internal agent commands based on natural language requests.
 /// Note: This tool attempts the command logic but cannot directly modify the core agent state
 /// (like self.client or self.current_session_id) due to ownership constraints.
@@ -529,144 +642,7 @@ impl ExecuteCommandTool {
 
     // --- Helper methods mirroring BidirectionalAgent handlers (simplified) ---
     // These helpers perform the logic but return String results instead of modifying agent state.
-
-    fn handle_list_servers_logic(&self) -> Result<String, ToolError> {
-        debug!("Handling list_servers command logic within tool.");
-        if self.known_servers.is_empty() {
-            Ok("📡 No known servers found.".to_string())
-        } else {
-            let mut output = String::from("\n📡 Known Servers:\n");
-            let mut server_list: Vec<(String, String)> = self
-                .known_servers
-                .iter()
-                .map(|entry| (entry.value().clone(), entry.key().clone()))
-                .collect();
-            server_list.sort_by(|a, b| a.0.cmp(&b.0));
-            for (i, (name, url)) in server_list.iter().enumerate() {
-                // Cannot mark connected server as tool doesn't know current client state
-                output.push_str(&format!("  {}: {} - {}\n", i + 1, name, url));
-            }
-            Ok(output)
-        }
-    }
-
-    async fn handle_connect_logic(&self, target: &str) -> Result<String, ToolError> {
-        debug!(target = %target, "Handling connect command logic within tool.");
-        // Simplified: Only handle URL connection attempts for now
-        let target_url = target
-            .split_whitespace()
-            .find(|s| s.starts_with("http://") || s.starts_with("https://"))
-            .map(|s| {
-                s.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '/')
-                    .to_string()
-            });
-
-        if target_url.is_none() || target_url.as_deref() == Some("") {
-            return Err(ToolError::InvalidParams(
-                "execute_command(connect)".to_string(),
-                "No valid URL found in arguments.".to_string(),
-            ));
-        }
-        let url = target_url.unwrap();
-
-        // First, check if this agent is already in the registry
-        let mut agent_in_registry = false;
-        for (_, agent_card) in self.agent_registry.list_all_agents() {
-            if agent_card.url == url {
-                agent_in_registry = true;
-                break;
-            }
-        }
-
-        // If the agent is not in the registry, suggest using remember_agent first
-        if !agent_in_registry {
-            let remember_suggestion = format!(
-                "⚠️ This agent ({}) is not yet in your registry. \n\
-                 Before connecting, please first remember this agent with: \n\n\
-                 :tool remember_agent {{\n  \"agent_base_url\": \"{}\"\n}}\n\n\
-                 Then try connecting again with:\n\
-                 :connect {}",
-                url, url, url
-            );
-            return Ok(remember_suggestion);
-        }
-
-        let client = A2aClient::new(&url); // Remove mut
-        match client.get_agent_card().await {
-            Ok(card) => {
-                let name = card.name.clone();
-                // Update known servers (this is safe as it's Arc<DashMap>)
-                self.known_servers.insert(url.clone(), name.clone());
-                // Update registry (also safe)
-                match self.agent_registry.discover(&url).await {
-                    Ok(discovered_id) => {
-                        if discovered_id != name {
-                            self.known_servers.insert(url.clone(), discovered_id);
-                        }
-                    }
-                    Err(e) => warn!("Failed to update registry during connect tool logic: {}", e),
-                }
-                // Cannot update self.client here
-                Ok(format!("✅ Connection attempt to '{}' ({}) successful. Agent card retrieved. Use ':connect {}' in REPL to make it the active connection.", name, url, url))
-            }
-            Err(e) => {
-                // Add to known servers even on failure
-                if !self.known_servers.contains_key(&url) {
-                    self.known_servers
-                        .insert(url.clone(), "Unknown Agent".to_string());
-                }
-                Err(ToolError::ExecutionFailed(
-                    "execute_command(connect)".to_string(),
-                    format!("Failed to connect to agent at {}: {}", url, e),
-                ))
-            }
-        }
-    }
-
-    fn handle_disconnect_logic(&self) -> Result<String, ToolError> {
-        // Cannot actually disconnect as state is not accessible
-        Ok("⚠️ Cannot perform disconnect via tool. Use ':disconnect' in REPL.".to_string())
-    }
-
-    fn handle_new_session_logic(&self) -> Result<String, ToolError> {
-        // Can generate an ID but cannot set it as current
-        let session_id = format!("session-{}", Uuid::new_v4());
-        Ok(format!(
-            "✅ Generated new session ID: {}. Use ':session new' in REPL to activate it.",
-            session_id
-        ))
-    }
-
-    fn handle_show_session_logic(&self) -> Result<String, ToolError> {
-        // Cannot access current session ID
-        Ok("⚠️ Cannot show current session via tool. Use ':session show' in REPL.".to_string())
-    }
-
-    fn handle_show_card_logic(&self) -> Result<String, ToolError> {
-        // Recreate card based on stored agent info
-        let capabilities = AgentCapabilities {
-            push_notifications: true,
-            state_transition_history: true,
-            streaming: true,
-        };
-        let card = AgentCard {
-            name: self.agent_name.clone(),
-            description: Some("A bidirectional A2A agent.".to_string()),
-            version: self.agent_version.clone(), // <-- Use stored version
-            url: format!("http://{}:{}", self.bind_address, self.port),
-            capabilities,
-            authentication: None,
-            default_input_modes: vec!["text".to_string()],
-            default_output_modes: vec!["text".to_string()],
-            documentation_url: None,
-            provider: None,
-            skills: vec![],
-        };
-        let mut output = String::from("\n📇 Agent Card (via tool):\n");
-        output.push_str(&format!("  Name: {}\n", card.name));
-        // ... (add other fields as needed) ...
-        Ok(output)
-    }
+    // Most of these will be removed as their functionality moves to AgentActions or dedicated Tools.
 
     // Add logic for other commands if needed (list_agents, remember_agent are separate tools)
     // Commands interacting with TaskService (history, tasks, task, artifacts, cancelTask) are omitted for now.
@@ -675,12 +651,11 @@ impl ExecuteCommandTool {
 #[async_trait]
 impl Tool for ExecuteCommandTool {
     fn name(&self) -> &str {
-        "execute_command"
+        "execute_command" // This tool might become very minimal or be removed.
     }
 
     fn description(&self) -> &str {
-        "Executes internal agent commands like connect, disconnect, list_servers, session new, card. \
-         Note: May not fully update agent state for connect/disconnect/session. \
+        "Executes specific, limited internal agent commands. Most internal operations are now AgentActions or dedicated Tools. \
          Expects parameters: {\"command\": \"command_name\", \"args\": \"arguments_string\"}"
     }
 
@@ -701,46 +676,33 @@ impl Tool for ExecuteCommandTool {
             .trim()
             .to_lowercase();
 
-        let args = params
+        let _args = params // args might still be useful for some commands
             .get("args")
             .and_then(|v| v.as_str())
-            .unwrap_or("") // Default to empty string if args are missing or not a string
+            .unwrap_or("") 
             .trim();
 
-        debug!(%command, %args, "Parsed command and arguments.");
+        debug!(%command, %_args, "Parsed command and arguments.");
 
+        // Most command logic is removed. Only keep what's truly an "execute_command" type action.
+        // Or, this tool could be deprecated if all functionality is moved.
+        // For now, let's make it return an error for most things.
         let result_string = match command.as_str() {
-            "connect" => self.handle_connect_logic(args).await,
-            "disconnect" => self.handle_disconnect_logic(),
-            "servers" => self.handle_list_servers_logic(),
-            "session" if args == "new" => self.handle_new_session_logic(),
-            "session" if args == "show" => self.handle_show_session_logic(),
-            "card" => self.handle_show_card_logic(),
-            // Add other command handlers here
-            // Omit task-related commands for now
-            "history" | "tasks" | "task" | "artifacts" | "cancelTask" => {
+            // Example: Keep a very specific command if needed, otherwise error.
+            // "some_specific_meta_command" => Ok("Specific meta command executed.".to_string()),
+            "connect" | "disconnect" | "servers" | "session" | "card" |
+            "history" | "tasks" | "task" | "artifacts" | "cancelTask" | "remote" | "tool" => {
                 Err(ToolError::UnsupportedOperation(
-                    "execute_command".to_string(),
+                    self.name().to_string(),
                     format!(
-                        "Task-related command '{}' not supported via tool yet.",
+                        "Command '{}' is now handled by a dedicated AgentAction or Tool, not 'execute_command'.",
                         command
                     ),
                 ))
             }
-            "remote" => {
-                // Requires LLM and potentially client state - too complex for now
-                Err(ToolError::UnsupportedOperation(
-                    "execute_command".to_string(),
-                    "'remote' command not supported via tool.".to_string(),
-                ))
-            }
-            "tool" => Err(ToolError::UnsupportedOperation(
-                "execute_command".to_string(),
-                "Cannot call ':tool' from within execute_command tool.".to_string(),
-            )),
             _ => Err(ToolError::InvalidParams(
                 self.name().to_string(),
-                format!("Unknown internal command: '{}'", command),
+                format!("Unknown or unsupported internal command for 'execute_command' tool: '{}'", command),
             )),
         };
 
@@ -752,7 +714,7 @@ impl Tool for ExecuteCommandTool {
     }
 
     fn capabilities(&self) -> &[&'static str] {
-        &["agent_control", "meta"]
+        &["meta"] // Capabilities might change based on what's left.
     }
 }
 
@@ -911,11 +873,10 @@ impl ToolExecutor {
                                 ks,
                                 agent_id.to_string(),
                                 agent_name.to_string(),
-                                agent_version.to_string(), // <-- Pass agent_version
+                                agent_version.to_string(), 
                                 bind_address.to_string(),
                                 port,
-                                llm.clone(), // Pass LLM if available
-                                             // task_service.clone(), // Omit TaskService for now
+                                llm.clone(), 
                             )),
                         );
                         tracing::debug!("Tool 'execute_command' registered.");
@@ -927,12 +888,38 @@ impl ToolExecutor {
                 }
             }
         }
+
+        // Register ListServersTool if enabled
+        if should_enable("list_servers") {
+            if !map.contains_key("list_servers") {
+                if let Some(ks) = known_servers.clone() {
+                    map.insert("list_servers".into(), Box::new(ListServersTool::new(ks)));
+                    tracing::debug!("Tool 'list_servers' registered.");
+                } else {
+                     tracing::warn!("Cannot register 'list_servers' tool: known_servers map not provided.");
+                }
+            }
+        }
+
+        // Register ShowCardTool if enabled
+        if should_enable("show_agent_card") {
+            if !map.contains_key("show_agent_card") {
+                map.insert("show_agent_card".into(), Box::new(ShowCardTool::new(
+                    agent_name.to_string(),
+                    agent_id.to_string(),
+                    agent_version.to_string(),
+                    bind_address.to_string(),
+                    port,
+                )));
+                tracing::debug!("Tool 'show_agent_card' registered.");
+            }
+        }
         
         // Log any unknown tools in the configuration list if not an exclusion list
         if !is_exclusion_list {
             for name in tool_list {
                 match name.as_str() {
-                    "echo" | "human_input" | "llm" | "summarize" | "list_agents" | "remember_agent" | "execute_command" => {
+                    "echo" | "human_input" | "llm" | "summarize" | "list_agents" | "remember_agent" | "execute_command" | "list_servers" | "show_agent_card" => {
                         // Known tool, already handled
                     },
                     unknown => {
