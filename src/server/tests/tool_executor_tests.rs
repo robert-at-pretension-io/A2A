@@ -4,6 +4,7 @@ use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::types::AgentCard;
 use chrono::Utc;
 use serde_json::{json, Value};
+use std::any::Any;
 use std::sync::Arc;
 
 // Test implementation of LlmClient for testing
@@ -12,6 +13,9 @@ struct MockLlmClient;
 
 #[async_trait::async_trait]
 impl crate::bidirectional::llm_client::LlmClient for MockLlmClient {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     async fn complete(
         &self,
         _prompt: &str,
