@@ -1,14 +1,16 @@
-use crate::bidirectional::task_router::BidirectionalTaskRouter;
 use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
-use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
+use crate::bidirectional::task_router::BidirectionalTaskRouter;
 use crate::bidirectional::tests::mocks::MockLlmClient;
-use crate::types::{Task, TaskStatus, TaskState, Message, Part, TextPart, Role, AgentCard, AgentCapabilities};
-use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait}; // Import the trait
+use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::server::repositories::task_repository::{InMemoryTaskRepository, TaskRepository}; // Import TaskRepository trait
-use std::sync::Arc;
-use uuid::Uuid;
+use crate::server::task_router::{LlmTaskRouterTrait, RoutingDecision}; // Import the trait
+use crate::types::{
+    AgentCapabilities, AgentCard, Message, Part, Role, Task, TaskState, TaskStatus, TextPart,
+};
 use chrono::Utc;
 use serde_json::json;
+use std::sync::Arc;
+use uuid::Uuid;
 
 // Tests for handling InputRequired state in returning remote tasks
 
@@ -23,7 +25,7 @@ impl MockTaskRouterWithTasks {
             tasks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
-    
+
     // Add a task to the internal mock storage
     async fn add_task(&self, task: Task) {
         let mut tasks = self.tasks.lock().unwrap();
@@ -34,38 +36,56 @@ impl MockTaskRouterWithTasks {
 // Implement the TaskRepository trait for our mock
 #[async_trait::async_trait]
 impl TaskRepository for MockTaskRouterWithTasks {
-    async fn get_task(&self, task_id: &str) -> Result<Option<Task>, crate::server::error::ServerError> {
+    async fn get_task(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<Task>, crate::server::error::ServerError> {
         let tasks = self.tasks.lock().unwrap();
         Ok(tasks.get(task_id).cloned())
     }
-    
+
     async fn save_task(&self, task: &Task) -> Result<(), crate::server::error::ServerError> {
         let mut tasks = self.tasks.lock().unwrap();
         tasks.insert(task.id.clone(), task.clone());
         Ok(())
     }
-    
+
     async fn delete_task(&self, task_id: &str) -> Result<(), crate::server::error::ServerError> {
         let mut tasks = self.tasks.lock().unwrap();
         tasks.remove(task_id);
         Ok(())
     }
-    
-    async fn get_state_history(&self, _task_id: &str) -> Result<Vec<Task>, crate::server::error::ServerError> {
+
+    async fn get_state_history(
+        &self,
+        _task_id: &str,
+    ) -> Result<Vec<Task>, crate::server::error::ServerError> {
         Ok(Vec::new())
     }
-    
-    async fn save_state_history(&self, _task_id: &str, _task: &Task) -> Result<(), crate::server::error::ServerError> {
+
+    async fn save_state_history(
+        &self,
+        _task_id: &str,
+        _task: &Task,
+    ) -> Result<(), crate::server::error::ServerError> {
         // No-op implementation for tests
         Ok(())
     }
 
-    async fn get_push_notification_config(&self, _task_id: &str) -> Result<Option<crate::types::PushNotificationConfig>, crate::server::error::ServerError> {
+    async fn get_push_notification_config(
+        &self,
+        _task_id: &str,
+    ) -> Result<Option<crate::types::PushNotificationConfig>, crate::server::error::ServerError>
+    {
         // Return None for tests
         Ok(None)
     }
-    
-    async fn save_push_notification_config(&self, _task_id: &str, _config: &crate::types::PushNotificationConfig) -> Result<(), crate::server::error::ServerError> {
+
+    async fn save_push_notification_config(
+        &self,
+        _task_id: &str,
+        _config: &crate::types::PushNotificationConfig,
+    ) -> Result<(), crate::server::error::ServerError> {
         // No-op implementation for tests
         Ok(())
     }
@@ -76,26 +96,26 @@ impl TaskRepository for MockTaskRouterWithTasks {
 async fn test_input_required_llm_decision_direct_handling() {
     // Create a mock LLM client that will return "HANDLE_DIRECTLY"
     let llm = Arc::new(MockLlmClient::new().with_default_response("HANDLE_DIRECTLY"));
-    
+
     // Create our custom task repository
     let task_repository = Arc::new(MockTaskRouterWithTasks::new());
-    
+
     // Create an agent registry
     let registry = Arc::new(AgentRegistry::new());
-    
+
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["llm".to_string(), "echo".to_string()]);
 
     // Create the router - now passing the task repository and config
     let config = BidirectionalAgentConfig::default(); // Create default config
     let router = BidirectionalTaskRouter::new(
-        llm.clone(), 
-        registry.clone(), 
+        llm.clone(),
+        registry.clone(),
         enabled_tools,
         Some(task_repository.clone()), // Add task repository
-        &config, // Pass reference to config
+        &config,                       // Pass reference to config
     );
-    
+
     // Create a task that appears to be returning from another agent in InputRequired state
     let task_id = Uuid::new_v4().to_string();
     let task = Task {
@@ -131,19 +151,24 @@ async fn test_input_required_llm_decision_direct_handling() {
                     metadata: None,
                 })],
                 metadata: None,
-            }
+            },
         ]),
         artifacts: None,
-        metadata: Some(json!({
-            "delegated_from": "agent-1",
-            "source_agent_id": "agent-1"
-        }).as_object().unwrap().clone()),
+        metadata: Some(
+            json!({
+                "delegated_from": "agent-1",
+                "source_agent_id": "agent-1"
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ),
         session_id: None,
     };
-    
+
     // Add the task to our mock task repository
     task_repository.add_task(task).await;
-    
+
     // Create a follow-up message
     let follow_up_message = Message {
         role: Role::User,
@@ -154,18 +179,27 @@ async fn test_input_required_llm_decision_direct_handling() {
         })],
         metadata: None,
     };
-    
+
     // Process the follow-up message
-    let decision = router.process_follow_up(&task_id, &follow_up_message).await.unwrap();
-    
+    let decision = router
+        .process_follow_up(&task_id, &follow_up_message)
+        .await
+        .unwrap();
+
     // Check that the decision is to handle directly with llm tool
     match decision {
         RoutingDecision::Local { tool_name, params } => {
             assert_eq!(tool_name, "llm", "Should use llm tool for direct handling");
-            assert!(params.get("text").is_some(), "Should include text parameter");
+            assert!(
+                params.get("text").is_some(),
+                "Should include text parameter"
+            );
             let text = params.get("text").and_then(|v| v.as_str()).unwrap();
-            assert_eq!(text, "X is a programming language", "Should pass follow-up text to llm");
-        },
+            assert_eq!(
+                text, "X is a programming language",
+                "Should pass follow-up text to llm"
+            );
+        }
         _ => panic!("Expected Local decision with llm tool"),
     }
 }
@@ -174,26 +208,26 @@ async fn test_input_required_llm_decision_direct_handling() {
 async fn test_input_required_llm_decision_human_input_needed() {
     // Create a mock LLM client that will return "NEED_HUMAN_INPUT"
     let llm = Arc::new(MockLlmClient::new().with_default_response("NEED_HUMAN_INPUT"));
-    
+
     // Create our custom task repository
     let task_repository = Arc::new(MockTaskRouterWithTasks::new());
-    
+
     // Create an agent registry
     let registry = Arc::new(AgentRegistry::new());
-    
+
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["llm".to_string(), "echo".to_string()]);
 
     // Create the router - now passing the task repository and config
     let config = BidirectionalAgentConfig::default(); // Create default config
     let router = BidirectionalTaskRouter::new(
-        llm.clone(), 
-        registry.clone(), 
+        llm.clone(),
+        registry.clone(),
         enabled_tools,
         Some(task_repository.clone()), // Add task repository
-        &config, // Pass reference to config
+        &config,                       // Pass reference to config
     );
-    
+
     // Create a task that appears to be returning from another agent in InputRequired state
     let task_id = Uuid::new_v4().to_string();
     let task = Task {
@@ -229,18 +263,23 @@ async fn test_input_required_llm_decision_human_input_needed() {
                     metadata: None,
                 })],
                 metadata: None,
-            }
+            },
         ]),
         artifacts: None,
-        metadata: Some(json!({
-            "remote_agent_id": "agent-2",
-        }).as_object().unwrap().clone()),
+        metadata: Some(
+            json!({
+                "remote_agent_id": "agent-2",
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ),
         session_id: None,
     };
-    
+
     // Add the task to our mock task repository
     task_repository.add_task(task).await;
-    
+
     // Create a follow-up message
     let follow_up_message = Message {
         role: Role::User,
@@ -251,57 +290,79 @@ async fn test_input_required_llm_decision_human_input_needed() {
         })],
         metadata: None,
     };
-    
+
     // Process the follow-up message
-    let decision = router.process_follow_up(&task_id, &follow_up_message).await.unwrap();
-    
+    let decision = router
+        .process_follow_up(&task_id, &follow_up_message)
+        .await
+        .unwrap();
+
     // Check that the decision is to get human input
     match decision {
         RoutingDecision::Local { tool_name, params } => {
             assert_eq!(tool_name, "human_input", "Should use human_input tool");
-            assert!(params.get("text").is_some(), "Should include text parameter");
+            assert!(
+                params.get("text").is_some(),
+                "Should include text parameter"
+            );
             let text = params.get("text").and_then(|v| v.as_str()).unwrap();
-            assert_eq!(text, "I prefer simple solutions", "Should pass follow-up text");
-            
+            assert_eq!(
+                text, "I prefer simple solutions",
+                "Should pass follow-up text"
+            );
+
             // Check that require_human_input flag is set
-            assert!(params.get("require_human_input").is_some(), "Should include require_human_input parameter");
-            assert!(params.get("require_human_input").and_then(|v| v.as_bool()).unwrap_or(false), 
-                   "require_human_input should be true");
-            
+            assert!(
+                params.get("require_human_input").is_some(),
+                "Should include require_human_input parameter"
+            );
+            assert!(
+                params
+                    .get("require_human_input")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                "require_human_input should be true"
+            );
+
             // Check that prompt is included
-            assert!(params.get("prompt").is_some(), "Should include prompt parameter");
+            assert!(
+                params.get("prompt").is_some(),
+                "Should include prompt parameter"
+            );
             let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap();
-            assert!(prompt.contains("Please provide your personal preference"), 
-                   "Prompt should contain the original request for input");
-        },
+            assert!(
+                prompt.contains("Please provide your personal preference"),
+                "Prompt should contain the original request for input"
+            );
+        }
         _ => panic!("Expected Local decision with human_input tool"),
     }
 }
 
 #[tokio::test]
 async fn test_input_required_non_remote_task_default_handling() {
-    // Create a mock LLM client 
+    // Create a mock LLM client
     let llm = Arc::new(MockLlmClient::new().with_default_response("WHATEVER"));
-    
+
     // Create our custom task repository
     let task_repository = Arc::new(MockTaskRouterWithTasks::new());
-    
+
     // Create an agent registry
     let registry = Arc::new(AgentRegistry::new());
-    
+
     // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["llm".to_string(), "echo".to_string()]);
 
     // Create the router - now passing the task repository and config
     let config = BidirectionalAgentConfig::default(); // Create default config
     let router = BidirectionalTaskRouter::new(
-        llm.clone(), 
-        registry.clone(), 
+        llm.clone(),
+        registry.clone(),
         enabled_tools,
         Some(task_repository.clone()), // Add task repository
-        &config, // Pass reference to config
+        &config,                       // Pass reference to config
     );
-    
+
     // Create a task that is in InputRequired state but NOT returning from another agent
     // (i.e., no delegated_from or remote_agent_id metadata)
     let task_id = Uuid::new_v4().to_string();
@@ -320,25 +381,23 @@ async fn test_input_required_non_remote_task_default_handling() {
                 metadata: None,
             }),
         },
-        history: Some(vec![
-            Message {
-                role: Role::User,
-                parts: vec![Part::TextPart(TextPart {
-                    type_: "text".to_string(),
-                    text: "Help me with something".to_string(),
-                    metadata: None,
-                })],
+        history: Some(vec![Message {
+            role: Role::User,
+            parts: vec![Part::TextPart(TextPart {
+                type_: "text".to_string(),
+                text: "Help me with something".to_string(),
                 metadata: None,
-            }
-        ]),
+            })],
+            metadata: None,
+        }]),
         artifacts: None,
         metadata: None, // No metadata indicating a remote or delegated task
         session_id: None,
     };
-    
+
     // Add the task to our mock task repository
     task_repository.add_task(task).await;
-    
+
     // Create a follow-up message
     let follow_up_message = Message {
         role: Role::User,
@@ -349,18 +408,27 @@ async fn test_input_required_non_remote_task_default_handling() {
         })],
         metadata: None,
     };
-    
+
     // Process the follow-up message
-    let decision = router.process_follow_up(&task_id, &follow_up_message).await.unwrap();
-    
+    let decision = router
+        .process_follow_up(&task_id, &follow_up_message)
+        .await
+        .unwrap();
+
     // For non-remote tasks, it should default to using the llm tool
     match decision {
         RoutingDecision::Local { tool_name, params } => {
             assert_eq!(tool_name, "llm", "Should use llm tool for regular tasks");
-            assert!(params.get("text").is_some(), "Should include text parameter");
+            assert!(
+                params.get("text").is_some(),
+                "Should include text parameter"
+            );
             let text = params.get("text").and_then(|v| v.as_str()).unwrap();
-            assert_eq!(text, "Here's more information", "Should pass follow-up text to llm");
-        },
+            assert_eq!(
+                text, "Here's more information",
+                "Should pass follow-up text to llm"
+            );
+        }
         _ => panic!("Expected Local decision with llm tool"),
     }
 }

@@ -1,9 +1,9 @@
 // use std::error::Error; // Unused
-use serde_json::{json, Value}; // Keep json and Value for tests
-use mockito::Server; // Keep for tests
+// Keep json and Value for tests
+// Keep for tests
 
-use crate::client::A2aClient; // Keep for tests
-use crate::client::errors::ClientError; // Keep for tests
+// Keep for tests
+// Keep for tests
 // Removed commented out ErrorCompatibility import
 
 // Extend A2aClient with auth-related helper methods if needed
@@ -12,13 +12,13 @@ use crate::client::errors::ClientError; // Keep for tests
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{AgentCard, AgentCapabilities, AgentAuthentication}; // Import necessary types
-    
+    use crate::types::{AgentAuthentication, AgentCapabilities, AgentCard}; // Import necessary types
+
     #[tokio::test]
     async fn test_agent_card_with_auth_requirements() {
         // Arrange
         let auth_schemes = vec!["Bearer".to_string()];
-        
+
         // Create a mock agent card with auth requirements
         let agent_card = json!({
             "name": "Auth Test Agent",
@@ -37,28 +37,30 @@ mod tests {
             "defaultOutputModes": ["text"],
             "skills": []
         });
-        
+
         let mut server = Server::new_async().await;
-        
+
         // Mock the agent card endpoint
-        let mock = server.mock("GET", "/.well-known/agent.json")
+        let mock = server
+            .mock("GET", "/.well-known/agent.json")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(agent_card.to_string())
-            .create_async().await;
-        
+            .create_async()
+            .await;
+
         // Act
         let client = A2aClient::new(&server.url());
         let card = client.get_agent_card().await.unwrap();
-        
+
         // Assert
         assert!(card.authentication.is_some());
         let auth = card.authentication.unwrap();
         assert_eq!(auth.schemes, auth_schemes);
-        
+
         mock.assert_async().await;
     }
-    
+
     // Keep only standard A2A operations tests
     #[tokio::test]
     async fn test_auth_with_tasks_get() {
@@ -66,7 +68,7 @@ mod tests {
         let auth_header = "Authorization";
         let auth_value = "Bearer test-token-123";
         let task_id = "task-123";
-        
+
         let response = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -79,27 +81,30 @@ mod tests {
                 "sessionId": "test-session"
             }
         });
-        
+
         let mut server = Server::new_async().await;
-        
+
         // Mock that requires auth for tasks/get
-        let mock = server.mock("POST", "/")
+        let mock = server
+            .mock("POST", "/")
             .match_header(auth_header, auth_value)
-            .match_body(mockito::Matcher::PartialJson(json!({"method": "tasks/get"})))
+            .match_body(mockito::Matcher::PartialJson(
+                json!({"method": "tasks/get"}),
+            ))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(response.to_string())
-            .create_async().await;
-        
+            .create_async()
+            .await;
+
         // Act
-        let mut client = A2aClient::new(&server.url())
-            .with_auth(auth_header, auth_value);
-        
+        let mut client = A2aClient::new(&server.url()).with_auth(auth_header, auth_value);
+
         let result = client.get_task(task_id).await;
-        
+
         // Assert
         assert!(result.is_ok());
-        
+
         mock.assert_async().await;
     }
 }

@@ -1262,7 +1262,8 @@ Do not add any explanations or text outside the JSON object."#,
                                 }),
                             });
                         }
-                        _ => { // Catches None or any other unexpected string value
+                        _ => {
+                            // Catches None or any other unexpected string value
                             info!("LLM decision for follow-up was unclear. Defaulting to human input.");
                             return Ok(RoutingDecision::Local {
                                 tool_name: "human_input".to_string(),
