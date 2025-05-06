@@ -155,6 +155,25 @@ impl GeminiLlmClient {
             api_endpoint,
             system_prompt,
         }
+    /// Removes fields from a JSON schema that are incompatible with the Gemini API
+    fn clean_schema_for_gemini(&self, schema: &Value) -> Value {
+        let mut cleaned_schema = schema.clone();
+        self.recursive_remove_additional_properties(&mut cleaned_schema);
+        cleaned_schema
+    }
+
+    /// Recursively removes "additionalProperties" fields from a JSON value
+    fn recursive_remove_additional_properties(&self, value: &mut Value) {
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("additionalProperties");
+            for (_, v) in obj {
+                self.recursive_remove_additional_properties(v);
+            }
+        } else if let Some(arr) = value.as_array_mut() {
+            for v in arr {
+                self.recursive_remove_additional_properties(v);
+            }
+        }
     }
 }
 

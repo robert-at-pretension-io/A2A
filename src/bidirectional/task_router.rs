@@ -677,7 +677,7 @@ Produce a JSON array where each element is an object matching this schema:
             latest_request, memory_text
         );
 
-        let schema_b = json!({
+        let mut schema_b = json!({
             "type": "array",
             "items": {
                 "type": "object",
@@ -695,6 +695,7 @@ Produce a JSON array where each element is an object matching this schema:
                 "required": ["id", "input_message", "metadata"]
             }
         });
+        schema_b = self.clean_schema_for_gemini(&schema_b);
 
         trace!(prompt = %plan_prompt, "NP2.B: Decomposition plan prompt.");
         let decision_val_b = self
@@ -981,14 +982,17 @@ Do not add any explanations or text outside the JSON object."#,
                     )
                 };
 
-                let schema_dp3 = json!({
+                let mut schema_dp3 = json!({
                     "type": "object",
                     "properties": {
                         "tool_name": { "type": "string" },
-                        "params": { "type": "object", "additionalProperties": true }
+                        "params": { "type": "object" }
                     },
                     "required": ["tool_name", "params"]
                 });
+                if let Some(gemini_client) = self.llm.as_any().downcast_ref::<GeminiLlmClient>() {
+                    schema_dp3 = gemini_client.clean_schema_for_gemini(&schema_dp3);
+                }
                 trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
 
                 info!("DP3: Asking LLM to choose tool and extract parameters.");
