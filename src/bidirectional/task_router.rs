@@ -696,10 +696,10 @@ Produce a JSON array where each element is an object matching this schema:
                 "required": ["id", "input_message", "metadata"]
             }
         });
-        // For Gemini support, clean the schema
-        if let Some(gemini_client) = self.llm.as_any().downcast_ref::<GeminiLlmClient>() {
-            schema_b = gemini_client.clean_schema_for_gemini(&schema_b);
-        }
+        // Schema cleaning for Gemini was removed as it's no longer sent to the API.
+        // if let Some(gemini_client) = self.llm.as_any().downcast_ref::<GeminiLlmClient>() {
+        //     schema_b = gemini_client.clean_schema_for_gemini(&schema_b);
+        // }
 
         trace!(prompt = %plan_prompt, "NP2.B: Decomposition plan prompt.");
         let decision_val_b = self
@@ -994,9 +994,10 @@ Do not add any explanations or text outside the JSON object."#,
                     },
                     "required": ["tool_name", "params"]
                 });
-                if let Some(gemini_client) = self.llm.as_any().downcast_ref::<GeminiLlmClient>() {
-                    schema_dp3 = gemini_client.clean_schema_for_gemini(&schema_dp3);
-                }
+                // Schema cleaning for Gemini was removed as it's no longer sent to the API.
+                // if let Some(gemini_client) = self.llm.as_any().downcast_ref::<GeminiLlmClient>() {
+                //     schema_dp3 = gemini_client.clean_schema_for_gemini(&schema_dp3);
+                // }
                 trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
 
                 debug!("DP3: Asking LLM to choose tool and extract parameters.");
