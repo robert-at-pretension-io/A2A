@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest;
 use serde_json::{json, Value};
+use std::any::Any;
 use tracing::{debug, error, instrument, /* info, */ trace}; // Removed info
 
 /// Simple LLM client interface
@@ -23,6 +24,9 @@ pub trait LlmClient: Send + Sync {
         system_prompt_override: Option<&str>,
         output_schema: Value,
     ) -> Result<Value>;
+    
+    /// Allow downcasting to concrete types
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Simple implementation of an LLM client that delegates to Claude
@@ -42,6 +46,9 @@ impl ClaudeLlmClient {
 
 #[async_trait]
 impl LlmClient for ClaudeLlmClient {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     #[instrument(skip(self, prompt_text, system_prompt_override), fields(prompt_len = prompt_text.len()))]
     async fn complete(
         &self,
@@ -154,27 +161,43 @@ impl GeminiLlmClient {
             model_id,
             api_endpoint,
             system_prompt,
+        }
     }
-}
     
-impl GeminiLlmClient {
-    /// Removes fields from a JSON schema that are incompatible with the Gemini API
-    fn clean_schema_for_gemini(&self, schema: &Value) -> Value {
+    /// Makes a JSON schema compatible with the Gemini API by:
+    /// 1. Removing additionalProperties fields
+    /// 2. Ensuring object types have at least one property
+    pub fn clean_schema_for_gemini(&self, schema: &Value) -> Value {
         let mut cleaned_schema = schema.clone();
-        self.recursive_remove_additional_properties(&mut cleaned_schema);
+        self.recursive_clean_schema_for_gemini(&mut cleaned_schema);
         cleaned_schema
     }
 
-    /// Recursively removes "additionalProperties" fields from a JSON value
-    fn recursive_remove_additional_properties(&self, value: &mut Value) {
+    /// Recursively processes a JSON schema to make it compatible with Gemini
+    fn recursive_clean_schema_for_gemini(&self, value: &mut Value) {
         if let Some(obj) = value.as_object_mut() {
+            // Remove additionalProperties
             obj.remove("additionalProperties");
+            
+            // If this is an object type with no properties or empty properties, add a placeholder
+            if obj.get("type").and_then(Value::as_str) == Some("object") {
+                if !obj.contains_key("properties") || obj["properties"].as_object().map_or(true, |p| p.is_empty()) {
+                    obj.insert("properties".to_string(), json!({
+                        "_placeholder": {
+                            "type": "string",
+                            "description": "Placeholder property for Gemini API compatibility"
+                        }
+                    }));
+                }
+            }
+            
+            // Process all child properties
             for (_, v) in obj {
-                self.recursive_remove_additional_properties(v);
+                self.recursive_clean_schema_for_gemini(v);
             }
         } else if let Some(arr) = value.as_array_mut() {
             for v in arr {
-                self.recursive_remove_additional_properties(v);
+                self.recursive_clean_schema_for_gemini(v);
             }
         }
     }
@@ -182,6 +205,9 @@ impl GeminiLlmClient {
 
 #[async_trait]
 impl LlmClient for GeminiLlmClient {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     #[instrument(skip(self, system_prompt_override), fields(prompt_len = prompt_text.len()))]
     async fn complete(
         &self,
