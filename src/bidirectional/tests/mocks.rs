@@ -35,22 +35,40 @@ impl MockLlmClient {
     }
 }
 
+use serde_json::{json, Value}; // Add Value
+
 #[async_trait]
 impl LlmClient for MockLlmClient {
-    async fn complete(&self, prompt: &str) -> Result<String> {
+    async fn complete(&self, prompt_text: &str, _system_prompt_override: Option<&str>) -> Result<String> {
         // Record the call
-        self.calls.lock().unwrap().push(prompt.to_string());
+        self.calls.lock().unwrap().push(prompt_text.to_string());
         
         // Check if we have a specific response for this prompt
         let responses = self.responses.lock().unwrap();
         for (key, value) in responses.iter() {
-            if prompt.contains(key) {
+            if prompt_text.contains(key) {
                 return Ok(value.clone());
             }
         }
         
         // Return default response
         Ok(self.default_response.clone())
+    }
+
+    async fn complete_structured(
+        &self,
+        _prompt_text: &str,
+        _system_prompt_override: Option<&str>,
+        _output_schema: Value, // output_schema is not used by this mock's logic
+    ) -> Result<Value> {
+        // For mock, try to parse default response as JSON.
+        // If not valid JSON, wrap it in a simple JSON structure.
+        // This allows tests using this mock for structured calls to get some form of JSON back.
+        if let Ok(json_val) = serde_json::from_str(&self.default_response) {
+            Ok(json_val)
+        } else {
+            Ok(json!({"response": self.default_response}))
+        }
     }
 }
 

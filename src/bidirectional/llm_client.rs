@@ -116,3 +116,137 @@ impl LlmClient for ClaudeLlmClient {
             })
     }
 }
+
+/// LLM client for Google's Gemini models
+pub struct GeminiLlmClient {
+    api_key: String,
+    model_id: String,
+    api_endpoint: String, // Base endpoint, e.g., "https://generativelanguage.googleapis.com/v1beta/models"
+    system_prompt: String, // General system prompt, can be overridden
+}
+
+impl GeminiLlmClient {
+    pub fn new(api_key: String, model_id: String, api_endpoint: String, system_prompt: String) -> Self {
+        Self {
+            api_key,
+            model_id,
+            api_endpoint,
+            system_prompt,
+        }
+    }
+}
+
+#[async_trait]
+impl LlmClient for GeminiLlmClient {
+    #[instrument(skip(self, prompt_text, system_prompt_override), fields(prompt_len = prompt_text.len()))]
+    async fn complete(&self, prompt_text: &str, system_prompt_override: Option<&str>) -> Result<String> {
+        debug!("Sending request to Gemini LLM for text completion.");
+        // For text completion, we use complete_structured with a simple text schema.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "response": {
+                    "type": "string"
+                }
+            },
+            "required": ["response"]
+        });
+
+        let structured_response = self.complete_structured(prompt_text, system_prompt_override, schema).await?;
+        
+        structured_response.get("response")
+            .and_then(Value::as_str)
+            .map(String::from)
+            .ok_or_else(|| anyhow!("Gemini structured response for text completion did not contain a 'response' string field."))
+    }
+
+    #[instrument(skip(self, prompt_text, system_prompt_override, output_schema), fields(prompt_len = prompt_text.len()))]
+    async fn complete_structured(
+        &self,
+        prompt_text: &str,
+        system_prompt_override: Option<&str>,
+        output_schema: Value,
+    ) -> Result<Value> {
+        debug!("Sending request to Gemini LLM for structured (JSON) completion.");
+        trace!(?prompt_text, ?output_schema, "LLM prompt content and output schema.");
+
+        let client = reqwest::Client::new();
+        let system_instruction = system_prompt_override.unwrap_or(&self.system_prompt);
+
+        // API endpoint for non-streaming generation
+        let generate_api = "generateContent"; 
+        let url = format!("{}/{}:{}?key={}", self.api_endpoint, self.model_id, generate_api, self.api_key);
+        trace!(%url, "Gemini API URL.");
+        
+        let mut contents = Vec::new();
+
+        // System instructions are typically provided as part of the initial user/model turns
+        if !system_instruction.is_empty() {
+            contents.push(json!({
+                "role": "user",
+                "parts": [{"text": system_instruction}]
+            }));
+            contents.push(json!({ 
+                "role": "model",
+                "parts": [{"text": "Understood. I will respond according to the provided schema and instructions."}]
+            }));
+        }
+        
+        // Add the main user prompt
+        contents.push(json!({
+            "role": "user",
+            "parts": [{"text": prompt_text}]
+        }));
+
+        let payload = json!({
+            "contents": contents,
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": output_schema,
+            }
+        });
+        trace!(payload = %payload, "Gemini API request payload.");
+
+        let response = client.post(&url)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to send request to Gemini API")?;
+        debug!(status = %response.status(), "Received response from Gemini API.");
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            error!(%status, error_body = %error_text, "Gemini API request failed.");
+            return Err(anyhow!("Gemini API error ({}): {}", status, error_text));
+        }
+
+        let response_json: Value = response.json().await.context("Failed to parse Gemini API response as JSON")?;
+        trace!(response_json = %response_json, "Parsed Gemini API response.");
+
+        // Extract the structured JSON from the response
+        // Gemini's response for generateContent with JSON schema is typically under `candidates[0].content.parts[0].text`
+        // where `text` itself is the JSON string.
+        if let Some(text_json_str) = response_json
+            .get("candidates")
+            .and_then(Value::as_array)
+            .and_then(|arr| arr.get(0))
+            .and_then(|cand| cand.get("content"))
+            .and_then(|cont| cont.get("parts"))
+            .and_then(Value::as_array)
+            .and_then(|parts_arr| parts_arr.get(0))
+            .and_then(|part| part.get("text"))
+            .and_then(Value::as_str)
+        {
+            return serde_json::from_str(text_json_str)
+                .map_err(|e| {
+                    error!(error = %e, raw_json_text = %text_json_str, "Failed to parse JSON text from Gemini response part.");
+                    anyhow!("Gemini response part was not valid JSON: {}. Content: '{}'", e, text_json_str)
+                });
+        }
+        
+        error!(full_response = %response_json, "Could not extract structured JSON from Gemini response. Unexpected format.");
+        Err(anyhow!("Failed to extract structured JSON from Gemini response. Response format unexpected."))
+    }
+}

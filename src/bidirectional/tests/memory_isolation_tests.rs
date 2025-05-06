@@ -21,7 +21,14 @@ use uuid::Uuid;
 async fn test_memory_isolation_between_sessions() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Set up session 1
@@ -68,7 +75,14 @@ async fn test_memory_isolation_between_sessions() -> anyhow::Result<()> {
 async fn test_memory_isolation_between_users() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Create two tasks from different users (with different user IDs in metadata)
@@ -113,7 +127,14 @@ async fn test_memory_isolation_between_users() -> anyhow::Result<()> {
 async fn test_memory_isolation_with_metadata_filtering() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Add tasks with different user IDs and thread IDs in metadata
@@ -189,7 +210,14 @@ async fn test_memory_isolation_with_metadata_filtering() -> anyhow::Result<()> {
 async fn test_memory_isolation_in_task_context() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Create tasks for different projects
@@ -250,7 +278,14 @@ async fn test_memory_isolation_in_task_context() -> anyhow::Result<()> {
 async fn test_memory_isolation_with_security_levels() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Create tasks with different security levels
@@ -309,7 +344,14 @@ async fn test_memory_isolation_with_security_levels() -> anyhow::Result<()> {
 async fn test_memory_isolation_in_delegated_chain() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Create a chain of delegated tasks representing a workflow across multiple agents
@@ -360,7 +402,14 @@ async fn test_memory_isolation_in_delegated_chain() -> anyhow::Result<()> {
 async fn test_memory_isolation_between_organizations() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Create tasks from different organizations
@@ -410,7 +459,14 @@ async fn test_memory_isolation_between_organizations() -> anyhow::Result<()> {
 async fn test_memory_isolation_across_agent_restarts() -> anyhow::Result<()> {
     // Create a first agent instance
     let mut config1 = BidirectionalAgentConfig::default();
-    config1.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config1.llm.claude_api_key = Some("test_key_claude1".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config1.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini1".to_string()));
+    } else {
+        config1.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude1".to_string()));
+    }
     let mut agent1 = BidirectionalAgent::new(config1)?;
     
     // Add tasks to memory
@@ -422,7 +478,14 @@ async fn test_memory_isolation_across_agent_restarts() -> anyhow::Result<()> {
     
     // Create a second agent instance (simulating restart)
     let mut config2 = BidirectionalAgentConfig::default();
-    config2.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config2.llm.claude_api_key = Some("test_key_claude2".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config2.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini2".to_string()));
+    } else {
+        config2.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude2".to_string()));
+    }
     let mut agent2 = BidirectionalAgent::new(config2)?;
     
     // Memory should be empty in new instance (doesn't persist by default)
@@ -440,7 +503,14 @@ async fn test_memory_isolation_across_agent_restarts() -> anyhow::Result<()> {
 async fn test_memory_isolation_with_permissions() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Create tasks with different permission levels
@@ -496,7 +566,14 @@ async fn test_memory_isolation_with_permissions() -> anyhow::Result<()> {
 async fn test_memory_context_in_followup_commands() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Simulate a first command about connecting to an agent
@@ -541,7 +618,14 @@ async fn test_memory_context_in_followup_commands() -> anyhow::Result<()> {
 async fn test_memory_isolation_for_similar_tasks() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Create similar tasks from different users

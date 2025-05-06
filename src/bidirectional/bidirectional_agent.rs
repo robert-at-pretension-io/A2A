@@ -144,7 +144,7 @@ use uuid::Uuid;
 // Use items from the new config module (relative to parent mod.rs)
 use super::agent_helpers;
 use super::config::*;
-use super::llm_client::{LlmClient, ClaudeLlmClient};
+use super::llm_client::{LlmClient, ClaudeLlmClient, GeminiLlmClient}; // Added GeminiLlmClient
 use super::task_router::ExecutionMode;
 // Import the router struct
 use crate::bidirectional::BidirectionalTaskRouter;
@@ -244,16 +244,23 @@ impl BidirectionalAgent {
 
         // Create the LLM client (local helper)
         debug!("Initializing LLM client.");
-        let llm: Arc<dyn LlmClient> = if let Some(api_key) = &config.llm.claude_api_key {
-            debug!("Using Claude API key from configuration/environment."); // Changed to debug
-            Arc::new(ClaudeLlmClient::new(api_key.clone(), config.llm.system_prompt.clone()))
+        let llm: Arc<dyn LlmClient> = if let Some(gemini_key) = &config.llm.gemini_api_key {
+            info!("Using Gemini API key from configuration/environment. Gemini will be the primary LLM.");
+            Arc::new(GeminiLlmClient::new(
+                gemini_key.clone(),
+                config.llm.gemini_model_id.clone(),
+                config.llm.gemini_api_endpoint.clone(),
+                config.llm.system_prompt.clone(),
+            ))
+        } else if let Some(claude_key) = &config.llm.claude_api_key {
+            info!("Using Claude API key from configuration/environment. Claude will be the primary LLM (Gemini not configured).");
+            Arc::new(ClaudeLlmClient::new(
+                claude_key.clone(),
+                config.llm.system_prompt.clone(),
+            ))
         } else {
-            // Allow running without LLM if only acting as server/client without local processing
-            warn!("No Claude API key provided. Local LLM processing will not be available.");
-            // Provide a dummy LLM client or handle this case appropriately
-            // TODO: Implement a dummy LLM client that returns errors or default responses
-            error!("No LLM configuration provided. Set CLAUDE_API_KEY environment variable or add claude_api_key to config file.");
-            return Err(anyhow!("No LLM configuration provided. Cannot proceed without LLM client.")); // Make it an error
+            error!("No LLM configuration provided. Set GEMINI_API_KEY or CLAUDE_API_KEY environment variable, or add corresponding keys to config file.");
+            return Err(anyhow!("No LLM configuration provided. Cannot proceed without LLM client."));
         };
         trace!(system_prompt = %config.llm.system_prompt, "LLM client created.");
 

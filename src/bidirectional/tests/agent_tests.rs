@@ -6,8 +6,13 @@ use std::env;
 
 fn create_test_config() -> BidirectionalAgentConfig {
     // Create a test configuration with a mock LLM API key
+    // Prioritize Gemini for testing if both are set, otherwise Claude
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test-api-key".to_string());
+    if env::var("GEMINI_API_KEY").is_ok() || env::var("TEST_USE_GEMINI").is_ok() {
+        config.llm.gemini_api_key = Some(env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test-gemini-key".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test-claude-key".to_string()));
+    }
     config.server.port = 9090;
     config.server.bind_address = "127.0.0.1".to_string();
     config.server.agent_id = "test-agent".to_string();
@@ -18,7 +23,10 @@ fn create_test_config() -> BidirectionalAgentConfig {
 #[test]
 fn test_agent_card_creation() {
     // Set up the environment to avoid actual API calls
-    env::set_var("CLAUDE_API_KEY", "test-api-key");
+    // Ensure at least one API key is set for agent creation to succeed
+    if env::var("GEMINI_API_KEY").is_err() && env::var("CLAUDE_API_KEY").is_err() {
+        env::set_var("CLAUDE_API_KEY", "test-claude-key"); // Default to Claude for this test if none are set
+    }
     
     // Create a test configuration
     let config = create_test_config();
@@ -68,15 +76,17 @@ fn test_agent_config_validation() {
     // Test with missing LLM API key
     let mut config = create_test_config();
     config.llm.claude_api_key = None;
+    config.llm.gemini_api_key = None; // Ensure both are None
     
     // Agent creation should fail without an API key
-    let agent = BidirectionalAgent::new(config);
-    assert!(agent.is_err());
+    let agent_result = BidirectionalAgent::new(config);
+    assert!(agent_result.is_err());
     
     // Check that the error message indicates the missing API key
-    match agent {
+    match agent_result {
         Err(e) => {
-            assert!(e.to_string().contains("No LLM configuration provided"));
+            let err_msg = e.to_string();
+            assert!(err_msg.contains("No LLM configuration provided"), "Error message was: {}", err_msg);
         },
         Ok(_) => {
             panic!("Expected an error with missing LLM API key");
@@ -87,7 +97,10 @@ fn test_agent_config_validation() {
 #[test]
 fn test_client_initialization() {
     // Set up the environment to avoid actual API calls
-    env::set_var("CLAUDE_API_KEY", "test-api-key");
+    // Ensure at least one API key is set for agent creation to succeed
+    if env::var("GEMINI_API_KEY").is_err() && env::var("CLAUDE_API_KEY").is_err() {
+        env::set_var("CLAUDE_API_KEY", "test-claude-key"); // Default to Claude for this test if none are set
+    }
     
     // Test with target URL
     let mut config = create_test_config();

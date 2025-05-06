@@ -21,7 +21,10 @@ fn test_default_config() {
     
     // Check default LLM settings
     assert_eq!(config.llm.claude_api_key, None);
+    assert_eq!(config.llm.gemini_api_key, None);
     assert!(config.llm.system_prompt.contains("You are an AI agent assistant"));
+    assert_eq!(config.llm.gemini_model_id, "gemini-1.5-flash-latest");
+    assert_eq!(config.llm.gemini_api_endpoint, "https://generativelanguage.googleapis.com/v1beta/models");
     
     // Check default mode settings
     assert_eq!(config.mode.repl, false);
@@ -47,8 +50,11 @@ fn test_load_config_from_valid_toml() {
         target_url = "http://example.com/agent"
         
         [llm]
-        claude_api_key = "test-api-key"
+        claude_api_key = "test-claude-key"
         system_prompt = "Test system prompt"
+        gemini_api_key = "test-gemini-key"
+        gemini_model_id = "gemini-test-model"
+        gemini_api_endpoint = "http://localhost/gemini"
         
         [mode]
         repl = true
@@ -71,8 +77,11 @@ fn test_load_config_from_valid_toml() {
     assert_eq!(config.client.target_url, Some("http://example.com/agent".to_string()));
     
     // Check LLM settings
-    assert_eq!(config.llm.claude_api_key, Some("test-api-key".to_string()));
+    assert_eq!(config.llm.claude_api_key, Some("test-claude-key".to_string()));
+    assert_eq!(config.llm.gemini_api_key, Some("test-gemini-key".to_string()));
     assert_eq!(config.llm.system_prompt, "Test system prompt");
+    assert_eq!(config.llm.gemini_model_id, "gemini-test-model");
+    assert_eq!(config.llm.gemini_api_endpoint, "http://localhost/gemini");
     
     // Check mode settings
     assert_eq!(config.mode.repl, true);

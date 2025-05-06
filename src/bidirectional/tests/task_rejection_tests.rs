@@ -21,11 +21,27 @@ impl MockLlmClient {
     }
 }
 
+use serde_json::{json, Value}; // Add Value
+
 #[async_trait]
 impl LlmClient for MockLlmClient {
-    async fn complete(&self, _prompt: &str) -> anyhow::Result<String> {
+    async fn complete(&self, _prompt_text: &str, _system_prompt_override: Option<&str>) -> anyhow::Result<String> {
         // Simply return the configured response
         Ok(self.response.clone())
+    }
+
+    async fn complete_structured(
+        &self,
+        _prompt_text: &str,
+        _system_prompt_override: Option<&str>,
+        _output_schema: Value,
+    ) -> anyhow::Result<Value> {
+        // For mock, try to parse default response as JSON, or return it as a string value
+        if let Ok(json_val) = serde_json::from_str(&self.response) {
+            Ok(json_val)
+        } else {
+            Ok(json!({"response": self.response}))
+        }
     }
 }
 

@@ -76,7 +76,14 @@ async fn test_rolling_memory() {
 async fn test_rolling_memory_outgoing_only() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // 1. Simulate sending an outgoing task (agent -> remote)
@@ -124,7 +131,14 @@ async fn test_rolling_memory_outgoing_only() -> anyhow::Result<()> {
 async fn test_agent_implementation_outgoing_only() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Simulate the behavior of send_task_to_remote manually (without needing a real remote)
@@ -158,7 +172,14 @@ async fn test_agent_implementation_outgoing_only() -> anyhow::Result<()> {
 async fn test_delegated_tasks_not_in_memory() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Create a task with delegated_from metadata (indicating it was delegated by another agent)
@@ -195,7 +216,14 @@ async fn test_delegated_tasks_not_in_memory() -> anyhow::Result<()> {
 async fn test_repl_memory_commands() -> anyhow::Result<()> {
     // Create a configured agent for testing
     let mut config = BidirectionalAgentConfig::default();
-    config.llm.claude_api_key = Some("test_key".to_string());
+    // Ensure an LLM key is set for agent creation
+    if std::env::var("GEMINI_API_KEY").is_err() && std::env::var("CLAUDE_API_KEY").is_err() {
+        config.llm.claude_api_key = Some("test_key_claude".to_string());
+    } else if std::env::var("GEMINI_API_KEY").is_ok() {
+        config.llm.gemini_api_key = Some(std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "test_key_gemini".to_string()));
+    } else {
+        config.llm.claude_api_key = Some(std::env::var("CLAUDE_API_KEY").unwrap_or_else(|_| "test_key_claude".to_string()));
+    }
     let mut agent = BidirectionalAgent::new(config)?;
     
     // Add some test tasks to the rolling memory
