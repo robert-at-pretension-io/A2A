@@ -12,119 +12,134 @@ use chrono::Utc;
 
 #[tokio::test]
 async fn test_router_local_decision() {
-    // Create a mock LLM client that always returns "LOCAL"
-    let llm = Arc::new(MockLlmClient::new().with_default_response("LOCAL"));
+    // Mock LLM responses:
+    // 1. For DP2 (routing decision): LOCAL
+    // 2. For DP3 (tool choice): echo tool with "hello"
+    let llm = Arc::new(
+        MockLlmClient::new()
+            .with_structured_response("decide the best course of action", json!({
+                "decision_type": "LOCAL"
+            }))
+            .with_structured_response("choose the SINGLE most appropriate tool", json!({
+                "tool_name": "echo",
+                "params": { "text": "hello" }
+            }))
+            // Add a default in case prompt matching is too brittle or for unexpected calls
+            .with_default_structured_response(json!({"decision_type": "LOCAL", "tool_name": "llm", "params": {}}))
+    );
     
-    // Create an agent registry
     let registry = Arc::new(AgentRegistry::new());
-    // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
-    let mut config = BidirectionalAgentConfig::default(); // Use default config
+    let config = BidirectionalAgentConfig::default();
 
-    // Create the router
     let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
 
-    // Create a test task
     let task = create_test_task("What is the capital of France?");
-    
-    // Test the routing decision - use decide method with task's send params
     let decision = router.decide(&task.into_send_params()).await.unwrap();
 
-    // Verify that the decision is to execute locally (RoutingDecision::Local)
-    // Check that a tool_name was provided and params exist (ignore params content for now)
-    assert!(matches!(decision, RoutingDecision::Local { tool_name, params: _ } if !tool_name.is_empty()));
+    match decision {
+        RoutingDecision::Local { tool_name, params } => {
+            assert_eq!(tool_name, "echo");
+            assert_eq!(params.get("text").and_then(Value::as_str), Some("hello"));
+        }
+        other => panic!("Expected Local decision, got {:?}", other),
+    }
 }
 
 #[tokio::test]
 async fn test_router_remote_decision() {
-    // Create a mock LLM client that returns a remote decision
-    let llm = Arc::new(MockLlmClient::new().with_default_response("REMOTE: test-agent"));
+    // Mock LLM response for DP2 (routing decision)
+    let llm = Arc::new(
+        MockLlmClient::new()
+            .with_default_structured_response(json!({
+                "decision_type": "REMOTE",
+                "agent_id": "test-agent"
+            }))
+    );
     
-    // Create an agent registry
     let registry = Arc::new(AgentRegistry::new());
     
-    // Add a test agent to the registry
     let agent_card = create_test_agent_card("http://example.com/agent");
     registry.agents.insert("test-agent".to_string(), CachedAgentInfo {
         card: agent_card.clone(),
         last_checked: Utc::now(),
     });
-    // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string()]);
-    let mut config = BidirectionalAgentConfig::default(); // Use default config
+    let config = BidirectionalAgentConfig::default();
 
-    // Create the router
     let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
 
-    // Create a test task
     let task = create_test_task("Please forward this to test-agent");
-    
-    // Test the routing decision - use decide method with task's send params
     let decision = router.decide(&task.into_send_params()).await.unwrap();
 
-    // Verify that the decision is to execute remotely with the correct agent ID (RoutingDecision::Remote)
     assert!(matches!(decision, RoutingDecision::Remote { agent_id } if agent_id == "test-agent"));
 }
 
 #[tokio::test]
 async fn test_router_fallback_to_local_for_unknown_agent() {
-    // Create a mock LLM client that returns a remote decision for an unknown agent
-    let llm = Arc::new(MockLlmClient::new().with_default_response("REMOTE: unknown-agent"));
+    // Mock LLM response for DP2: delegates to an unknown agent
+    let llm = Arc::new(
+        MockLlmClient::new()
+            .with_default_structured_response(json!({
+                "decision_type": "REMOTE",
+                "agent_id": "unknown-agent"
+            }))
+    );
     
-    // Create an agent registry (with no agents)
-    let registry = Arc::new(AgentRegistry::new());
-    // Provide a default list of enabled tools for the test
-    let enabled_tools = Arc::new(vec!["echo".to_string()]);
-    let mut config = BidirectionalAgentConfig::default(); // Use default config
+    let registry = Arc::new(AgentRegistry::new()); // Empty registry
+    let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+    let config = BidirectionalAgentConfig::default();
 
-    // Create the router
     let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
 
-    // Create a test task
     let task = create_test_task("Please forward this to unknown-agent");
-    
-    // Test the routing decision - use decide method with task's send params
     let decision = router.decide(&task.into_send_params()).await.unwrap();
 
-    // Verify that the decision falls back to local execution (RoutingDecision::Local)
-    // It should default to the 'llm' tool when the LLM fails to choose or chooses an invalid tool.
-    assert!(matches!(decision, RoutingDecision::Local { tool_name, params: _ } if tool_name == "llm"));
+    // Fallback should be Local with 'llm' tool
+    match decision {
+        RoutingDecision::Local { tool_name, params: _ } => {
+            assert_eq!(tool_name, "llm");
+        }
+        other => panic!("Expected Local decision, got {:?}", other),
+    }
 }
 
 #[tokio::test]
 async fn test_router_fallback_to_local_for_unclear_decision() {
-    // Create a mock LLM client that returns an unclear decision
-    let llm = Arc::new(MockLlmClient::new().with_default_response("I'm not sure"));
+    // Mock LLM response for DP2: unclear decision_type
+    let llm = Arc::new(
+        MockLlmClient::new()
+            .with_default_structured_response(json!({
+                "decision_type": "MAYBE_REMOTE_OR_LOCAL", // Invalid enum value
+                "agent_id": "some-agent"
+            }))
+    );
     
-    // Create an agent registry
     let registry = Arc::new(AgentRegistry::new());
-    // Provide a default list of enabled tools for the test
-    let enabled_tools = Arc::new(vec!["echo".to_string()]);
-    let mut config = BidirectionalAgentConfig::default(); // Use default config
+    let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+    let config = BidirectionalAgentConfig::default();
 
-    // Create the router
     let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
 
-    // Create a test task
     let task = create_test_task("What should I do with this?");
-    
-    // Test the routing decision - use decide method with task's send params
     let decision = router.decide(&task.into_send_params()).await.unwrap();
-
-    // Verify that the decision falls back to local execution (RoutingDecision::Local)
-    // It should default to the 'llm' tool when the LLM decision is unclear.
-    assert!(matches!(decision, RoutingDecision::Local { tool_name, params: _ } if tool_name == "llm"));
+    
+    // Fallback should be Local with 'llm' tool
+    match decision {
+        RoutingDecision::Local { tool_name, params: _ } => {
+            assert_eq!(tool_name, "llm");
+        }
+        other => panic!("Expected Local decision, got {:?}", other),
+    }
 }
 
 #[tokio::test]
 async fn test_router_prompt_formatting() {
-    // Create a mock LLM client to capture the prompt
-    let llm = Arc::new(MockLlmClient::new());
+    // Create a mock LLM client to capture calls
+    let llm = Arc::new(MockLlmClient::new()); // Uses default structured response
     
-    // Create an agent registry with some test agents
     let registry = Arc::new(AgentRegistry::new());
     
-    // Add test agents to the registry
     let agent_card1 = create_test_agent_card("http://example.com/agent1");
     let agent_card2 = create_test_agent_card("http://example.com/agent2");
     registry.agents.insert("test-agent-1".to_string(), CachedAgentInfo {
@@ -135,55 +150,48 @@ async fn test_router_prompt_formatting() {
         card: agent_card2.clone(),
         last_checked: Utc::now(),
     });
-    // Provide a default list of enabled tools for the test
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
-    let mut config = BidirectionalAgentConfig::default(); // Use default config
+    let config = BidirectionalAgentConfig::default();
 
-    // Create the router
     let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools, None, &config);
 
-    // Create a test task
     let task = create_test_task("Please route this task appropriately");
     
-    // Make the routing decision
+    // The default mock response is LOCAL, then tool choice 'llm'.
     let _ = router.decide(&task.into_send_params()).await.unwrap();
     
-    // Check that the prompt sent to the LLM contains key elements
-    // The router now makes TWO calls: one for routing, one for tool choice if local.
     let calls = llm.calls.lock().unwrap();
-    assert_eq!(calls.len(), 2, "Expected two LLM calls (routing + tool choice)");
+    assert_eq!(calls.len(), 2, "Expected two LLM calls (routing + tool choice if local)");
     
-    // Check the first prompt (routing)
-    let routing_prompt = &calls[0];
-    assert!(routing_prompt.contains("You need to decide whether to handle a task locally using your own tools, delegate it to another available agent, or reject it entirely"));
-    assert!(routing_prompt.contains("Please route this task appropriately"));
-    assert!(routing_prompt.contains("test-agent-1"));
-    assert!(routing_prompt.contains("test-agent-2"));
-    assert!(routing_prompt.contains("LOCAL"));
-    assert!(routing_prompt.contains("REMOTE"));
+    // Check the first prompt (routing - DP2)
+    let (routing_prompt_text, routing_schema) = &calls[0];
+    assert!(routing_prompt_text.contains("decide the best course of action"));
+    assert!(routing_prompt_text.contains("Please route this task appropriately"));
+    assert!(routing_prompt_text.contains("test-agent-1")); // Check if agent info is in prompt
+    assert!(routing_prompt_text.contains("test-agent-2"));
+    assert!(routing_schema.is_some());
+    assert_eq!(routing_schema.as_ref().unwrap().get("properties").unwrap().get("decision_type").unwrap().get("enum").unwrap().as_array().unwrap().len(), 3); // LOCAL, REMOTE, REJECT
 
-    // Check the second prompt (tool choice)
-    let tool_choice_prompt = &calls[1];
-    assert!(tool_choice_prompt.contains("You have decided to handle the latest request in the following CONVERSATION HISTORY locally"));
-    assert!(tool_choice_prompt.contains("AVAILABLE LOCAL TOOLS:"));
-    assert!(tool_choice_prompt.contains("choose the SINGLE most appropriate tool"));
-    // Removed assertions using the old 'prompt' variable
-
-    // The updated implementation only uses 2 LLM calls:
-    // 1. For routing decision (DP2)
-    // 2. For tool choice (DP3)
-    
-    // For this test, we only need to check that there are 2 calls
-    assert_eq!(calls.len(), 2, "Expected 2 LLM calls (routing + tool choice) but found {} calls", calls.len());
+    // Check the second prompt (tool choice - DP3, because default mock is LOCAL)
+    let (tool_choice_prompt_text, tool_choice_schema) = &calls[1];
+    assert!(tool_choice_prompt_text.contains("choose the SINGLE most appropriate tool"));
+    assert!(tool_choice_prompt_text.contains("AVAILABLE LOCAL TOOLS:"));
+    assert!(tool_choice_schema.is_some());
+    assert!(tool_choice_schema.as_ref().unwrap().get("properties").unwrap().get("tool_name").is_some());
+    assert!(tool_choice_schema.as_ref().unwrap().get("properties").unwrap().get("params").is_some());
 }
 
 
 #[tokio::test]
 async fn test_router_needs_clarification() {
-    // Mock LLM responses: First for clarification check, second is irrelevant as it shouldn't be called
-    let llm = Arc::new(MockLlmClient::new()
-        .with_response("CLARITY: NEEDS_CLARIFY", "CLARITY: NEEDS_CLARIFY\nQUESTION: \"What specific topic are you asking about?\"")
-        .with_default_response("CLARITY: CLEAR") // Default if no specific match
+    // Mock LLM response for NP1 (clarification check)
+    let llm = Arc::new(
+        MockLlmClient::new()
+            .with_structured_response("judge whether the request is specific and complete", json!({
+                "clarity": "NEEDS_CLARIFY",
+                "question": "What specific topic are you asking about?"
+            }))
+            .with_default_structured_response(json!({"clarity": "CLEAR"})) // Default if no specific match
     );
 
     let registry = Arc::new(AgentRegistry::new());
@@ -193,13 +201,9 @@ async fn test_router_needs_clarification() {
 
     let router = BidirectionalTaskRouter::new(llm.clone(), registry, enabled_tools, None, &config);
 
-    // Create a vague test task
     let task = create_test_task("Tell me about it.");
+    let decision = router.decide(&task.into_send_params()).await.unwrap();
 
-    // Test the routing decision (should call route_task which calls decide)
-    let decision = router.decide(&task.into_send_params()).await.unwrap(); // Use decide
-
-    // Verify that the decision is NeedsClarification
     match decision {
         RoutingDecision::NeedsClarification { question } => {
             assert_eq!(question, "What specific topic are you asking about?");
@@ -207,11 +211,13 @@ async fn test_router_needs_clarification() {
         other => panic!("Expected NeedsClarification decision, got {:?}", other),
     }
 
-    // Verify the correct prompt was sent for clarification check
     let calls = llm.calls.lock().unwrap();
     assert_eq!(calls.len(), 1, "Expected only one LLM call for clarification check");
-    assert!(calls[0].contains("judge whether the request is specific and complete"));
-    assert!(calls[0].contains("Tell me about it."));
+    let (prompt_text, schema) = &calls[0];
+    assert!(prompt_text.contains("judge whether the request is specific and complete"));
+    assert!(prompt_text.contains("Tell me about it."));
+    assert!(schema.is_some());
+    assert_eq!(schema.as_ref().unwrap().get("properties").unwrap().get("clarity").unwrap().get("enum").unwrap().as_array().unwrap().len(), 2); // CLEAR, NEEDS_CLARIFY
 }
 
 

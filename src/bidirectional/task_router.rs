@@ -416,37 +416,37 @@ Do not add any explanations or text outside the JSON object."#,
             "type": "object",
             "properties": {
                 "clarity": { "type": "string", "enum": ["CLEAR", "NEEDS_CLARIFY"] },
-                "question": { "type": "string" }
+                "question": { "type": "string", "description": "A single sentence question for the human if clarity is NEEDS_CLARIFY. Omit if CLEAR." }
             },
             "required": ["clarity"]
         });
 
         trace!(prompt = %prompt, "NP1: Clarity check prompt.");
-        let structured_response = self.llm.complete_structured(&prompt, None, schema).await.map_err(|e| {
+        let decision_val = self.llm.complete_structured(&prompt, None, schema.clone()).await.map_err(|e| {
             error!(error = %e, "NP1: LLM structured call failed during clarification check.");
             ServerError::Internal(format!("LLM error during clarification: {}", e))
         })?;
-        trace!(?structured_response, "NP1: LLM structured response received.");
+        trace!(?decision_val, "NP1: LLM structured response received.");
 
-        if let Some(clarity_str) = structured_response.get("clarity").and_then(Value::as_str) {
+        if let Some(clarity_str) = decision_val.get("clarity").and_then(Value::as_str) {
             if clarity_str == "NEEDS_CLARIFY" {
-                if let Some(question) = structured_response.get("question").and_then(Value::as_str) {
+                if let Some(question) = decision_val.get("question").and_then(Value::as_str) {
                     if !question.is_empty() {
                         info!(clarification_question = %question, "NP1: Task needs clarification.");
                         return Ok(Some(RoutingDecision::NeedsClarification { question: question.to_string() }));
                     } else {
-                        warn!(?structured_response, "NP1: LLM indicated clarification needed but question was empty. Proceeding without clarification.");
+                        warn!(?decision_val, "NP1: LLM indicated clarification needed but question was empty. Proceeding without clarification.");
                     }
                 } else {
-                    warn!(?structured_response, "NP1: LLM indicated clarification needed but 'question' field missing or not a string. Proceeding without clarification.");
+                    warn!(?decision_val, "NP1: LLM indicated clarification needed but 'question' field missing or not a string. Proceeding without clarification.");
                 }
             } else if clarity_str == "CLEAR" {
                 debug!("NP1: Task is clear, proceeding to next step.");
             } else {
-                warn!(?structured_response, "NP1: Unexpected 'clarity' value in LLM response. Assuming clear.");
+                warn!(?decision_val, "NP1: Unexpected 'clarity' value in LLM response. Assuming clear.");
             }
         } else {
-            warn!(?structured_response, "NP1: LLM response missing 'clarity' field or not a string. Assuming clear.");
+            warn!(?decision_val, "NP1: LLM response missing 'clarity' field or not a string. Assuming clear.");
         }
 
         Ok(None) // Assume clear if check skipped, failed, or explicitly clear
@@ -527,18 +527,18 @@ Do not add any explanations or text outside the JSON object."#,
         });
 
         trace!(prompt = %should_decompose_prompt, "NP2.A: Should-decompose prompt.");
-        let structured_response_a = self.llm.complete_structured(&should_decompose_prompt, None, schema_a).await.map_err(|e| {
+        let decision_val_a = self.llm.complete_structured(&should_decompose_prompt, None, schema_a.clone()).await.map_err(|e| {
             error!(error = %e, "NP2.A: LLM structured call failed during should-decompose check.");
             ServerError::Internal(format!("LLM error during should-decompose: {}", e))
         })?;
-        trace!(?structured_response_a, "NP2.A: LLM structured response received.");
+        trace!(?decision_val_a, "NP2.A: LLM structured response received.");
 
-        if !structured_response_a.get("should_decompose").and_then(|v| v.as_bool()).unwrap_or(false) {
-            debug!("NP2.A: LLM decided not to decompose. Reason: {:?}", structured_response_a.get("reason").and_then(|v| v.as_str()));
+        if !decision_val_a.get("should_decompose").and_then(|v| v.as_bool()).unwrap_or(false) {
+            debug!("NP2.A: LLM decided not to decompose. Reason: {:?}", decision_val_a.get("reason").and_then(|v| v.as_str()));
             return Ok(None); // Don't decompose
         }
 
-        info!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan. Reason: {:?}", structured_response_a.get("reason").and_then(|v| v.as_str()));
+        info!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan. Reason: {:?}", decision_val_a.get("reason").and_then(|v| v.as_str()));
 
         // --- NP2.B: Generate Decomposition Plan ---
         let plan_prompt = format!(
@@ -590,23 +590,23 @@ Produce a JSON array where each element is an object matching this schema:
         });
 
         trace!(prompt = %plan_prompt, "NP2.B: Decomposition plan prompt.");
-        let structured_response_b = self.llm.complete_structured(&plan_prompt, None, schema_b).await.map_err(|e| {
+        let decision_val_b = self.llm.complete_structured(&plan_prompt, None, schema_b.clone()).await.map_err(|e| {
             error!(error = %e, "NP2.B: LLM structured call failed during plan generation.");
             ServerError::Internal(format!("LLM error during plan generation: {}", e))
         })?;
-        trace!(?structured_response_b, "NP2.B: LLM structured response received (plan JSON).");
+        trace!(?decision_val_b, "NP2.B: LLM structured response received (plan JSON).");
 
-        match serde_json::from_value::<Vec<SubtaskDefinition>>(structured_response_b) {
+        match serde_json::from_value::<Vec<SubtaskDefinition>>(decision_val_b.clone()) { // Clone decision_val_b for logging on error
             Ok(subtasks) if !subtasks.is_empty() => {
                 info!(subtask_count = subtasks.len(), "NP2.B: Successfully parsed decomposition plan.");
                 Ok(Some(RoutingDecision::Decompose { subtasks }))
             }
             Ok(_) => {
-                warn!(?structured_response_a, "NP2.B: LLM returned empty subtask list. Proceeding without decomposition.");
+                warn!(?decision_val_b, "NP2.B: LLM returned empty subtask list. Proceeding without decomposition.");
                 Ok(None)
             }
             Err(e) => {
-                warn!(error = %e, ?structured_response_a, "NP2.B: Failed to parse decomposition plan JSON. Proceeding without decomposition.");
+                warn!(error = %e, ?decision_val_b, "NP2.B: Failed to parse decomposition plan JSON. Proceeding without decomposition.");
                 Ok(None)
             }
         }
@@ -712,9 +712,7 @@ Do not add any explanations or text outside the JSON object."#,
         trace!(prompt = %routing_prompt, "DP2: Routing prompt.");
 
         info!("DP2: Requesting routing decision from LLM.");
-        let structured_decision = self.llm.complete_structured(&routing_prompt, None, schema_dp2).await;
-        
-        let decision_val = match structured_decision {
+        let decision_val = match self.llm.complete_structured(&routing_prompt, None, schema_dp2.clone()).await {
             Ok(val) => val,
             Err(e) => {
                 error!(error = %e, "DP2: LLM structured routing decision failed. Falling back to local 'llm'.");
@@ -799,9 +797,8 @@ Do not add any explanations or text outside the JSON object."#,
                 trace!(prompt = %tool_param_prompt, "DP3: Tool/param extraction prompt.");
 
                 info!("DP3: Asking LLM to choose tool and extract parameters.");
-                let tool_param_structured_result = self.llm.complete_structured(&tool_param_prompt, None, schema_dp3).await;
-
-                match tool_param_structured_result {
+                
+                match self.llm.complete_structured(&tool_param_prompt, None, schema_dp3.clone()).await {
                     Ok(json_value) => {
                         trace!(?json_value, "DP3: Received tool/param JSON from LLM.");
                         if let (Some(tool_name), Some(params)) = (
@@ -1043,7 +1040,7 @@ Do not add any explanations or text outside the JSON object."#,
                         "required": ["decision_type"]
                     });
 
-                    let structured_decision = match llm.complete_structured(&decision_prompt, None, schema_follow_up).await {
+                    let decision_val_follow_up = match llm.complete_structured(&decision_prompt, None, schema_follow_up.clone()).await {
                         Ok(val) => val,
                         Err(e) => {
                             warn!("LLM structured decision failed for follow-up: {}, defaulting to NEED_HUMAN_INPUT", e);
@@ -1051,7 +1048,7 @@ Do not add any explanations or text outside the JSON object."#,
                         }
                     };
                     
-                    match structured_decision.get("decision_type").and_then(Value::as_str) {
+                    match decision_val_follow_up.get("decision_type").and_then(Value::as_str) {
                         Some("HANDLE_DIRECTLY") => {
                             info!("LLM decided to handle the InputRequired task directly");
                             return Ok(RoutingDecision::Local {

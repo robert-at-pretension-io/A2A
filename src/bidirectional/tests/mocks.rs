@@ -8,67 +8,86 @@ use crate::types::{Task, AgentCard, AgentCapabilities, TaskStatus, TaskState, Ta
 use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
 use chrono::Utc;
 
+use serde_json::{json, Value};
+
 /// Mock LLM client for testing
 pub struct MockLlmClient {
-    pub responses: Mutex<HashMap<String, String>>,
-    pub default_response: String,
-    pub calls: Mutex<Vec<String>>,
+    pub text_responses: Mutex<HashMap<String, String>>,
+    pub default_text_response: String,
+    pub structured_responses: Mutex<HashMap<String, Value>>,
+    pub default_structured_response: Value,
+    pub calls: Mutex<Vec<(String, Option<Value>)>>, // Store prompt and optionally schema for structured calls
 }
 
 impl MockLlmClient {
     pub fn new() -> Self {
         Self {
-            responses: Mutex::new(HashMap::new()),
-            default_response: "LOCAL".to_string(), // Default to local routing
+            text_responses: Mutex::new(HashMap::new()),
+            default_text_response: "LOCAL".to_string(),
+            structured_responses: Mutex::new(HashMap::new()),
+            default_structured_response: json!({"decision_type": "LOCAL", "tool_name": "llm", "params": {}}), // Default structured response
             calls: Mutex::new(Vec::new()),
         }
     }
 
-    pub fn with_response(mut self, prompt_substring: &str, response: &str) -> Self {
-        self.responses.lock().unwrap().insert(prompt_substring.to_string(), response.to_string());
+    pub fn with_text_response(mut self, prompt_substring: &str, response: &str) -> Self {
+        self.text_responses.lock().unwrap().insert(prompt_substring.to_string(), response.to_string());
         self
     }
 
-    pub fn with_default_response(mut self, response: &str) -> Self {
-        self.default_response = response.to_string();
+    pub fn with_default_text_response(mut self, response: &str) -> Self {
+        self.default_text_response = response.to_string();
+        self
+    }
+
+    pub fn with_structured_response(mut self, prompt_substring: &str, response: Value) -> Self {
+        self.structured_responses.lock().unwrap().insert(prompt_substring.to_string(), response);
+        self
+    }
+
+    pub fn with_default_structured_response(mut self, response: Value) -> Self {
+        self.default_structured_response = response;
         self
     }
 }
-
-use serde_json::{json, Value}; // Add Value
 
 #[async_trait]
 impl LlmClient for MockLlmClient {
     async fn complete(&self, prompt_text: &str, _system_prompt_override: Option<&str>) -> Result<String> {
         // Record the call
-        self.calls.lock().unwrap().push(prompt_text.to_string());
+        self.calls.lock().unwrap().push((prompt_text.to_string(), None));
         
         // Check if we have a specific response for this prompt
-        let responses = self.responses.lock().unwrap();
-        for (key, value) in responses.iter() {
+        let text_responses = self.text_responses.lock().unwrap();
+        for (key, value) in text_responses.iter() {
             if prompt_text.contains(key) {
                 return Ok(value.clone());
             }
         }
         
         // Return default response
-        Ok(self.default_response.clone())
+        Ok(self.default_text_response.clone())
     }
 
     async fn complete_structured(
         &self,
-        _prompt_text: &str,
+        prompt_text: &str,
         _system_prompt_override: Option<&str>,
-        _output_schema: Value, // output_schema is not used by this mock's logic
+        output_schema: Value,
     ) -> Result<Value> {
-        // For mock, try to parse default response as JSON.
-        // If not valid JSON, wrap it in a simple JSON structure.
-        // This allows tests using this mock for structured calls to get some form of JSON back.
-        if let Ok(json_val) = serde_json::from_str(&self.default_response) {
-            Ok(json_val)
-        } else {
-            Ok(json!({"response": self.default_response}))
+        // Record the call
+        self.calls.lock().unwrap().push((prompt_text.to_string(), Some(output_schema)));
+
+        // Check if we have a specific response for this prompt
+        let structured_responses = self.structured_responses.lock().unwrap();
+        for (key, value) in structured_responses.iter() {
+            if prompt_text.contains(key) {
+                return Ok(value.clone());
+            }
         }
+        
+        // Return default structured response
+        Ok(self.default_structured_response.clone())
     }
 }
 

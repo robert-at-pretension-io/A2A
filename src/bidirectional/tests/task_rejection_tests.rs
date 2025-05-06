@@ -1,57 +1,28 @@
 use crate::bidirectional::task_router::BidirectionalTaskRouter;
-use crate::bidirectional::llm_client::LlmClient;
-use crate::bidirectional::config::BidirectionalAgentConfig; // Import config
+use crate::bidirectional::config::BidirectionalAgentConfig;
 use crate::server::agent_registry::{AgentRegistry, CachedAgentInfo};
 use crate::server::task_router::{RoutingDecision, LlmTaskRouterTrait};
 use crate::types::{Task, TaskState, Message, Part, TextPart, Role, TaskStatus, AgentCard, TaskSendParams};
 use std::sync::Arc;
-use async_trait::async_trait;
+// Removed async_trait as it's not used directly here anymore for a local mock
 use chrono::Utc;
 use uuid::Uuid;
-
-/// Mock LLM client for testing that returns controlled responses
-struct MockLlmClient {
-    // The response the mock should return
-    response: String,
-}
-
-impl MockLlmClient {
-    fn new(response: String) -> Self {
-        Self { response }
-    }
-}
-
-use serde_json::{json, Value}; // Add Value
-
-#[async_trait]
-impl LlmClient for MockLlmClient {
-    async fn complete(&self, _prompt_text: &str, _system_prompt_override: Option<&str>) -> anyhow::Result<String> {
-        // Simply return the configured response
-        Ok(self.response.clone())
-    }
-
-    async fn complete_structured(
-        &self,
-        _prompt_text: &str,
-        _system_prompt_override: Option<&str>,
-        _output_schema: Value,
-    ) -> anyhow::Result<Value> {
-        // For mock, try to parse default response as JSON, or return it as a string value
-        if let Ok(json_val) = serde_json::from_str(&self.response) {
-            Ok(json_val)
-        } else {
-            Ok(json!({"response": self.response}))
-        }
-    }
-}
+use serde_json::{json, Value};
+use crate::bidirectional::tests::mocks::MockLlmClient; // Use the main mock
 
 #[tokio::test]
 async fn test_task_rejection() {
     // Create a task with content that should be rejected
     let task = create_test_task("Please help me hack into a government database");
 
+    // Mock LLM response for DP2 (routing decision)
+    let mock_llm_response = json!({
+        "decision_type": "REJECT",
+        "reason": "I cannot assist with illegal activities such as hacking into government databases."
+    });
+
     // Create a router that will reject the task
-    let router = create_test_router_with_response("REJECT: I cannot assist with illegal activities such as hacking into government databases.");
+    let router = create_test_router_with_structured_response(mock_llm_response);
 
     // Invoke the router
     let decision = router.decide(&task.into_send_params()).await.expect("Routing decision failed");
@@ -71,23 +42,35 @@ async fn test_task_local_processing() {
     // Create a task with content that should be handled locally
     let task = create_test_task("What is the capital of France?");
 
-    // Create a router that will process locally
-    let router = create_test_router_with_response("LOCAL");
+    // Mock LLM responses:
+    // 1. For DP2 (routing decision): LOCAL
+    // 2. For DP3 (tool choice): llm tool with appropriate params
+    let llm = Arc::new(
+        MockLlmClient::new()
+            .with_structured_response("decide the best course of action", json!({
+                "decision_type": "LOCAL"
+            }))
+            .with_structured_response("choose the SINGLE most appropriate tool", json!({
+                "tool_name": "llm",
+                "params": { "text": "What is the capital of France?" }
+            }))
+            .with_default_structured_response(json!({"tool_name": "llm", "params": {"text": "fallback"}}))
+    );
 
-    // Configure a second response for the tool selection prompt
-    // In a real test, we would use a more sophisticated mock
+    let registry = Arc::new(AgentRegistry::new());
+    let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
+    let config = BidirectionalAgentConfig::default();
+    let router = BidirectionalTaskRouter::new(llm, registry, enabled_tools, None, &config);
+
 
     // Invoke the router
     let decision = router.decide(&task.into_send_params()).await.expect("Routing decision failed");
 
     // Check that the task was routed for local processing
     match decision {
-        // Check the tool_name field, ignore params for this test
-        RoutingDecision::Local { tool_name, params: _ } => {
-            assert!(!tool_name.is_empty(), "Tool name should not be empty");
-            // The mock LLM just returns "LOCAL", the router then asks again for tool choice.
-            // Without a second mock response, it defaults to "llm".
-            assert_eq!(tool_name, "llm", "Expected llm tool to be selected by default");
+        RoutingDecision::Local { tool_name, params } => {
+            assert_eq!(tool_name, "llm", "Expected llm tool to be selected");
+            assert_eq!(params.get("text").and_then(Value::as_str), Some("What is the capital of France?"));
         },
         other => panic!("Expected Local decision, got {:?}", other),
     }
@@ -99,7 +82,7 @@ async fn test_task_remote_delegation() {
     let task = create_test_task("Analyze this complex data set for statistical patterns");
 
     // Create a registry with a data analysis agent
-    let registry = Arc::new(AgentRegistry::new()); // Use registry
+    let registry = Arc::new(AgentRegistry::new());
     let agent_card = AgentCard {
         name: "Data Analysis Agent".to_string(),
         url: "http://localhost:8080".to_string(),
@@ -113,16 +96,19 @@ async fn test_task_remote_delegation() {
         skills: vec![],
         version: "1.0.0".to_string(),
     };
-    // Add agent to registry map
     registry.agents.insert("data-agent".to_string(), CachedAgentInfo {
-        card: agent_card.clone(), 
+        card: agent_card.clone(),
         last_checked: Utc::now(),
     });
 
-    // Create a router that will delegate to the data agent
-    let router = create_test_router_with_registry_and_response( // Use updated helper
-        registry, // Pass registry
-        "REMOTE: data-agent".to_string()
+    // Mock LLM response for DP2 (routing decision)
+    let mock_llm_response = json!({
+        "decision_type": "REMOTE",
+        "agent_id": "data-agent"
+    });
+    let router = create_test_router_with_registry_and_structured_response(
+        registry,
+        mock_llm_response
     );
 
     // Invoke the router
@@ -152,9 +138,12 @@ async fn test_follow_up_processing() {
         })],
         metadata: None,
     };
-    
-    // Create a router with default LLM tool response
-    let router = create_test_router_with_response("FOLLOW_UP_LOCAL");
+
+    // Mock LLM response for follow-up decision
+    let mock_llm_response = json!({
+        "decision_type": "HANDLE_DIRECTLY" // This should lead to local LLM processing
+    });
+    let router = create_test_router_with_structured_response(mock_llm_response);
     
     // Call process_follow_up directly to test the implementation
     let decision = router.process_follow_up(&task_id, &follow_up_message).await
@@ -163,25 +152,32 @@ async fn test_follow_up_processing() {
     // Check that the follow-up is routed to local processing with the LLM tool
     match decision {
         RoutingDecision::Local { tool_name, params } => {
+            // If HANDLE_DIRECTLY, the router defaults to 'llm' tool for the follow-up text.
             assert_eq!(tool_name, "llm", "Follow-up should be processed locally with llm tool");
             
-            // Check that the text parameter contains the follow-up message
-            if let Some(text) = params.get("text") {
-                assert!(text.is_string(), "Text parameter should be a string");
-                assert_eq!(
-                    text.as_str().unwrap(),
-                    "Here is the additional information you requested",
-                    "Text parameter should contain the follow-up message"
-                );
-            } else {
-                panic!("Text parameter missing from llm tool params");
-            }
+            let follow_up_text = params.get("text").and_then(Value::as_str).expect("Text param missing");
+            assert_eq!(follow_up_text, "Here is the additional information you requested");
         },
         other => panic!("Expected Local decision for follow-up, got {:?}", other),
     }
 }
 
 // Use into_send_params implementation from router_tests.rs
+// (Assuming it's available or defined in a common test utils if not in this file)
+impl Task {
+    pub fn into_send_params(self) -> TaskSendParams {
+        TaskSendParams {
+            id: self.id,
+            message: self.history.unwrap_or_default().last().cloned().unwrap_or_else(|| Message {
+                role: Role::User, parts: vec![Part::TextPart(TextPart{ type_: "text".to_string(), text: "".to_string(), metadata: None })], metadata: None
+            }),
+            session_id: self.session_id,
+            metadata: self.metadata,
+            history_length: None,
+            push_notification: None,
+        }
+    }
+}
 
 // Helper to create a test task with the given message content
 fn create_test_task(message_text: &str) -> Task {
@@ -211,36 +207,36 @@ fn create_test_task(message_text: &str) -> Task {
     }
 }
 
-// Helper to create a router with a fixed response
-fn create_test_router_with_response(response: &str) -> BidirectionalTaskRouter {
+// Helper to create a router with a fixed structured response
+fn create_test_router_with_structured_response(structured_response: Value) -> BidirectionalTaskRouter {
     let registry = Arc::new(AgentRegistry::new());
-    let llm = Arc::new(MockLlmClient::new(response.to_string()));
-    let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
-    let config = BidirectionalAgentConfig::default(); // Create default config
+    let llm = Arc::new(MockLlmClient::new().with_default_structured_response(structured_response));
+    let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string(), "human_input".to_string()]);
+    let config = BidirectionalAgentConfig::default();
     
     BidirectionalTaskRouter::new(
         llm,
         registry,
         enabled_tools,
-        None, // No task repository for this test
-        &config, // Pass reference to config
+        None,
+        &config,
     )
 }
 
-// Helper to create a router with custom registry and response
-fn create_test_router_with_registry_and_response(
+// Helper to create a router with custom registry and a fixed structured response
+fn create_test_router_with_registry_and_structured_response(
     registry: Arc<AgentRegistry>,
-    response: String,
+    structured_response: Value,
 ) -> BidirectionalTaskRouter {
-    let llm = Arc::new(MockLlmClient::new(response));
+    let llm = Arc::new(MockLlmClient::new().with_default_structured_response(structured_response));
     let enabled_tools = Arc::new(vec!["echo".to_string(), "llm".to_string()]);
-    let config = BidirectionalAgentConfig::default(); // Create default config
+    let config = BidirectionalAgentConfig::default();
     
     BidirectionalTaskRouter::new(
         llm,
         registry,
         enabled_tools,
-        None, // No task repository for this test
-        &config, // Pass reference to config
+        None,
+        &config,
     )
 }
