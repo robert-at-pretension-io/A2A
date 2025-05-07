@@ -15,27 +15,20 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_router_local_decision() {
-    // Mock LLM responses:
-    // 1. For DP2 (routing decision): LOCAL
-    // 2. For DP3 (tool choice): echo tool with "hello"
+    // Mock LLM response for unified DP2/DP3 decision
     let llm = Arc::new(
         MockLlmClient::new()
             .with_structured_response(
-                "decide the best course of action",
+                "Your task is to decide how to handle the user's request",
                 json!({
-                    "decision_type": "LOCAL"
-                }),
-            )
-            .with_structured_response(
-                "choose the SINGLE most appropriate tool",
-                json!({
+                    "decision_type": "LOCAL_TOOL",
                     "tool_name": "echo",
-                    "params": { "text": "hello" }
+                    "tool_params": { "text": "hello" }
                 }),
             )
             // Add a default in case prompt matching is too brittle or for unexpected calls
             .with_default_structured_response(
-                json!({"decision_type": "LOCAL", "tool_name": "llm", "params": {}}),
+                json!({"decision_type": "LOCAL_TOOL", "tool_name": "llm", "tool_params": {}}),
             ),
     );
 
@@ -59,11 +52,13 @@ async fn test_router_local_decision() {
 
 #[tokio::test]
 async fn test_router_remote_decision() {
-    // Mock LLM response for DP2 (routing decision)
+    // Mock LLM response for unified routing decision
     let llm = Arc::new(
         MockLlmClient::new().with_default_structured_response(json!({
-            "decision_type": "REMOTE",
-            "agent_id": "test-agent"
+            "decision_type": "REMOTE_AGENT",
+            "agent_id": "test-agent",
+            "tool_name": null,
+            "tool_params": null
         })),
     );
 
@@ -90,11 +85,13 @@ async fn test_router_remote_decision() {
 
 #[tokio::test]
 async fn test_router_fallback_to_local_for_unknown_agent() {
-    // Mock LLM response for DP2: delegates to an unknown agent
+    // Mock LLM response for unified routing: delegates to an unknown agent
     let llm = Arc::new(
         MockLlmClient::new().with_default_structured_response(json!({
-            "decision_type": "REMOTE",
-            "agent_id": "unknown-agent"
+            "decision_type": "REMOTE_AGENT",
+            "agent_id": "unknown-agent",
+            "tool_name": null,
+            "tool_params": null
         })),
     );
 
@@ -121,11 +118,13 @@ async fn test_router_fallback_to_local_for_unknown_agent() {
 
 #[tokio::test]
 async fn test_router_fallback_to_local_for_unclear_decision() {
-    // Mock LLM response for DP2: unclear decision_type
+    // Mock LLM response for unified routing: unclear decision_type
     let llm = Arc::new(
         MockLlmClient::new().with_default_structured_response(json!({
             "decision_type": "MAYBE_REMOTE_OR_LOCAL", // Invalid enum value
-            "agent_id": "some-agent"
+            "agent_id": "some-agent",
+            "tool_name": null,
+            "tool_params": null
         })),
     );
 
@@ -186,68 +185,43 @@ async fn test_router_prompt_formatting() {
     let calls = llm.calls.lock().unwrap();
     assert_eq!(
         calls.len(),
-        2,
-        "Expected two LLM calls (routing + tool choice if local)"
+        1,
+        "Expected one unified LLM call (combined routing + tool choice)"
     );
 
-    // Check the first prompt (routing - DP2)
-    let (routing_prompt_text, routing_schema) = &calls[0];
-    assert!(routing_prompt_text.contains("decide the best course of action"));
-    assert!(routing_prompt_text.contains("Please route this task appropriately"));
-    assert!(routing_prompt_text.contains("test-agent-1")); // Check if agent info is in prompt
-    assert!(routing_prompt_text.contains("test-agent-2"));
-    assert!(routing_schema.is_some());
-    assert_eq!(
-        routing_schema
-            .as_ref()
-            .unwrap()
-            .get("properties")
-            .unwrap()
-            .get("decision_type")
-            .unwrap()
-            .get("enum")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .len(),
-        3
-    ); // LOCAL, REMOTE, REJECT
-
-    // Check the second prompt (tool choice - DP3, because default mock is LOCAL)
-    let (tool_choice_prompt_text, tool_choice_schema) = &calls[1];
-    assert!(tool_choice_prompt_text.contains("choose the SINGLE most appropriate tool"));
-    assert!(tool_choice_prompt_text.contains("AVAILABLE LOCAL TOOLS:"));
-    assert!(tool_choice_schema.is_some());
-    assert!(tool_choice_schema
-        .as_ref()
-        .unwrap()
-        .get("properties")
-        .unwrap()
-        .get("tool_name")
-        .is_some());
-    assert!(tool_choice_schema
-        .as_ref()
-        .unwrap()
-        .get("properties")
-        .unwrap()
-        .get("params")
-        .is_some());
+    // Check the unified prompt (combined DP2/DP3)
+    let (prompt_text, schema) = &calls[0];
+    assert!(prompt_text.contains("Your task is to decide how to handle the user's request"));
+    assert!(prompt_text.contains("Please route this task appropriately"));
+    assert!(prompt_text.contains("test-agent-1")); // Check if agent info is in prompt
+    assert!(prompt_text.contains("test-agent-2"));
+    assert!(schema.is_some());
+    
+    // Check unified schema contains both decision_type and tool_name
+    let properties = schema.as_ref().unwrap().get("properties").unwrap();
+    assert!(properties.get("decision_type").is_some());
+    assert!(properties.get("tool_name").is_some());
+    assert!(properties.get("tool_params").is_some());
 }
 
 #[tokio::test]
 async fn test_router_needs_clarification() {
-    // Mock LLM response for NP1 (clarification check)
+    // Create a mock LLM client that will explicitly return NeedsClarification for all calls
     let llm = Arc::new(
         MockLlmClient::new()
-            // Use the exact phrase from task_router.rs line 472
+            // Make sure this matches the actual phrase in the clarification check prompt
             .with_structured_response(
-                "Analyze the LATEST_REQUEST in the context of CONVERSATION_HISTORY and AGENT_MEMORY",
+                "Your current task is to decide if the user's last message to you is clear and actionable",
                 json!({
                     "clarity": "NEEDS_CLARIFY",
                     "question": "What specific topic are you asking about?"
                 }),
             )
-            .with_default_structured_response(json!({"clarity": "CLEAR"})), // Default if no specific match
+            // Override the default to ensure NeedsClarification is returned for any prompt
+            .with_default_structured_response(json!({
+                "clarity": "NEEDS_CLARIFY", 
+                "question": "What specific topic are you asking about?"
+            })),
     );
 
     let registry = Arc::new(AgentRegistry::new());
@@ -274,7 +248,7 @@ async fn test_router_needs_clarification() {
         "Expected only one LLM call for clarification check"
     );
     let (prompt_text, schema) = &calls[0];
-    assert!(prompt_text.contains("Analyze the LATEST_REQUEST in the context of CONVERSATION_HISTORY"));
+    assert!(prompt_text.contains("Your current task is to decide if the user's last message to you is clear and actionable"));
     assert!(prompt_text.contains("Tell me about it."));
     assert!(schema.is_some());
     assert_eq!(

@@ -86,6 +86,39 @@ impl BidirectionalTaskRouter {
         }
     }
 
+    // Get agent identity details for prompts
+    fn get_agent_identity(&self) -> (String, String, String) {
+        // Get the first agent from registry, or use defaults if none available
+        let default_id = "unnamed-agent".to_string();
+        let default_name = "Bidirectional Agent".to_string();
+        let default_description = "An agent capable of handling tasks directly or delegating to other agents.".to_string();
+        
+        if let Some(entry) = self.agent_registry.agents.iter().next() {
+            let agent_id = entry.key().clone();
+            // Access the CachedAgentInfo directly
+            let cached_info = entry.value();
+            let agent_name = cached_info.card.name.clone();
+            let agent_description = cached_info.card.description.clone().unwrap_or_else(|| default_description.clone());
+            (agent_id, agent_name, agent_description)
+        } else {
+            (default_id, default_name, default_description)
+        }
+    }
+    
+    // Generate universal system orientation prompt
+    fn get_universal_orientation(&self) -> String {
+        r#"You are part of the Agent-to-Agent (A2A) network, a federated system of specialized AI agents that work together to accomplish tasks. In this system:
+
+1. Each agent has specific capabilities (tools) it can use directly
+2. Agents can delegate tasks to other agents when appropriate
+3. The network follows a standardized protocol for communication
+4. Agents maintain memory of past interactions to provide context
+5. Tasks may be decomposed into subtasks when complex
+6. Agents can request clarification when user requests are ambiguous
+
+As an agent in this network, you should think carefully about whether to handle tasks directly using your tools, decompose complex tasks, or delegate to other agents with specialized capabilities. Always consider the most efficient path to completing the user's request while providing a seamless experience."#.to_string()
+    }
+
     // Helper to format conversation history for prompts
     fn format_history(&self, history: Option<&Vec<Message>>) -> String {
         history
@@ -458,33 +491,35 @@ impl BidirectionalTaskRouter {
             String::new()
         };
 
+        let (agent_id, agent_name, agent_description) = self.get_agent_identity();
+        let universal_orientation = self.get_universal_orientation();
+        
         let prompt = format!(
             r#"SYSTEM:
-You are an autonomous AI agent. Your current role is to prepare to process a user request.
-Your first specific sub-task is to judge whether the LATEST_REQUEST from the user is specific and complete enough to act upon, or if it requires clarification.{}
+{universal_orientation}
 
-CONVERSATION_HISTORY:
+You are {agent_name} (ID: {agent_id}). {agent_description}
+Your current task is to decide if the user's last message to you is clear and actionable.
+
+HISTORY:
+{}
+
+MEMORY:
 {}
 
 LATEST_REQUEST:
 "{}"
 
-TASK:
-Analyze the LATEST_REQUEST in the context of CONVERSATION_HISTORY and AGENT_MEMORY.
-Respond with a JSON object matching the following schema:
+Return ONLY this JSON:
 {{
-  "type": "object",
-  "properties": {{
-    "clarity": {{ "type": "string", "enum": ["CLEAR", "NEEDS_CLARIFY"] }},
-    "question": {{ "type": "string", "description": "A single sentence question for the human if clarity is NEEDS_CLARIFY. Omit if CLEAR." }}
-  }},
-  "required": ["clarity"]
-}}
-
-If clarity is NEEDS_CLARIFY, the question MUST be answerable in ≤ 1 sentence.
-If clarity is CLEAR, omit the "question" field or set it to null.
-Do not add any explanations or text outside the JSON object."#,
-            memory_text, history_text, latest_request
+  "clarity": "CLEAR" | "NEEDS_CLARIFY",
+  "question": "<≤1-sentence question if NEEDS_CLARIFY>"
+}}"#,
+            history_text, memory_text, latest_request, 
+            universal_orientation = universal_orientation,
+            agent_name = agent_name, 
+            agent_id = agent_id, 
+            agent_description = agent_description
         );
 
         let schema = json!({
@@ -497,6 +532,8 @@ Do not add any explanations or text outside the JSON object."#,
         });
 
         trace!(prompt = %prompt, "NP1: Clarity check prompt.");
+        info!("===== NP1 PROMPT TO LLM =====\n{}\n=========================", prompt);
+        
         let decision_val = self
             .llm
             .complete_structured(&prompt, None, schema.clone())
@@ -505,6 +542,9 @@ Do not add any explanations or text outside the JSON object."#,
                 error!(error = %e, "NP1: LLM structured call failed during clarification check.");
                 ServerError::Internal(format!("LLM error during clarification: {}", e))
             })?;
+        
+        info!("===== NP1 LLM RESPONSE =====\n{}\n=========================", 
+            serde_json::to_string_pretty(&decision_val).unwrap_or_else(|_| format!("{:?}", decision_val)));
         trace!(?decision_val, "NP1: LLM structured response received.");
 
         if let Some(clarity_str) = decision_val.get("clarity").and_then(Value::as_str) {
@@ -587,34 +627,32 @@ Do not add any explanations or text outside the JSON object."#,
         // --- NP2.A: Should Decompose? ---
         let tool_table = self.format_tools(false); // Don't need params hint here
         let agent_table = self.format_agents();
+        let (agent_id, agent_name, agent_description) = self.get_agent_identity();
+        let universal_orientation = self.get_universal_orientation();
+        
         let should_decompose_prompt = format!(
             r#"SYSTEM:
-You are an expert AI planner. Your current role is to determine if a user's request should be broken down into smaller sub-tasks or if it can be handled by a single tool/agent.
+{universal_orientation}
 
-REQUEST_GOAL:
-"{}"{}
+You are {agent_name} (ID: {agent_id}). {agent_description}
+Your current task is to determine if this user request should be broken down into multiple subtasks.
 
-AVAILABLE_LOCAL_TOOLS:
+GOAL: "{}"
+LOCAL_TOOLS:
+{}
+REMOTE_AGENTS:
 {}
 
-AVAILABLE_REMOTE_AGENTS:
-{}
-
-CRITERIA:
-• If the goal obviously maps to ONE local tool or ONE remote agent, do NOT decompose.
-• Decompose when fulfilling the goal clearly needs multiple distinct skills or ordered steps.
-RESPONSE_FORMAT:
-Respond with a JSON object matching this schema:
+Return JSON:
 {{
-  "type": "object",
-  "properties": {{
-    "should_decompose": {{ "type": "boolean" }},
-    "reason": {{ "type": "string", "description": "A one-line reason for your decision." }}
-  }},
-  "required": ["should_decompose", "reason"]
-}}
-Do not add any explanations or text outside the JSON object."#,
-            latest_request, memory_text, tool_table, agent_table
+  "should_decompose": true | false,
+  "reason": "<one line>"
+}}"#,
+            latest_request, tool_table, agent_table,
+            universal_orientation = universal_orientation,
+            agent_name = agent_name, 
+            agent_id = agent_id, 
+            agent_description = agent_description
         );
 
         let schema_a = json!({
@@ -627,10 +665,15 @@ Do not add any explanations or text outside the JSON object."#,
         });
 
         trace!(prompt = %should_decompose_prompt, "NP2.A: Should-decompose prompt.");
+        info!("===== NP2.A PROMPT TO LLM =====\n{}\n=========================", should_decompose_prompt);
+        
         let decision_val_a = self.llm.complete_structured(&should_decompose_prompt, None, schema_a.clone()).await.map_err(|e| {
             error!(error = %e, "NP2.A: LLM structured call failed during should-decompose check.");
             ServerError::Internal(format!("LLM error during should-decompose: {}", e))
         })?;
+        
+        info!("===== NP2.A LLM RESPONSE =====\n{}\n=========================", 
+            serde_json::to_string_pretty(&decision_val_a).unwrap_or_else(|_| format!("{:?}", decision_val_a)));
         trace!(?decision_val_a, "NP2.A: LLM structured response received.");
 
         if !decision_val_a
@@ -648,34 +691,31 @@ Do not add any explanations or text outside the JSON object."#,
         debug!("NP2.A: LLM decided task should be decomposed. Proceeding to generate plan. Reason: {:?}", decision_val_a.get("reason").and_then(|v| v.as_str()));
 
         // --- NP2.B: Generate Decomposition Plan ---
+        let (agent_id, agent_name, agent_description) = self.get_agent_identity();
+        let universal_orientation = self.get_universal_orientation();
+        
         let plan_prompt = format!(
             r#"SYSTEM:
-You are an expert AI planner. Your previous step determined that the user's request needs to be decomposed into multiple sub-tasks.
-Your current role is to generate that decomposition plan.
+{universal_orientation}
 
-GOAL:
-"{}"{}
+You are {agent_name} (ID: {agent_id}). {agent_description}
+Your current task is to create an execution plan (≤5 steps) for the user's request.
 
-Produce a JSON array where each element is an object matching this schema:
+GOAL: "{}"
+MEMORY:
+{}
+
+Return ONLY a JSON array where each item is:
 {{
-  "type": "object",
-  "properties": {{
-    "id": {{ "type": "string", "description": "A unique kebab-case identifier for this subtask step." }},
-    "input_message": {{ "type": "string", "description": "The prompt or instruction to execute for this subtask." }},
-    "metadata": {{
-      "type": "object",
-      "properties": {{
-        "depends_on": {{ "type": "array", "items": {{ "type": "string" }}, "description": "Array of 'id's of subtasks that must complete before this one can start. Empty if no dependencies." }}
-      }},
-      "required": ["depends_on"]
-    }}
-  }},
-  "required": ["id", "input_message", "metadata"]
-}}
-• Keep the plan to ≤ 5 steps.
-• Ensure correct dependency order.
-• Respond ONLY with the JSON array. Do not add any explanations or text outside the JSON array."#,
-            latest_request, memory_text
+  "id": "kebab-case",
+  "input_message": "...",
+  "metadata": {{ "depends_on": ["id", ...] }}
+}}"#,
+            latest_request, memory_text,
+            universal_orientation = universal_orientation,
+            agent_name = agent_name, 
+            agent_id = agent_id, 
+            agent_description = agent_description
         );
 
         let mut schema_b = json!({
@@ -702,6 +742,8 @@ Produce a JSON array where each element is an object matching this schema:
         // }
 
         trace!(prompt = %plan_prompt, "NP2.B: Decomposition plan prompt.");
+        info!("===== NP2.B PROMPT TO LLM =====\n{}\n=========================", plan_prompt);
+        
         let decision_val_b = self
             .llm
             .complete_structured(&plan_prompt, None, schema_b.clone())
@@ -710,6 +752,9 @@ Produce a JSON array where each element is an object matching this schema:
                 error!(error = %e, "NP2.B: LLM structured call failed during plan generation.");
                 ServerError::Internal(format!("LLM error during plan generation: {}", e))
             })?;
+        
+        info!("===== NP2.B LLM RESPONSE =====\n{}\n=========================", 
+            serde_json::to_string_pretty(&decision_val_b).unwrap_or_else(|_| format!("{:?}", decision_val_b)));
         trace!(
             ?decision_val_b,
             "NP2.B: LLM structured response received (plan JSON)."
@@ -739,7 +784,7 @@ Produce a JSON array where each element is an object matching this schema:
     }
 
     async fn decide_simple_routing(&self, task: &Task) -> Result<RoutingDecision, ServerError> {
-        debug!("DP2/DP3: Performing simple routing decision (Local/Remote/Reject + Tool Choice).");
+        debug!("Performing unified routing decision (combined DP2/DP3).");
         let history_text = self.format_history(task.history.as_ref());
 
         let latest_request_text = task
@@ -777,118 +822,139 @@ Produce a JSON array where each element is an object matching this schema:
         };
         debug!(has_memory = %has_memory, memory_task_count = %memory_tasks.len(), "Memory context prepared");
 
-        // --- DP2: Local vs Remote vs Reject ---
-        let local_tools_desc = self.format_tools(false);
+        // --- Combined DP2/DP3: Make a single unified decision ---
+        let local_tools_desc = self.format_tools(true); // Include param hints
         let remote_agents_desc = self.format_agents();
 
-        // Build the routing prompt with memory context if available
-        let routing_prompt = if has_memory {
+        // Build the unified routing prompt with memory context if available
+        let (agent_id, agent_name, agent_description) = self.get_agent_identity();
+        let universal_orientation = self.get_universal_orientation();
+        
+        let unified_routing_prompt = if has_memory {
             format!(
                 r#"SYSTEM:
-You are an AI agent responsible for routing user requests. Your goal is to decide whether to handle a task locally using YOUR tools, delegate it to another available REMOTE agent, or REJECT it.
+{universal_orientation}
 
-YOUR (Agent '{current_agent_id}') LOCAL TOOLS:
+You are {agent_name} (ID: {agent_id}). {agent_description}
+Your task is to decide how to handle the user's request directed to you.
+
+OPTIONS
+• LOCAL_TOOL – use one of YOUR tools listed below with appropriate parameters
+• AGENT_ACTION – perform an internal action (connect_agent | disconnect_agent | create_session)
+• REMOTE_AGENT – delegate to another agent by selecting its exact ID from the list below
+• REJECT – decline the request if it's harmful, impossible, or outside your capabilities
+
+YOUR TOOLS:
 {local_tools_desc}
 
-AVAILABLE REMOTE AGENTS (Potential targets for delegation):
+AVAILABLE REMOTE AGENTS:
 {remote_agents_desc}
 
-YOUR (Agent '{current_agent_id}') MEMORY OF PREVIOUS OUTGOING REQUESTS TO OTHER AGENTS:
+YOUR MEMORY OF PREVIOUS INTERACTIONS:
 {memory_text}
 
-CONVERSATION HISTORY (User interacting with YOU, Agent '{current_agent_id}'):
+CONVERSATION HISTORY:
 {history_text}
 
-TASK:
-Based on the LATEST user request in the CONVERSATION HISTORY, and considering YOUR MEMORY, YOUR LOCAL TOOLS, and the AVAILABLE REMOTE AGENTS, decide the best course of action.
+LATEST USER REQUEST TO YOU:
+"{latest_request_text}"
 
-RESPONSE FORMAT:
-Respond with a JSON object matching this schema:
+Return JSON:
 {{
-  "type": "object",
-  "properties": {{
-    "decision_type": {{ "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] }},
-    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. This MUST be the exact ID of one of the AVAILABLE REMOTE AGENTS." }},
-    "reason": {{ "type": "string", "description": "Required if decision_type is REJECT. A brief explanation." }}
-  }},
-  "required": ["decision_type"]
+  "decision_type": "LOCAL_TOOL" | "AGENT_ACTION" | "REMOTE_AGENT" | "REJECT",
+  "tool_name": "...",
+  "tool_params": {{...}},
+  "action_name": "...",
+  "action_params": {{...}},
+  "agent_id": "...",
+  "reject_reason": "..."
 }}
-
-CRITICAL INSTRUCTIONS:
-- If the latest request is an internal command for YOU (Agent '{current_agent_id}') like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution.
-- When choosing REMOTE, the 'agent_id' field in your JSON response MUST EXACTLY match an ID from the AVAILABLE REMOTE AGENTS list (including capitalization, spaces, and special characters).
-- Only REJECT tasks that are inappropriate, harmful, impossible, or are internal commands that YOU (Agent '{current_agent_id}') cannot handle (e.g., ':listen', ':stop', ':quit').
-
-Do not add any explanations or text outside the JSON object."#,
-                current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()), // A bit of a hack to get "our" ID if available
+Include only fields required for the chosen decision_type."#,
                 local_tools_desc = local_tools_desc,
                 remote_agents_desc = remote_agents_desc,
                 memory_text = memory_text,
-                history_text = history_text
+                history_text = history_text,
+                universal_orientation = universal_orientation,
+                agent_name = agent_name,
+                agent_id = agent_id,
+                agent_description = agent_description
             )
         } else {
             format!(
                 r#"SYSTEM:
-You are an AI agent responsible for routing user requests. Your goal is to decide whether to handle a task locally using YOUR tools, delegate it to another available REMOTE agent, or REJECT it.
+{universal_orientation}
 
-YOUR (Agent '{current_agent_id}') LOCAL TOOLS:
+You are {agent_name} (ID: {agent_id}). {agent_description}
+Your task is to decide how to handle the user's request directed to you.
+
+OPTIONS
+• LOCAL_TOOL – use one of YOUR tools listed below with appropriate parameters
+• AGENT_ACTION – perform an internal action (connect_agent | disconnect_agent | create_session)
+• REMOTE_AGENT – delegate to another agent by selecting its exact ID from the list below
+• REJECT – decline the request if it's harmful, impossible, or outside your capabilities
+
+YOUR TOOLS:
 {local_tools_desc}
 
-AVAILABLE REMOTE AGENTS (Potential targets for delegation):
+AVAILABLE REMOTE AGENTS:
 {remote_agents_desc}
 
-CONVERSATION HISTORY (User interacting with YOU, Agent '{current_agent_id}'):
+CONVERSATION HISTORY:
 {history_text}
 
-TASK:
-Based on the LATEST user request in the CONVERSATION HISTORY, and considering YOUR LOCAL TOOLS and the AVAILABLE REMOTE AGENTS, decide the best course of action.
+LATEST USER REQUEST TO YOU:
+"{latest_request_text}"
 
-RESPONSE FORMAT:
-Respond with a JSON object matching this schema:
+Return JSON:
 {{
-  "type": "object",
-  "properties": {{
-    "decision_type": {{ "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] }},
-    "agent_id": {{ "type": "string", "description": "Required if decision_type is REMOTE. This MUST be the exact ID of one of the AVAILABLE REMOTE AGENTS." }},
-    "reason": {{ "type": "string", "description": "Required if decision_type is REJECT. A brief explanation." }}
-  }},
-  "required": ["decision_type"]
+  "decision_type": "LOCAL_TOOL" | "AGENT_ACTION" | "REMOTE_AGENT" | "REJECT",
+  "tool_name": "...",
+  "tool_params": {{...}},
+  "action_name": "...",
+  "action_params": {{...}},
+  "agent_id": "...",
+  "reject_reason": "..."
 }}
-
-CRITICAL INSTRUCTIONS:
-- If the latest request is an internal command for YOU (Agent '{current_agent_id}') like 'connect', 'disconnect', 'list servers', 'session new', 'card', etc., you MUST choose LOCAL execution.
-- When choosing REMOTE, the 'agent_id' field in your JSON response MUST EXACTLY match an ID from the AVAILABLE REMOTE AGENTS list (including capitalization, spaces, and special characters).
-- Only REJECT tasks that are inappropriate, harmful, impossible, or are internal commands that YOU (Agent '{current_agent_id}') cannot handle (e.g., ':listen', ':stop', ':quit').
-
-Do not add any explanations or text outside the JSON object."#,
-                current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
+Include only fields required for the chosen decision_type."#,
                 local_tools_desc = local_tools_desc,
                 remote_agents_desc = remote_agents_desc,
-                history_text = history_text
+                history_text = history_text,
+                universal_orientation = universal_orientation,
+                agent_name = agent_name,
+                agent_id = agent_id,
+                agent_description = agent_description
             )
         };
 
-        let schema_dp2 = json!({
-            "type": "object",
+        let unified_schema = json!({
+            "type": "object", 
             "properties": {
-                "decision_type": { "type": "string", "enum": ["LOCAL", "REMOTE", "REJECT"] },
+                "decision_type": { "type": "string", "enum": ["LOCAL_TOOL", "AGENT_ACTION", "REMOTE_AGENT", "REJECT"] },
+                "tool_name": { "type": "string" },
+                "tool_params": { "type": "object" },
+                "action_name": { "type": "string" },
+                "action_params": { "type": "object" },
                 "agent_id": { "type": "string" },
-                "reason": { "type": "string" }
+                "reject_reason": { "type": "string" }
             },
             "required": ["decision_type"]
         });
 
-        trace!(prompt = %routing_prompt, "DP2: Routing prompt.");
+        trace!(prompt = %unified_routing_prompt, "Unified routing prompt.");
+        info!("===== PROMPT TO LLM =====\n{}\n=========================", unified_routing_prompt);
 
-        debug!("DP2: Requesting routing decision from LLM.");
+        debug!("Requesting unified routing decision from LLM.");
         let decision_val = match self
             .llm
-            .complete_structured(&routing_prompt, None, schema_dp2.clone())
+            .complete_structured(&unified_routing_prompt, None, unified_schema.clone())
             .await
         {
-            Ok(val) => val,
+            Ok(val) => {
+                info!("===== LLM RESPONSE =====\n{}\n=========================", serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)));
+                val
+            },
             Err(e) => {
-                error!(error = %e, "DP2: LLM structured routing decision failed. Falling back to local 'llm'.");
+                error!(error = %e, "Unified LLM structured routing decision failed. Falling back to local 'llm'.");
                 return Ok(RoutingDecision::Local {
                     tool_name: "llm".to_string(),
                     params: json!({"text": latest_request_text}),
@@ -898,208 +964,79 @@ Do not add any explanations or text outside the JSON object."#,
 
         debug!(
             ?decision_val,
-            "DP2: LLM structured routing decision response received."
+            "Unified LLM structured routing decision response received."
         );
 
-        // --- Parse DP2 Decision ---
+        // --- Parse Unified Decision ---
         match decision_val.get("decision_type").and_then(Value::as_str) {
-            Some("LOCAL") => {
-                // --- DP3: Choose Local Tool & Parameters ---
-                debug!("DP2 decided LOCAL. Proceeding to DP3 (Tool Selection).");
-                let local_tools_with_params_desc = self.format_tools(true); // Include param hints
-
-                let tool_param_prompt = if has_memory {
-                    format!(
-                        r#"SYSTEM:
-You are an AI agent. Your previous step decided to handle the LATEST USER REQUEST locally.
-Your current role is to determine if this local handling involves executing a standard TOOL or performing an AGENT_ACTION (an internal operation specific to your agent's state or control).
-
-LATEST USER REQUEST (from human, to YOU, Agent '{current_agent_id}'):
-"{latest_request_text}"
-
-YOUR (Agent '{current_agent_id}') MEMORY OF PREVIOUS OUTGOING REQUESTS TO OTHER AGENTS:
-{memory_text}
-
-YOUR (Agent '{current_agent_id}') AVAILABLE LOCAL TOOLS:
-{local_tools_with_params_desc}
-
-YOUR (Agent '{current_agent_id}') AVAILABLE AGENT_ACTIONS (Internal Operations):
-- connect_agent: Connects to a remote agent. Params: {{"url": "http://..."}}
-- disconnect_agent: Disconnects from the current remote agent. Params: {{}}
-- create_session: Creates a new conversation session. Params: {{}}
-- (Note: 'list_servers', 'show_agent_card' are now TOOLS, not AGENT_ACTIONS)
-
-TASK:
-Based on the LATEST USER REQUEST, YOUR MEMORY, YOUR LOCAL TOOLS, and YOUR AGENT_ACTIONS, decide the execution type, name (tool or action), and parameters.
-
-RESPONSE FORMAT:
-Respond with a JSON object matching this schema:
-{{
-  "type": "object",
-  "properties": {{
-    "execution_type": {{ "type": "string", "enum": ["TOOL", "AGENT_ACTION"] }},
-    "name": {{ "type": "string", "description": "If TOOL, the tool_name. If AGENT_ACTION, the action_name (e.g., 'connect_agent')." }},
-    "params": {{ "type": "object", "description": "A JSON object containing parameters for the chosen tool or action. Can be an empty object {{}} if no parameters are needed." }}
-  }},
-  "required": ["execution_type", "name", "params"]
-}}
-
-CRITICAL INSTRUCTIONS:
-1. Agent Connection:
-   - If the request is to *remember* or *discover* an agent by URL (e.g., "remember agent at http://..."), use the 'remember_agent' TOOL.
-   - If the request is to *connect* to an already known/remembered agent or a new URL, use the 'connect_agent' AGENT_ACTION.
-2. Agent Disconnection: If the request is to disconnect, use the 'disconnect_agent' AGENT_ACTION.
-3. Session Management: If the request is to start a new session, use the 'create_session' AGENT_ACTION.
-4. Listing Servers/Card: If the request is to list known servers or show your agent card, use the 'list_servers' or 'show_agent_card' TOOLS respectively.
-5. Other Tools: For other functionalities, select the appropriate TOOL from YOUR AVAILABLE LOCAL TOOLS.
-6. Fallback: If unsure, or if it's a general query, use the 'llm' TOOL.
-
-Do not add any explanations or text outside the JSON object."#,
-                        current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
-                        latest_request_text = latest_request_text,
-                        memory_text = memory_text,
-                        local_tools_with_params_desc = local_tools_with_params_desc
-                    )
-                } else {
-                    format!(
-                        r#"SYSTEM:
-You are an AI agent. Your previous step decided to handle the LATEST USER REQUEST locally.
-Your current role is to determine if this local handling involves executing a standard TOOL or performing an AGENT_ACTION (an internal operation specific to your agent's state or control).
-
-LATEST USER REQUEST (from human, to YOU, Agent '{current_agent_id}'):
-"{latest_request_text}"
-
-YOUR (Agent '{current_agent_id}') AVAILABLE LOCAL TOOLS:
-{local_tools_with_params_desc}
-
-YOUR (Agent '{current_agent_id}') AVAILABLE AGENT_ACTIONS (Internal Operations):
-- connect_agent: Connects to a remote agent. Params: {{"url": "http://..."}}
-- disconnect_agent: Disconnects from the current remote agent. Params: {{}}
-- create_session: Creates a new conversation session. Params: {{}}
-- (Note: 'list_servers', 'show_agent_card' are now TOOLS, not AGENT_ACTIONS)
-
-TASK:
-Based on the LATEST USER REQUEST, YOUR LOCAL TOOLS, and YOUR AGENT_ACTIONS, decide the execution type, name (tool or action), and parameters.
-
-RESPONSE FORMAT:
-Respond with a JSON object matching this schema:
-{{
-  "type": "object",
-  "properties": {{
-    "execution_type": {{ "type": "string", "enum": ["TOOL", "AGENT_ACTION"] }},
-    "name": {{ "type": "string", "description": "If TOOL, the tool_name. If AGENT_ACTION, the action_name (e.g., 'connect_agent')." }},
-    "params": {{ "type": "object", "description": "A JSON object containing parameters for the chosen tool or action. Can be an empty object {{}} if no parameters are needed." }}
-  }},
-  "required": ["execution_type", "name", "params"]
-}}
-
-CRITICAL INSTRUCTIONS:
-1. Agent Connection:
-   - If the request is to *remember* or *discover* an agent by URL (e.g., "remember agent at http://..."), use the 'remember_agent' TOOL.
-   - If the request is to *connect* to an already known/remembered agent or a new URL, use the 'connect_agent' AGENT_ACTION.
-2. Agent Disconnection: If the request is to disconnect, use the 'disconnect_agent' AGENT_ACTION.
-3. Session Management: If the request is to start a new session, use the 'create_session' AGENT_ACTION.
-4. Listing Servers/Card: If the request is to list known servers or show your agent card, use the 'list_servers' or 'show_agent_card' TOOLS respectively.
-5. Other Tools: For other functionalities, select the appropriate TOOL from YOUR AVAILABLE LOCAL TOOLS.
-6. Fallback: If unsure, or if it's a general query, use the 'llm' TOOL.
-
-Do not add any explanations or text outside the JSON object."#,
-                        current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
-                        latest_request_text = latest_request_text,
-                        local_tools_with_params_desc = local_tools_with_params_desc
-                    )
-                };
-
-                let mut schema_dp3 = json!({
-                    "type": "object",
-                    "properties": {
-                        "execution_type": { "type": "string", "enum": ["TOOL", "AGENT_ACTION"] },
-                        "name": { "type": "string", "description": "If TOOL, the tool_name. If AGENT_ACTION, the action_name (e.g., 'connect_agent')." },
-                        "params": { "type": "object", "description": "Parameters for the tool or action. Can be an empty object {} if no parameters are needed." }
-                    },
-                    "required": ["execution_type", "name", "params"]
-                });
-                // Schema cleaning for Gemini was removed as it's no longer sent to the API.
-                // if let Some(gemini_client) = self.llm.as_any().downcast_ref::<GeminiLlmClient>() {
-                //     schema_dp3 = gemini_client.clean_schema_for_gemini(&schema_dp3);
-                // }
-                trace!(prompt = %tool_param_prompt, "DP3: Tool/param/action extraction prompt.");
-
-                debug!("DP3: Asking LLM to choose tool and extract parameters.");
-
-                match self
-                    .llm
-                    .complete_structured(&tool_param_prompt, None, schema_dp3.clone())
-                    .await
-                {
-                    Ok(json_value) => {
-                        trace!(?json_value, "DP3: Received execution decision JSON from LLM.");
-                        if let (
-                            Some(execution_type_str),
-                            Some(name_str),
-                            Some(params_val),
-                        ) = (
-                            json_value.get("execution_type").and_then(Value::as_str),
-                            json_value.get("name").and_then(Value::as_str),
-                            json_value.get("params").cloned(),
-                        ) {
-                            match execution_type_str {
-                                "TOOL" => {
-                                    let tool_name = name_str.to_string();
-                                    if self.enabled_tools.contains(&tool_name) {
-                                        debug!(%tool_name, ?params_val, "DP3: Decided TOOL execution.");
-                                        // Special handling for remember_agent if URL is missing
-                                        if tool_name == "remember_agent" && params_val.get("agent_base_url").and_then(Value::as_str).is_none() {
-                                            debug!("remember_agent tool chosen but no URL in params, trying to extract from history.");
-                                            if let Some(url) = self.extract_url_from_history(&latest_request_text) {
-                                                debug!(extracted_url = %url, "Found URL in history for remember_agent tool.");
-                                                let enhanced_params = json!({"agent_base_url": url});
-                                                return Ok(RoutingDecision::Local { tool_name, params: enhanced_params });
-                                            }
-                                        }
-                                        Ok(RoutingDecision::Local { tool_name, params: params_val })
-                                    } else {
-                                        debug!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "DP3: LLM chose an unknown/disabled tool. Falling back to 'llm' tool.");
-                                        Ok(RoutingDecision::Local {
-                                            tool_name: "llm".to_string(),
-                                            params: json!({"text": latest_request_text}),
-                                        })
-                                    }
-                                }
-                                "AGENT_ACTION" => {
-                                    let action_name = name_str.to_string();
-                                    debug!(%action_name, ?params_val, "DP3: Decided AGENT_ACTION execution.");
-                                    // TODO: Validate action_name against a list of known agent actions if desired
-                                    Ok(RoutingDecision::AgentAction { action: action_name, params: params_val })
-                                }
-                                _ => {
-                                    warn!(?json_value, "DP3: LLM JSON 'execution_type' invalid. Falling back to 'llm' tool.");
-                                    Ok(RoutingDecision::Local {
-                                        tool_name: "llm".to_string(),
-                                        params: json!({"text": latest_request_text}),
-                                    })
-                                }
-                            }
-                        } else {
-                            warn!(?json_value, "DP3: LLM JSON missing 'execution_type', 'name', or 'params'. Falling back to 'llm' tool.");
-                            Ok(RoutingDecision::Local {
-                                tool_name: "llm".to_string(),
-                                params: json!({"text": latest_request_text}),
-                            })
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "DP3: LLM failed to choose execution type/name/params. Falling back to 'llm' tool.");
-                        Ok(RoutingDecision::Local {
-                            tool_name: "llm".to_string(),
-                            params: json!({"text": latest_request_text}),
-                        })
+            Some("LOCAL_TOOL") => {
+                let tool_name = decision_val
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("llm")
+                    .to_string();
+                
+                let tool_params = decision_val
+                    .get("tool_params")
+                    .and_then(|v| if v.is_object() { Some(v.clone()) } else { None })
+                    .unwrap_or_else(|| json!({"text": latest_request_text}));
+                
+                debug!(%tool_name, ?tool_params, "Decided LOCAL_TOOL execution.");
+                
+                if !self.enabled_tools.contains(&tool_name) {
+                    debug!(chosen_tool = %tool_name, enabled_tools = ?self.enabled_tools, "LLM chose an unknown/disabled tool. Falling back to 'llm' tool.");
+                    return Ok(RoutingDecision::Local {
+                        tool_name: "llm".to_string(),
+                        params: json!({"text": latest_request_text}),
+                    });
+                }
+                
+                // Special handling for remember_agent if URL is missing
+                if tool_name == "remember_agent" && tool_params.get("agent_base_url").and_then(Value::as_str).is_none() {
+                    debug!("remember_agent tool chosen but no URL in params, trying to extract from history.");
+                    if let Some(url) = self.extract_url_from_history(&latest_request_text) {
+                        debug!(extracted_url = %url, "Found URL in history for remember_agent tool.");
+                        let enhanced_params = json!({"agent_base_url": url});
+                        return Ok(RoutingDecision::Local { tool_name, params: enhanced_params });
                     }
                 }
+                
+                Ok(RoutingDecision::Local { 
+                    tool_name, 
+                    params: tool_params 
+                })
             }
-            Some("REMOTE") => {
+            Some("AGENT_ACTION") => {
+                let action_name = decision_val
+                    .get("action_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("create_session")
+                    .to_string();
+                
+                let action_params = decision_val
+                    .get("action_params")
+                    .and_then(|v| if v.is_object() { Some(v.clone()) } else { None })
+                    .unwrap_or_else(|| json!({}));
+                
+                debug!(%action_name, ?action_params, "Decided AGENT_ACTION execution.");
+                
+                // Validate action is one of the expected ones
+                if !["connect_agent", "disconnect_agent", "create_session"].contains(&action_name.as_str()) {
+                    warn!(%action_name, "Unknown agent action requested. Falling back to 'llm' tool.");
+                    return Ok(RoutingDecision::Local {
+                        tool_name: "llm".to_string(),
+                        params: json!({"text": latest_request_text}),
+                    });
+                }
+                
+                Ok(RoutingDecision::AgentAction { 
+                    action: action_name, 
+                    params: action_params 
+                })
+            }
+            Some("REMOTE_AGENT") => {
                 if let Some(agent_id) = decision_val.get("agent_id").and_then(Value::as_str) {
-                    debug!(remote_agent_id = %agent_id, "DP2 decided REMOTE execution.");
+                    debug!(remote_agent_id = %agent_id, "Decided REMOTE_AGENT execution.");
                     // Exact agent ID matching logic (as before)
                     let mut actual_agent_id = None;
                     if self.agent_registry.get(agent_id).is_some() {
@@ -1116,13 +1053,14 @@ Do not add any explanations or text outside the JSON object."#,
                             }
                         }
                     }
+                    
                     if let Some(actual_id) = actual_agent_id {
-                        debug!(remote_agent_id = %actual_id, "DP2: Remote delegation confirmed.");
+                        debug!(remote_agent_id = %actual_id, "Remote delegation confirmed.");
                         Ok(RoutingDecision::Remote {
                             agent_id: actual_id,
                         })
                     } else {
-                        warn!(remote_agent_id = %agent_id, "DP2: LLM delegated to unknown agent. Falling back to local 'llm'.");
+                        warn!(remote_agent_id = %agent_id, "LLM delegated to unknown agent. Falling back to local 'llm'.");
                         Ok(RoutingDecision::Local {
                             tool_name: "llm".to_string(),
                             params: json!({"text": latest_request_text}),
@@ -1131,7 +1069,7 @@ Do not add any explanations or text outside the JSON object."#,
                 } else {
                     warn!(
                         ?decision_val,
-                        "DP2: REMOTE decision missing 'agent_id'. Falling back to local 'llm'."
+                        "REMOTE_AGENT decision missing 'agent_id'. Falling back to local 'llm'."
                     );
                     Ok(RoutingDecision::Local {
                         tool_name: "llm".to_string(),
@@ -1141,15 +1079,15 @@ Do not add any explanations or text outside the JSON object."#,
             }
             Some("REJECT") => {
                 let reason = decision_val
-                    .get("reason")
+                    .get("reject_reason")
                     .and_then(Value::as_str)
                     .unwrap_or("No reason provided.")
                     .to_string();
-                debug!(%reason, "DP2 decided REJECT.");
+                debug!(%reason, "Decided REJECT.");
                 Ok(RoutingDecision::Reject { reason })
             }
             _ => {
-                warn!(?decision_val, "DP2: LLM routing decision_type unclear or missing. Falling back to local 'llm'.");
+                warn!(?decision_val, "LLM routing decision_type unclear or missing. Falling back to local 'llm'.");
                 Ok(RoutingDecision::Local {
                     tool_name: "llm".to_string(),
                     params: json!({"text": latest_request_text}),
@@ -1262,89 +1200,67 @@ Do not add any explanations or text outside the JSON object."#,
                     };
 
                     // Build the decision prompt with memory context if available
+                    let (agent_id, agent_name, agent_description) = self.get_agent_identity();
+                    
                     let decision_prompt = if has_memory {
                         format!(
                             r#"SYSTEM:
-You are an AI agent. A task previously delegated TO another agent has returned TO YOU because it requires additional input.
-YOUR current role is to decide how to handle this situation based on the new follow-up input from the human user.
+You are {agent_name} (ID: {agent_id}). {agent_description}
 
-YOUR (Agent '{current_agent_id}') MEMORY OF PREVIOUS OUTGOING REQUESTS TO OTHER AGENTS:
-{memory_text}
+A task that you previously delegated to another agent has returned because it requires additional input.
+Your job is to determine whether you can handle this with the information provided or if you need to ask the user.
 
-ORIGINAL TASK HISTORY (leading up to delegation):
-{history_text_for_prompt}
-
-REASON INPUT IS REQUIRED (from the remote agent that returned the task):
+TASK NEEDS INPUT:
 "{status_message}"
 
-NEW FOLLOW-UP MESSAGE/INPUT FROM HUMAN USER (to YOU, Agent '{current_agent_id}'):
+USER'S FOLLOW-UP RESPONSE:
 "{follow_up_text}"
 
-TASK:
-Decide how YOU (Agent '{current_agent_id}') should handle this situation.
-1. HANDLE_DIRECTLY: If YOU (Agent '{current_agent_id}') now have enough information from the FOLLOW-UP MESSAGE to answer the original request or address the issue directly using YOUR own capabilities.
-2. NEED_HUMAN_INPUT: If the input required is still unclear, complex, or requires specific human expertise/preferences that YOU (Agent '{current_agent_id}') cannot provide.
+ORIGINAL CONVERSATION BEFORE DELEGATION:
+{history_text_for_prompt}
 
-Consider:
-- Do YOU (Agent '{current_agent_id}') understand what input was originally needed by the remote agent?
-- Is the new FOLLOW-UP MESSAGE clear enough for YOU (Agent '{current_agent_id}') to proceed?
-- Could this require specific expertise or personal preferences that only the human user would know?
+YOUR MEMORY OF OTHER INTERACTIONS:
+{memory_text}
 
-RESPONSE FORMAT:
-Respond with a JSON object matching this schema:
+Return JSON:
 {{
-  "type": "object",
-  "properties": {{
-    "decision_type": {{ "type": "string", "enum": ["HANDLE_DIRECTLY", "NEED_HUMAN_INPUT"] }}
-  }},
-  "required": ["decision_type"]
-}}
-Do not add any explanations or text outside the JSON object."#,
-                            current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
-                            memory_text = memory_text,
-                            history_text_for_prompt = history_text_for_prompt,
+  "decision_type": "HANDLE_DIRECTLY" | "NEED_HUMAN_INPUT"
+}}"#,
                             status_message = status_message,
-                            follow_up_text = follow_up_text
+                            follow_up_text = follow_up_text,
+                            history_text_for_prompt = history_text_for_prompt,
+                            memory_text = memory_text,
+                            agent_name = agent_name,
+                            agent_id = agent_id,
+                            agent_description = agent_description
                         )
                     } else {
                         format!(
                             r#"SYSTEM:
-You are an AI agent. A task previously delegated TO another agent has returned TO YOU because it requires additional input.
-YOUR current role is to decide how to handle this situation based on the new follow-up input from the human user.
+You are {agent_name} (ID: {agent_id}). {agent_description}
 
-ORIGINAL TASK HISTORY (leading up to delegation):
-{history_text_for_prompt}
+A task that you previously delegated to another agent has returned because it requires additional input.
+Your job is to determine whether you can handle this with the information provided or if you need to ask the user.
 
-REASON INPUT IS REQUIRED (from the remote agent that returned the task):
+TASK NEEDS INPUT:
 "{status_message}"
 
-NEW FOLLOW-UP MESSAGE/INPUT FROM HUMAN USER (to YOU, Agent '{current_agent_id}'):
+USER'S FOLLOW-UP RESPONSE:
 "{follow_up_text}"
 
-TASK:
-Decide how YOU (Agent '{current_agent_id}') should handle this situation.
-1. HANDLE_DIRECTLY: If YOU (Agent '{current_agent_id}') now have enough information from the FOLLOW-UP MESSAGE to answer the original request or address the issue directly using YOUR own capabilities.
-2. NEED_HUMAN_INPUT: If the input required is still unclear, complex, or requires specific human expertise/preferences that YOU (Agent '{current_agent_id}') cannot provide.
+ORIGINAL CONVERSATION BEFORE DELEGATION:
+{history_text_for_prompt}
 
-Consider:
-- Do YOU (Agent '{current_agent_id}') understand what input was originally needed by the remote agent?
-- Is the new FOLLOW-UP MESSAGE clear enough for YOU (Agent '{current_agent_id}') to proceed?
-- Could this require specific expertise or personal preferences that only the human user would know?
-
-RESPONSE FORMAT:
-Respond with a JSON object matching this schema:
+Return JSON:
 {{
-  "type": "object",
-  "properties": {{
-    "decision_type": {{ "type": "string", "enum": ["HANDLE_DIRECTLY", "NEED_HUMAN_INPUT"] }}
-  }},
-  "required": ["decision_type"]
-}}
-Do not add any explanations or text outside the JSON object."#,
-                            current_agent_id = self.agent_registry.agents.iter().next().map_or_else(|| "self".to_string(), |entry| entry.key().clone()),
-                            history_text_for_prompt = history_text_for_prompt,
+  "decision_type": "HANDLE_DIRECTLY" | "NEED_HUMAN_INPUT"
+}}"#,
                             status_message = status_message,
-                            follow_up_text = follow_up_text
+                            follow_up_text = follow_up_text,
+                            history_text_for_prompt = history_text_for_prompt,
+                            agent_name = agent_name,
+                            agent_id = agent_id,
+                            agent_description = agent_description
                         )
                     };
 
@@ -1356,11 +1272,17 @@ Do not add any explanations or text outside the JSON object."#,
                         "required": ["decision_type"]
                     });
 
+                    info!("===== DP1 PROMPT TO LLM =====\n{}\n=========================", decision_prompt);
+                    
                     let decision_val_follow_up = match llm
                         .complete_structured(&decision_prompt, None, schema_follow_up.clone())
                         .await
                     {
-                        Ok(val) => val,
+                        Ok(val) => {
+                            info!("===== DP1 LLM RESPONSE =====\n{}\n=========================", 
+                                serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)));
+                            val
+                        },
                         Err(e) => {
                             warn!("LLM structured decision failed for follow-up: {}, defaulting to NEED_HUMAN_INPUT", e);
                             json!({"decision_type": "NEED_HUMAN_INPUT"})

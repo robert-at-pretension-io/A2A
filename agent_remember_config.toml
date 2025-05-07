@@ -9,7 +9,7 @@ agent_name = "Central Hub"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are the Central Hub agent that maintains a registry of all other agents. Your primary role is to remember and connect with other agents, and provide information about the agents you know."
+system_prompt = "You are a central registry agent that maintains information about other agents in the network. Your primary function is to respond to agent registration requests and provide information about connected agents when asked. Act as the single source of truth for network connectivity."
 
 [mode]
 repl = true

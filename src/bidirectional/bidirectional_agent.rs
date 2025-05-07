@@ -108,19 +108,21 @@ use crate::types::{
     Task,
     TaskQueryParams, /* TaskIdParams, PushNotificationConfig, */
     // Unused
-    /* DataPart, FilePart, TaskStatus, */ // Unused
+    /* DataPart, FilePart, */ 
+    TaskStatus, // Now used
     TaskSendParams,
     TaskState,
     TextPart,
 };
 
 use anyhow::{anyhow, /* Context, */ Result}; // Removed unused Context
-                                             // use async_trait::async_trait; // Unused
+use chrono::Utc; // Added for timestamp generation
+                                            // use async_trait::async_trait; // Unused
                                              // Removed unused DateTime
 use dashmap::DashMap;
 use futures_util::{StreamExt /* TryStreamExt */}; // Removed unused TryStreamExt
                                                   // use reqwest; // Unused
-use serde_json::json; // Import json macro for serialization
+use serde_json::{json, Value}; // Import json macro for serialization and Value type
 use std::{
     io::{self /* Write, BufRead */}, // Removed unused Write, BufRead
     // error::Error as StdError, // Unused
@@ -242,22 +244,22 @@ impl BidirectionalAgent {
 
         // Create the LLM client (local helper)
         debug!("Initializing LLM client.");
-        let llm: Arc<dyn LlmClient> = if let Some(gemini_key) = &config.llm.gemini_api_key {
-            info!("Using Gemini API key from configuration/environment. Gemini will be the primary LLM.");
+        let llm: Arc<dyn LlmClient> = if let Some(claude_key) = &config.llm.claude_api_key {
+            info!("Using Claude API key from configuration/environment. Claude will be the primary LLM.");
+            Arc::new(ClaudeLlmClient::new(
+                claude_key.clone(),
+                config.llm.system_prompt.clone(),
+            ))
+        } else if let Some(gemini_key) = &config.llm.gemini_api_key {
+            info!("Using Gemini API key from configuration/environment. Gemini will be the primary LLM (Claude not configured).");
             Arc::new(GeminiLlmClient::new(
                 gemini_key.clone(),
                 config.llm.gemini_model_id.clone(),
                 config.llm.gemini_api_endpoint.clone(),
                 config.llm.system_prompt.clone(),
             ))
-        } else if let Some(claude_key) = &config.llm.claude_api_key {
-            info!("Using Claude API key from configuration/environment. Claude will be the primary LLM (Gemini not configured).");
-            Arc::new(ClaudeLlmClient::new(
-                claude_key.clone(),
-                config.llm.system_prompt.clone(),
-            ))
         } else {
-            error!("No LLM configuration provided. Set GEMINI_API_KEY or CLAUDE_API_KEY environment variable, or add corresponding keys to config file.");
+            error!("No LLM configuration provided. Set CLAUDE_API_KEY or GEMINI_API_KEY environment variable, or add corresponding keys to config file.");
             return Err(anyhow!(
                 "No LLM configuration provided. Cannot proceed without LLM client."
             ));
@@ -505,7 +507,7 @@ impl BidirectionalAgent {
         debug!("Creating TaskSendParams.");
         let params = TaskSendParams {
             id: task_id.clone(),
-            message: initial_message,
+            message: initial_message.clone(), // Clone the message for later use
             session_id: self.current_session_id.clone(),
             metadata: None,          // Add metadata if needed from REPL context
             history_length: None,    // Request history if needed
@@ -558,9 +560,11 @@ impl BidirectionalAgent {
         // This is a temporary step. Ideally, TaskService.process_task would return this.
         // We need a TaskRouter instance. The TaskService holds one.
         // This is a bit of a hack to get the router.
-        let router = self.task_service.task_router.as_ref()
-            .ok_or_else(|| anyhow!("TaskRouter not available in TaskService for local processing"))?
-            .clone(); // Clone Arc
+        // Access the task router in a different way
+        let router = match self.task_service.get_router() {
+            Some(router) => router.clone(),
+            None => return Err(anyhow!("TaskRouter not available in TaskService for local processing"))
+        };
 
         let temp_task_for_routing_decision = Task {
             id: task_id.clone(),
@@ -666,9 +670,13 @@ impl BidirectionalAgent {
     #[instrument(skip(self, params), fields(agent_id = %self.agent_id))]
     async fn handle_connect_action(&mut self, params: Value) -> Result<String> {
         debug!(?params, "Handling connect_agent action.");
-        let url = params.get("url").and_then(Value::as_str).ok_or_else(|| {
-            anyhow!("'url' parameter missing or not a string for connect_agent action")
-        })?;
+        // Check for url parameter in both formats that might be returned by LLMs
+        let url = params.get("url")
+            .or_else(|| params.get("agent_base_url"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                anyhow!("URL parameter missing or not a string for connect_agent action (neither 'url' nor 'agent_base_url' found)")
+            })?;
 
         // Logic moved from repl/commands.rs handle_connect (URL part)
         let client = A2aClient::new(url);
@@ -763,13 +771,25 @@ pub async fn main() -> Result<()> {
     eprintln!("[PRE-LOG] Initial default config created.");
 
     // Check for environment variable API key *before* loading config file
-    eprintln!("[PRE-LOG] Checking for CLAUDE_API_KEY env var...");
+    eprintln!("[PRE-LOG] Checking for LLM API keys in environment...");
+    
+    // Check for Claude API key first (prioritizing Claude)
     if config.llm.claude_api_key.is_none() {
         if let Ok(env_key) = std::env::var("CLAUDE_API_KEY") {
             eprintln!("[PRE-LOG] Found CLAUDE_API_KEY in environment.");
             config.llm.claude_api_key = Some(env_key);
         } else {
             eprintln!("[PRE-LOG] CLAUDE_API_KEY not found in environment.");
+        }
+    }
+    
+    // Check for Gemini API key as fallback only if Claude is not available
+    if config.llm.claude_api_key.is_none() && config.llm.gemini_api_key.is_none() {
+        if let Ok(env_key) = std::env::var("GEMINI_API_KEY") {
+            eprintln!("[PRE-LOG] Found GEMINI_API_KEY in environment.");
+            config.llm.gemini_api_key = Some(env_key);
+        } else {
+            eprintln!("[PRE-LOG] GEMINI_API_KEY not found in environment.");
         }
     }
 

@@ -6,7 +6,7 @@ agent_name = "Network Explorer"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are the Network Explorer agent. Your role is to discover information about other agents in the network by querying hub agents about their known connections."
+system_prompt = "You are an agent that maps the network of connected services. Your primary function is to discover information about the agent network by querying central registries about their known connections and building a comprehensive map of available services."
 
 [mode]
 repl = true

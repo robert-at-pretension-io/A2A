@@ -259,6 +259,9 @@ impl LlmClient for GeminiLlmClient {
             "generationConfig": {
                 "responseMimeType": "application/json",
                 // "responseSchema": output_schema, // Schema is no longer sent
+                "thinkingConfig": {
+                    "thinkingBudget": 0 // Set thinking budget back to 0
+                }
             }
         });
         trace!(payload = %payload, "Gemini API request payload.");

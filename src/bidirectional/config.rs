@@ -158,7 +158,7 @@ fn default_system_prompt() -> String {
 }
 
 fn default_gemini_model_id() -> String {
-    "gemini-2.5-pro-preview-05-06".to_string() // Updated to newer model
+    "gemini-2.5-pro-preview-05-06".to_string() // Changed back to pro model
 }
 
 fn default_gemini_api_endpoint() -> String {

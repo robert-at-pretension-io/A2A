@@ -26,9 +26,9 @@ impl MockLlmClient {
     pub fn new() -> Self {
         Self {
             text_responses: Mutex::new(HashMap::new()),
-            default_text_response: "LOCAL".to_string(),
+            default_text_response: "LOCAL_TOOL".to_string(),
             structured_responses: Mutex::new(HashMap::new()),
-            default_structured_response: json!({"decision_type": "LOCAL", "tool_name": "llm", "params": {}}), // Default structured response
+            default_structured_response: json!({"decision_type": "LOCAL_TOOL", "tool_name": "llm", "tool_params": {}}), // Default structured response
             calls: Mutex::new(Vec::new()),
         }
     }

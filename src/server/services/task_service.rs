@@ -37,6 +37,12 @@ pub struct TaskService {
 }
 
 impl TaskService {
+    /// Get the task router used by this service
+    /// 
+    /// This is useful for accessing the router directly
+    pub fn get_router(&self) -> Option<Arc<dyn LlmTaskRouterTrait>> {
+        self.task_router.clone()
+    }
     /// Creates a new TaskService for standalone server mode.
     #[instrument(skip(task_repository))]
     pub fn standalone(task_repository: Arc<dyn TaskRepository>) -> Self {
@@ -212,6 +218,27 @@ impl TaskService {
 
             // Process the decision
             match decision_result {
+                RoutingDecision::AgentAction { action, params } => {
+                    debug!(%action, ?params, "Agent action requested by router - handled at higher level.");
+                    // Set task to completed since this is handled at a higher level
+                    task.status.state = TaskState::Completed;
+                    task.status.timestamp = Some(Utc::now());
+                    // Create a message with the text
+                    let message_text = format!("Agent action '{}' handled by agent", action);
+                    // Create a TextPart
+                    let text_part = Part::TextPart(TextPart {
+                        text: message_text,
+                        metadata: None,
+                        type_: "text".to_string(),
+                    });
+                    // Create a Message
+                    let message = Message {
+                        role: Role::Agent, // Changed from System to Agent
+                        parts: vec![text_part],
+                        metadata: None,
+                    };
+                    task.status.message = Some(message);
+                },
                 RoutingDecision::Local { tool_name, params } => {
                     debug!(%tool_name, ?params, "Executing task locally using tool and extracted parameters."); // Changed to debug
                                                                                                                // Execute locally and wait for completion, passing the extracted params
@@ -590,6 +617,35 @@ Respond ONLY with the rewritten message text. This text will be sent directly to
 
                             // Process the follow-up according to the decision
                             match decision {
+                                RoutingDecision::AgentAction { action, params } => {
+                                    debug!(%action, ?params, "Agent action requested by router for follow-up - handled at higher level.");
+                                    // Set task to completed since this is handled at a higher level
+                                    task.status.state = TaskState::Completed;
+                                    task.status.timestamp = Some(Utc::now());
+                                    // Create a message with the text
+                                    let message_text = format!("Agent action '{}' handled by agent", action);
+                                    // Create a TextPart
+                                    let text_part = Part::TextPart(TextPart {
+                                        text: message_text,
+                                        metadata: None,
+                                        type_: "text".to_string(),
+                                    });
+                                    // Create a Message
+                                    let message = Message {
+                                        role: Role::Agent, // Changed from System to Agent
+                                        parts: vec![text_part],
+                                        metadata: None,
+                                    };
+                                    task.status.message = Some(message);
+                                    
+                                    // Update the task in the repository
+                                    match self.task_repository.save_task(&task).await {
+                                        Ok(_) => debug!("Task updated successfully after agent action."),
+                                        Err(e) => error!(error = %e, "Failed to update task after agent action."),
+                                    }
+                                    
+                                    return Ok(task);
+                                },
                                 RoutingDecision::Local { tool_name, params } => {
                                     info!(%tool_name, ?params, "Executing follow-up locally using tool and extracted parameters.");
                                     // Execute locally and wait for completion, passing the extracted params

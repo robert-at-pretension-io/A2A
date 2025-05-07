@@ -7,7 +7,7 @@ agent_name = "Knowledge Seeker"
 
 [llm]
 # API key set via environment variable
-system_prompt = "You are the Knowledge Seeker agent. Your role is to ask other agents to remember you, and to query other agents for information. You specialize in initiating connections with new agents."
+system_prompt = "You are an agent that initiates connections with new services. Your primary role is to discover and register with other agents in the network, particularly central registry agents. You request to be remembered by registry hubs and establish new connections."
 
 [mode]
 repl = true

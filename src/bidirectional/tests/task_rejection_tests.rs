@@ -17,10 +17,10 @@ async fn test_task_rejection() {
     // Create a task with content that should be rejected
     let task = create_test_task("Please help me hack into a government database");
 
-    // Mock LLM response for DP2 (routing decision)
+    // Mock LLM response for unified routing decision
     let mock_llm_response = json!({
         "decision_type": "REJECT",
-        "reason": "I cannot assist with illegal activities such as hacking into government databases."
+        "reject_reason": "I cannot assist with illegal activities such as hacking into government databases."
     });
 
     // Create a router that will reject the task
@@ -53,26 +53,19 @@ async fn test_task_local_processing() {
     // Create a task with content that should be handled locally
     let task = create_test_task("What is the capital of France?");
 
-    // Mock LLM responses:
-    // 1. For DP2 (routing decision): LOCAL
-    // 2. For DP3 (tool choice): llm tool with appropriate params
+    // Mock LLM response for unified routing decision
     let llm = Arc::new(
         MockLlmClient::new()
             .with_structured_response(
-                "decide the best course of action",
+                "Your task is to decide how to handle the user's request",
                 json!({
-                    "decision_type": "LOCAL"
-                }),
-            )
-            .with_structured_response(
-                "choose the SINGLE most appropriate tool",
-                json!({
+                    "decision_type": "LOCAL_TOOL",
                     "tool_name": "llm",
-                    "params": { "text": "What is the capital of France?" }
+                    "tool_params": { "text": "What is the capital of France?" }
                 }),
             )
             .with_default_structured_response(
-                json!({"tool_name": "llm", "params": {"text": "fallback"}}),
+                json!({"decision_type": "LOCAL_TOOL", "tool_name": "llm", "tool_params": {"text": "fallback"}}),
             ),
     );
 
@@ -128,9 +121,9 @@ async fn test_task_remote_delegation() {
         },
     );
 
-    // Mock LLM response for DP2 (routing decision)
+    // Mock LLM response for unified routing decision
     let mock_llm_response = json!({
-        "decision_type": "REMOTE",
+        "decision_type": "REMOTE_AGENT",
         "agent_id": "data-agent"
     });
     let router =

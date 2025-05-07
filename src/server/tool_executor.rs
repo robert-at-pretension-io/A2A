@@ -687,7 +687,7 @@ impl Tool for ExecuteCommandTool {
         // Most command logic is removed. Only keep what's truly an "execute_command" type action.
         // Or, this tool could be deprecated if all functionality is moved.
         // For now, let's make it return an error for most things.
-        let result_string = match command.as_str() {
+        let result_string: Result<String, ToolError> = match command.as_str() {
             // Example: Keep a very specific command if needed, otherwise error.
             // "some_specific_meta_command" => Ok("Specific meta command executed.".to_string()),
             "connect" | "disconnect" | "servers" | "session" | "card" |
