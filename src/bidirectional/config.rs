@@ -76,17 +76,32 @@ pub struct ToolsConfig {
     pub agent_directory_path: Option<String>,
 }
 
+/// Registry configuration section
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct RegistryConfig {
+    /// Path to the registry file
+    pub registry_path: Option<String>,
+    
+    /// Whether to run in registry-only mode (no LLM)
+    #[serde(default)]
+    pub registry_only_mode: bool,
+}
+
 /// Configuration for the bidirectional agent
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct BidirectionalAgentConfig {
     #[serde(default)]
     pub server: ServerConfig,
-    #[serde(default)] // <-- Add default back
+    #[serde(default)]
     pub client: ClientConfig,
     #[serde(default)]
     pub llm: LlmConfig,
     #[serde(default)]
-    pub tools: ToolsConfig, // <-- new
+    pub tools: ToolsConfig,
+    
+    /// Registry-specific configuration
+    #[serde(default)]
+    pub registry: RegistryConfig,
 
     // Mode configuration
     #[serde(default)]

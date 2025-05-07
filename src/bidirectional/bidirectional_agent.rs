@@ -192,9 +192,11 @@ pub struct BidirectionalAgent {
     pub client_manager: Arc<ClientManager>, // From crate::server::client_manager
 
     // Local components for specific logic
-    // REMOVED agent_directory field
-    // REMOVED agent_directory_path field
+    pub agent_directory: Arc<crate::bidirectional::agent_registry::AgentDirectory>, // Registry for storing agent URLs
     pub llm: Arc<dyn LlmClient>, // Local LLM client
+    
+    // Registry-only mode flag
+    pub registry_only_mode: bool,
 
     // Server configuration
     pub port: u16,
@@ -240,11 +242,20 @@ impl BidirectionalAgent {
     pub fn new(config: BidirectionalAgentConfig) -> Result<Self> {
         debug!("Creating new BidirectionalAgent instance."); // Changed to debug
         trace!(?config, "Agent configuration provided.");
-        // REMOVED AgentDirectory creation and loading logic
 
-        // Create the LLM client (local helper)
+        // Determine if we're running in registry-only mode
+        let registry_only_mode = config.registry.registry_only_mode;
+        
+        // Create the LLM client (local helper) if not in registry-only mode
         debug!("Initializing LLM client.");
-        let llm: Arc<dyn LlmClient> = if let Some(claude_key) = &config.llm.claude_api_key {
+        let llm: Arc<dyn LlmClient> = if registry_only_mode {
+            info!("Running in registry-only mode. Using placeholder LLM client.");
+            // Create a placeholder LLM client - registry-only mode doesn't need a real LLM
+            Arc::new(ClaudeLlmClient::new(
+                "placeholder-key".to_string(),
+                "Registry-only mode".to_string(),
+            ))
+        } else if let Some(claude_key) = &config.llm.claude_api_key {
             info!("Using Claude API key from configuration/environment. Claude will be the primary LLM.");
             Arc::new(ClaudeLlmClient::new(
                 claude_key.clone(),
@@ -258,11 +269,13 @@ impl BidirectionalAgent {
                 config.llm.gemini_api_endpoint.clone(),
                 config.llm.system_prompt.clone(),
             ))
-        } else {
+        } else if !registry_only_mode {
             error!("No LLM configuration provided. Set CLAUDE_API_KEY or GEMINI_API_KEY environment variable, or add corresponding keys to config file.");
             return Err(anyhow!(
                 "No LLM configuration provided. Cannot proceed without LLM client."
             ));
+        } else {
+            unreachable!("Registry-only mode should have already created a placeholder LLM client");
         };
         trace!(system_prompt = %config.llm.system_prompt, "LLM client created.");
 
@@ -279,7 +292,7 @@ impl BidirectionalAgent {
         let client_manager = Arc::new(ClientManager::new(agent_registry.clone()));
 
         // Create our custom task router implementation
-        debug!("Initializing BidirectionalTaskRouter.");
+        debug!("Initializing task router.");
         let enabled_tools_list = config.tools.enabled.clone();
         let enabled_tools = Arc::new(enabled_tools_list); // Arc for sharing
         trace!(?enabled_tools, "Enabled tools for router and executor.");
@@ -316,16 +329,41 @@ impl BidirectionalAgent {
         ));
         trace!("ToolExecutor created.");
 
-        // Create the task router, passing the enabled tools list, registry, and task repository
-        let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> =
+        // Initialize agent directory for registry functionality
+        debug!("Initializing agent registry.");
+        let agent_directory = if let Some(registry_path) = &config.registry.registry_path {
+            debug!(path = %registry_path, "Loading agent registry from file");
+            match crate::bidirectional::agent_registry::AgentDirectory::load(registry_path) {
+                Ok(directory) => Arc::new(directory),
+                Err(e) => {
+                    warn!(path = %registry_path, error = %e, "Failed to load agent registry, creating new directory");
+                    let mut directory = crate::bidirectional::agent_registry::AgentDirectory::new();
+                    directory.directory_path = Some(registry_path.clone());
+                    Arc::new(directory)
+                }
+            }
+        } else {
+            debug!("No registry path specified, creating in-memory registry");
+            Arc::new(crate::bidirectional::agent_registry::AgentDirectory::new())
+        };
+
+        // Create the appropriate task router based on configuration
+        let bidirectional_task_router: Arc<dyn LlmTaskRouterTrait> = if config.registry.registry_only_mode {
+            debug!("Creating RegistryRouter for registry-only mode");
+            Arc::new(crate::bidirectional::registry_router::RegistryRouter::new(
+                agent_directory.clone()
+            ))
+        } else {
+            debug!("Creating BidirectionalTaskRouter with LLM capabilities");
             Arc::new(BidirectionalTaskRouter::new(
                 llm.clone(),
                 agent_registry.clone(),
                 enabled_tools.clone(),
                 Some(task_repository.clone()),
                 &config, // Pass the full config reference
-            ));
-        trace!("BidirectionalTaskRouter created with config flags.");
+            ))
+        };
+        trace!("Task router created.");
 
         // Create the task service using the canonical components and our trait implementations
         debug!("Initializing TaskService.");
@@ -380,9 +418,11 @@ impl BidirectionalAgent {
             client_manager,
 
             // Store local helper components
-            // REMOVED agent_directory field
-            // REMOVED agent_directory_path field
+            agent_directory, // Store the agent directory we created
             llm,
+            
+            // Store registry-only mode flag
+            registry_only_mode: config.registry.registry_only_mode,
 
             port: config.server.port,
             bind_address: config.server.bind_address.clone(),
