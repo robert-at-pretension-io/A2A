@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 use tokio::task::JoinHandle;
 use tracing::info;
+use tempfile::TempDir; // Import TempDir
 
-async fn start_test_server(config: BidirectionalAgentConfig) -> (String, JoinHandle<Result<(), anyhow::Error>>, PathBuf) {
+async fn start_test_server(config: BidirectionalAgentConfig) -> (String, JoinHandle<Result<(), anyhow::Error>>, TempDir) {
     // Find an available port
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
     let addr = listener.local_addr().expect("Failed to get local address");
@@ -39,7 +40,7 @@ async fn start_test_server(config: BidirectionalAgentConfig) -> (String, JoinHan
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
 
-    (server_url, server_handle, static_files_path)
+    (server_url, server_handle, temp_static_dir) // Return the TempDir object
 }
 
 
@@ -49,11 +50,12 @@ async fn test_serve_index_html_root_path() {
     config.mode.repl = false; // Ensure not in REPL mode for server to run
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, static_dir) = start_test_server(config).await;
+    let (server_url, server_handle, temp_dir) = start_test_server(config).await;
+    let static_dir = temp_dir.path(); // Get Path from TempDir
 
     // Create a dummy index.html
     let index_path = static_dir.join("index.html");
-    let mut file = File::create(&index_path).unwrap();
+    let mut file = File::create(&index_path).expect("Failed to create test index.html");
     file.write_all(b"<h1>Hello Test World</h1>").unwrap();
 
     let client = reqwest::Client::new();
@@ -75,10 +77,11 @@ async fn test_serve_index_html_explicit_path() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, static_dir) = start_test_server(config).await;
+    let (server_url, server_handle, temp_dir) = start_test_server(config).await;
+    let static_dir = temp_dir.path();
 
     let index_path = static_dir.join("index.html");
-    let mut file = File::create(&index_path).unwrap();
+    let mut file = File::create(&index_path).expect("Failed to create test index.html for explicit path");
     file.write_all(b"<h1>Explicit Path Test</h1>").unwrap();
 
     let client = reqwest::Client::new();
@@ -104,8 +107,8 @@ async fn test_serve_static_file_not_found_for_index() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    // static_dir will be created, but we won't put index.html in it
-    let (server_url, server_handle, _static_dir) = start_test_server(config).await;
+    // temp_dir will be created, but we won't put index.html in it
+    let (server_url, server_handle, _temp_dir) = start_test_server(config).await;
 
     let client = reqwest::Client::new();
     // Request root, expecting index.html, which doesn't exist
@@ -128,7 +131,7 @@ async fn test_get_non_existent_static_file_falls_to_api_error() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, _static_dir) = start_test_server(config).await;
+    let (server_url, server_handle, _temp_dir) = start_test_server(config).await;
 
     let client = reqwest::Client::new();
     let res = client
@@ -158,7 +161,7 @@ async fn test_a2a_post_request_still_works() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; 
 
-    let (server_url, server_handle, _static_dir) = start_test_server(config).await;
+    let (server_url, server_handle, _temp_dir) = start_test_server(config).await;
 
     let client = reqwest::Client::new(); // Use async client
     let a2a_payload = serde_json::json!({
@@ -204,12 +207,13 @@ async fn test_serve_other_static_file() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, static_dir) = start_test_server(config).await;
+    let (server_url, server_handle, temp_dir) = start_test_server(config).await;
+    let static_dir = temp_dir.path();
 
     // Create a dummy style.css
     let css_path = static_dir.join("style.css");
-    fs::create_dir_all(static_dir.join("css")).unwrap_or_default(); // Ensure css dir exists if path is css/style.css
-    let mut file = File::create(&css_path).unwrap();
+    // fs::create_dir_all(static_dir.join("css")).unwrap_or_default(); // Not needed if style.css is at root of static_dir
+    let mut file = File::create(&css_path).expect("Failed to create test style.css");
     file.write_all(b"body { color: blue; }").unwrap();
 
     let client = reqwest::Client::new();
@@ -234,11 +238,13 @@ async fn test_path_traversal_prevention() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, static_dir) = start_test_server(config).await;
+    let (server_url, server_handle, _temp_dir) = start_test_server(config).await;
+    // let static_dir = temp_dir.path(); // Not directly used for creating the secret file
 
-    // Create a dummy file outside the static_dir to try to access
-    let secret_file_path = tempdir().unwrap().path().join("secret.txt");
-    let mut file = File::create(&secret_file_path).unwrap();
+    // Create a dummy file in a *separate* temporary directory
+    let secret_temp_dir = tempdir().unwrap();
+    let secret_file_path = secret_temp_dir.path().join("secret.txt");
+    let mut file = File::create(&secret_file_path).expect("Failed to create secret.txt for traversal test");
     file.write_all(b"This is a secret!").unwrap();
     
     // Calculate relative path from static_dir to secret_file_path's parent
