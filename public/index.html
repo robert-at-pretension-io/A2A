@@ -6,79 +6,58 @@
     <title>A2A Agent Registry</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: system-ui, -apple-system, sans-serif;
             line-height: 1.6;
             margin: 0;
             padding: 0;
-            background-color: #f4f4f4;
+            background-color: #f8f9fa;
             color: #333;
-        }
-        .container {
-            width: 80%;
-            margin: auto;
-            overflow: hidden;
+            max-width: 800px;
+            margin: 0 auto;
             padding: 20px;
-            background-color: #fff;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
         header {
-            background: #333;
-            color: #fff;
-            padding: 1rem 0;
+            margin-bottom: 30px;
             text-align: center;
         }
         header h1 {
             margin: 0;
-            font-size: 2.5rem;
+            font-size: 2.2rem;
         }
-        section {
-            padding: 20px;
-            margin-bottom: 20px;
-            border-bottom: 1px solid #ddd;
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 16px;
+            background-color: #0066cc;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 8px;
         }
-        section:last-child {
-            border-bottom: none;
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
         h2 {
-            color: #333;
-            border-bottom: 2px solid #333;
-            padding-bottom: 5px;
+            margin-top: 0;
+            font-size: 1.4rem;
         }
-        p, ul {
+        .controls {
+            margin: 20px 0;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
             margin-bottom: 15px;
-        }
-        ul {
-            list-style: disc;
-            padding-left: 20px;
-        }
-        code {
-            background-color: #eee;
-            padding: 2px 4px;
-            border-radius: 4px;
-        }
-        pre {
-            background-color: #eee;
-            padding: 10px;
-            border-radius: 4px;
-            overflow-x: auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        .controls label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-        .controls input[type="text"] {
-            width: calc(100% - 22px);
-            padding: 10px;
-            margin-bottom: 10px;
             border: 1px solid #ddd;
             border-radius: 4px;
+            box-sizing: border-box;
         }
-        .controls button {
-            display: inline-block;
-            background: #333;
+        button {
+            background: #0066cc;
             color: #fff;
             padding: 10px 15px;
             border: none;
@@ -86,73 +65,129 @@
             cursor: pointer;
             font-size: 1rem;
         }
-        .controls button:hover {
-            background: #555;
+        button:hover {
+            background: #0055aa;
         }
-        #resultsArea {
-            margin-top: 20px;
+        pre {
+            background-color: #f1f3f5;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
         .error {
             color: red;
-            font-weight: bold;
+        }
+        .api-examples {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .example h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+            color: #0066cc;
+        }
+        .example p {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        .code {
+            background-color: #1e1e1e;
+            color: #dcdcdc;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+        }
+        ul {
+            padding-left: 20px;
+            margin-bottom: 15px;
+        }
+        li {
+            margin-bottom: 8px;
         }
     </style>
 </head>
 <body>
     <header>
         <h1>A2A Agent Registry</h1>
+        <p><span class="badge">MACHINE-TO-MACHINE</span> A service for AI agents to find other AI agents</p>
     </header>
 
-    <div class="container">
-        <section id="introduction">
-            <h2>Introduction</h2>
-            <p>The Agent Registry is a critical component of the Agent-to-Agent (A2A) ecosystem. It enables agent discovery, cataloging, and interoperability by functioning as a directory of available A2A agents, their capabilities, and connection information.</p>
-        </section>
+    <div class="card">
+        <h2>What is this?</h2>
+        <p>This is a registry for A2A agents to discover each other. It stores information about available agents and their capabilities, acting as a centralized directory for machine-to-machine communication.</p>
+    </div>
 
-        <section id="importance">
-            <h2>Why an Agent Registry is Essential</h2>
-            <p>In a distributed system of AI agents, several challenges emerge:</p>
-            <ul>
-                <li><strong>Discovery Challenge:</strong> How do agents find other agents that can provide specific services?</li>
-                <li><strong>Capability Awareness:</strong> How does an agent know what another agent can do?</li>
-                <li><strong>Protocol Compatibility:</strong> How can agents ensure they're communicating using compatible protocols?</li>
-                <li><strong>Network Topology:</strong> How can we maintain a dynamic map of the growing agent ecosystem?</li>
-            </ul>
-            <p>The Agent Registry addresses these by providing a centralized directory, capability cataloging, dynamic updates, and more, forming the connective tissue for a collaborative agent network.</p>
-        </section>
-
-        <section id="how-to-use">
-            <h2>Using the Registry</h2>
-            <p>The registry primarily serves two functions:</p>
-            <ul>
-                <li><strong>Agent Registration:</strong> When messages containing potential agent URLs are processed by the registry, it extracts these URLs, normalizes them, attempts to fetch the agent's "AgentCard" (a summary of its capabilities), and stores this information.</li>
-                <li><strong>Agent Lookup:</strong> Users or other agents can query the registry to find out which agents are known. Sending a non-URL message (like "list agents") to the registry's A2A task endpoint typically triggers this lookup. The registry then returns a list of known agents and their details.</li>
-            </ul>
-        </section>
-
-        <section id="discover-agents">
-            <h2>Discover Registered Agents</h2>
-            <p>Enter the A2A endpoint URL of an Agent Registry server and click the button to list registered agents. The registry should be configured to respond to a "list agents" message on its task endpoint.</p>
-            <div class="controls">
-                <label for="registryUrl">Agent Registry A2A Endpoint URL:</label>
-                <input type="text" id="registryUrl" value="http://localhost:8085/">
-                <button id="listAgentsBtn">List Registered Agents</button>
+    <div class="card">
+        <h2>How Agents Use This Registry</h2>
+        <div class="api-examples">
+            <div class="example">
+                <h3>1. Register an Agent</h3>
+                <p>Send any message containing your agent's URL to register it:</p>
+                <pre class="code">POST https://registry-url/
+{
+  "jsonrpc": "2.0",
+  "id": "request-123",
+  "method": "tasks/send",
+  "params": {
+    "id": "task-456",
+    "message": {
+      "role": "user",
+      "parts": [{
+        "type": "text",
+        "text": "Register my agent at https://my-agent.example.com"
+      }]
+    }
+  }
+}</pre>
             </div>
-            <div id="resultsArea">
-                <h3>Results:</h3>
-                <pre id="agentListOutput">No agents listed yet. Click the button above.</pre>
+            <div class="example">
+                <h3>2. Get List of Agents</h3>
+                <p>Request the registry for a list of all known agents:</p>
+                <pre class="code">POST https://registry-url/
+{
+  "jsonrpc": "2.0",
+  "id": "request-789",
+  "method": "tasks/send",
+  "params": {
+    "id": "task-abc",
+    "message": {
+      "role": "user",
+      "parts": [{
+        "type": "text",
+        "text": "list agents"
+      }]
+    }
+  }
+}</pre>
             </div>
-        </section>
+        </div>
+    </div>
 
-        <section id="ecosystem-role">
-            <h2>Role in the A2A Ecosystem</h2>
-            <ul>
-                <li><strong>Enabling Agent Networks:</strong> Transforms individual agents into a collaborative network.</li>
-                <li><strong>Facilitating Specialization:</strong> Makes it easy to discover specialized agents.</li>
-                <li><strong>Supporting Runtime Adaptation:</strong> Allows the network to adapt as agents join or update.</li>
-                <li><strong>Creating Network Effects:</strong> Increases in value as more agents register.</li>
-            </ul>
-        </section>
+    <div class="card">
+        <h2>Try It: Query Available Agents</h2>
+        <p>Enter a registry URL to see what agents are registered:</p>
+        <div class="controls">
+            <input type="text" id="registryUrl" value="http://localhost:8085/" placeholder="Registry URL">
+            <button id="listAgentsBtn">List Registered Agents</button>
+        </div>
+        <pre id="agentListOutput">No agents listed yet. Click the button above.</pre>
+    </div>
+    
+    <div class="card">
+        <h2>How It Works</h2>
+        <p>The registry automatically:</p>
+        <ul>
+            <li><strong>Extracts agent URLs</strong> from messages</li>
+            <li><strong>Fetches agent information</strong> (AgentCards) from the URLs</li>
+            <li><strong>Stores capabilities</strong> in a searchable directory</li>
+            <li><strong>Responds to queries</strong> from other agents</li>
+        </ul>
+        <p>This enables a network of specialized agents to discover and collaborate with each other.</p>
     </div>
 
     <script>
@@ -163,12 +198,11 @@
             outputArea.classList.remove('error');
 
             if (!registryUrl) {
-                outputArea.textContent = 'Error: Agent Registry URL cannot be empty.';
+                outputArea.textContent = 'Error: Registry URL cannot be empty.';
                 outputArea.classList.add('error');
                 return;
             }
 
-            // Generate unique IDs for JSON-RPC request and A2A Task
             const requestId = `html-client-${Date.now()}`;
             const taskId = `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -177,12 +211,12 @@
                 id: requestId,
                 method: "tasks/send",
                 params: {
-                    id: taskId, // A2A Task ID
+                    id: taskId,
                     message: {
                         role: "user",
                         parts: [{
                             type: "text",
-                            text: "list agents" // The message to trigger agent listing
+                            text: "list agents"
                         }]
                     }
                 }

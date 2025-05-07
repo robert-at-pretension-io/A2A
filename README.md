@@ -39,6 +39,9 @@ cargo run -- server --port 8080
 
 # Run comprehensive tests
 cargo run -- run-tests
+
+# Start a registry agent (in registry-only mode)
+cargo run -- bidirectional --config agent_registry_config.toml
 ```
 
 ### Client Operations
@@ -84,6 +87,7 @@ The bidirectional agent implementation demonstrates how an agent can function as
 2.  **Client Role**: Acting as a client to send tasks to other agents.
 3.  **Server Role**: Acting as a server to receive and process tasks from other agents.
 4.  **Delegated Task Management**: Basic mechanisms for tracking tasks delegated to other agents (associating local task IDs with remote ones).
+5.  **Agent Registry**: A specialized bidirectional agent that can operate in registry-only mode to maintain a directory of other agents, storing their URLs and agent cards.
 
 ## Development
 
@@ -103,6 +107,26 @@ cargo test client::streaming::tests
 - [Client Documentation](src/client/README.md)
 - [Bidirectional Agent Documentation](src/bidirectional/README.md)
 - [Schema Overview](docs/schema_overview.md)
+
+## LLM API Key Configuration
+
+To configure the bidirectional agents with either Claude or Gemini API keys, add the following section to your agent TOML configuration files:
+
+```toml
+[llm]
+claude_api_key = "sk-ant-api03-your-claude-key"  # Your Claude API key
+gemini_api_key = "your-gemini-key"               # Your Gemini API key
+system_prompt = "Your system prompt here"
+gemini_model_id = "gemini-2.5-pro-preview-05-06"  # Optional, has default
+gemini_api_endpoint = "https://generativelanguage.googleapis.com/v1beta/models"  # Optional, has default
+```
+
+Notes:
+- If both API keys are provided, Claude will be used by default
+- To use Gemini specifically, omit the Claude API key
+- You can also set API keys via environment variables: `CLAUDE_API_KEY` and `GEMINI_API_KEY`
+
+For more detailed configuration options, see [LLM Configuration](docs/llm_configuration.md).
 
 ## Project Status
 

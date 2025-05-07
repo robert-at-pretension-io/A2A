@@ -1,0 +1,29 @@
+# Agent Registry Configuration
+# This configuration sets up a bidirectional agent in registry-only mode
+
+# Server configuration
+[server]
+port = 8085
+bind_address = "0.0.0.0"
+agent_id = "agent-registry"
+agent_name = "Agent Registry"
+
+# Registry configuration
+[registry]
+# Enable registry-only mode (no LLM needed)
+registry_only_mode = true
+# Path to store registry data
+registry_path = "data/agent_registry.json"
+
+# Mode configuration
+[mode]
+# Enable REPL by default
+repl = true
+# Auto-start server
+auto_listen = true
+# Log file for REPL interactions
+repl_log_file = "logs/agent_registry.log"
+
+# Tool configuration (not used in registry-only mode, but required)
+[tools]
+enabled = ["echo"]

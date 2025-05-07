@@ -489,12 +489,24 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                 async move {
                     let req_path = req.uri().path().to_string();
                     let req_method = req.method().clone();
-                    debug!(method = %req_method, path = %req_path, "Incoming HTTP request");
+                    info!(method = %req_method, path = %req_path, "Incoming HTTP request");
 
                     if req_method == Method::GET {
                         if let Some(base_path) = static_files_root_req {
                             let mut file_path_to_serve = base_path.clone(); // Clone base_path
 
+                            // Check for path traversal attempts before any path manipulation
+                            // Look for both plain ".." and URL-encoded "%2e%2e"
+                            if req_path.contains("..") || req_path.to_lowercase().contains("%2e%2e") {
+                                warn!(
+                                    path = %req_path,
+                                    "Path traversal attempt detected in request path."
+                                );
+                                let mut response = Response::new(Body::from("403 Forbidden"));
+                                *response.status_mut() = StatusCode::FORBIDDEN;
+                                return Ok(response);
+                            }
+                            
                             if req_path == "/" || req_path == "/index.html" {
                                 file_path_to_serve.push("index.html");
                             } else {
@@ -583,19 +595,33 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                                 }
                                 Err(e) => {
                                     // file_path_to_serve.canonicalize() failed. This means the path does not exist or is invalid.
-                                    // This is a 404. jsonrpc_handler handles /.well-known/agent.json separately if needed.
-                                    warn!(
-                                        path = %req_path,
-                                        original_path = %file_path_to_serve.display(),
-                                        error = %e,
-                                        "Static file not found (target path canonicalization failed)"
-                                    );
-                                    let mut response = Response::new(Body::from(format!(
-                                        "404 Not Found: {}",
-                                        req_path
-                                    )));
-                                    *response.status_mut() = StatusCode::NOT_FOUND;
-                                    return Ok(response);
+                                    // This could be a path traversal attempt or just a 404.
+                                    // Check if the path contains path traversal patterns like ".." before returning 404
+                                    if req_path.contains("..") {
+                                        warn!(
+                                            path = %req_path,
+                                            original_path = %file_path_to_serve.display(),
+                                            error = %e,
+                                            "Potential path traversal attempt detected"
+                                        );
+                                        let mut response = Response::new(Body::from("403 Forbidden"));
+                                        *response.status_mut() = StatusCode::FORBIDDEN;
+                                        return Ok(response);
+                                    } else {
+                                        // Regular not found case. jsonrpc_handler handles /.well-known/agent.json separately if needed.
+                                        warn!(
+                                            path = %req_path,
+                                            original_path = %file_path_to_serve.display(),
+                                            error = %e,
+                                            "Static file not found (target path canonicalization failed)"
+                                        );
+                                        let mut response = Response::new(Body::from(format!(
+                                            "404 Not Found: {}",
+                                            req_path
+                                        )));
+                                        *response.status_mut() = StatusCode::NOT_FOUND;
+                                        return Ok(response);
+                                    }
                                 }
                             }
                         } else {
