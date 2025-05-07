@@ -176,7 +176,7 @@ async fn test_a2a_post_request_still_works() {
     
     if let Some(result) = body.get("result") {
         assert!(result.get("id").is_some());
-        assert!(result.get("status").is_object());
+        assert!(result.get("status").expect("Status field should exist in result").is_object());
         if let Some(status_message_parts) = result.pointer("/status/message/parts") {
              let text_part = status_message_parts[0]["text"].as_str().unwrap();
              // The RegistryRouter returns "No agents registered yet..." when the directory is empty.
