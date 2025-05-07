@@ -140,9 +140,10 @@ async fn test_get_non_existent_static_file_falls_to_api_error() {
         .await
         .unwrap();
     
-    // With the improved static file handling, a non-existent static file should now return 404 directly.
-    assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
-    // Optionally, check the body content if it's relevant for a 404 page.
+    // With the new rules, a GET request for a non-index static file, when static_files_root is configured,
+    // should result in a 403 Forbidden.
+    assert_eq!(res.status(), reqwest::StatusCode::FORBIDDEN);
+    // Optionally, check the body content if it's relevant for a 403 page.
     // For example:
     // let body_text = res.text().await.unwrap();
     // assert!(body_text.contains("404 Not Found"));
@@ -219,12 +220,14 @@ async fn test_serve_other_static_file() {
         .await
         .unwrap();
 
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
-    assert_eq!(
-        res.headers().get(reqwest::header::CONTENT_TYPE).unwrap(),
-        "text/css" 
-    );
-    assert_eq!(res.text().await.unwrap(), "body { color: blue; }");
+    // This request should now be forbidden as only index.html is allowed.
+    assert_eq!(res.status(), reqwest::StatusCode::FORBIDDEN);
+    // The body and content type assertions are no longer relevant for a 403.
+    // assert_eq!(
+    //     res.headers().get(reqwest::header::CONTENT_TYPE).unwrap(),
+    //     "text/css" 
+    // );
+    // assert_eq!(res.text().await.unwrap(), "body { color: blue; }");
     server_handle.abort();
 }
 

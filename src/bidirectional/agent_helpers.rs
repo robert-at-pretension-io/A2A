@@ -491,49 +491,47 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                     let req_method = req.method().clone();
                     info!(method = %req_method, path = %req_path, "Incoming HTTP request");
 
-                    if req_method == Method::GET {
-                        if let Some(base_path) = static_files_root_req {
-                            let mut file_path_to_serve = base_path.clone(); // Clone base_path
+                    // 1. Handle A2A protocol requests (POST, or GET for .well-known/agent.json)
+                    //    These are passed to the jsonrpc_handler.
+                    if req_method != Method::GET || req_path == "/.well-known/agent.json" {
+                        debug!(method = %req_method, path = %req_path, "Passing request to A2A JSON-RPC handler");
+                        return jsonrpc_handler(
+                            req,
+                            task_service_req,
+                            streaming_service_req,
+                            notification_service_req,
+                        )
+                        .await;
+                    }
+
+                    // 2. At this point, it's a GET request for something other than /.well-known/agent.json.
+                    //    Try to serve static index.html if configured and requested.
+                    if let Some(base_path) = static_files_root_req {
+                        if req_path == "/" || req_path == "/index.html" {
+                            let mut file_path_to_serve = base_path.clone();
 
                             // Check for path traversal attempts before any path manipulation
-                            // Look for both plain ".." and URL-encoded "%2e%2e"
                             if req_path.contains("..") || req_path.to_lowercase().contains("%2e%2e") {
-                                warn!(
-                                    path = %req_path,
-                                    "Path traversal attempt detected in request path."
-                                );
+                                warn!(path = %req_path, "Path traversal attempt detected in request path.");
                                 let mut response = Response::new(Body::from("403 Forbidden"));
                                 *response.status_mut() = StatusCode::FORBIDDEN;
                                 return Ok(response);
                             }
                             
-                            if req_path == "/" || req_path == "/index.html" {
-                                file_path_to_serve.push("index.html");
-                            } else {
-                                // For other GET requests, try to serve them if they exist in static_files_root
-                                // This allows serving CSS, JS, images etc. if index.html references them.
-                                // Remove leading '/' from req_path for joining
-                                let relative_path = req_path.strip_prefix('/').unwrap_or(&req_path);
-                                file_path_to_serve.push(relative_path);
-                            }
+                            file_path_to_serve.push("index.html");
                             
-                            // 1. Canonicalize base_path. If it fails, server is misconfigured.
                             let canon_base_path = match base_path.canonicalize() {
                                 Ok(p) => p,
                                 Err(e) => {
                                     error!(path = %base_path.display(), error = %e, "Failed to canonicalize static base path. Check server configuration.");
-                                    let mut response = Response::new(Body::from(
-                                        "500 Internal Server Error: Invalid static path configuration",
-                                    ));
+                                    let mut response = Response::new(Body::from("500 Internal Server Error: Invalid static path configuration"));
                                     *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
                                     return Ok(response);
                                 }
                             };
 
-                            // 2. Try to canonicalize the requested file_path_to_serve
                             match file_path_to_serve.canonicalize() {
                                 Ok(canon_file_to_serve) => {
-                                    // Requested path is valid and exists. Check for traversal.
                                     if !canon_file_to_serve.starts_with(&canon_base_path) {
                                         warn!(
                                             requested_path = %file_path_to_serve.display(),
@@ -546,98 +544,61 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                                         return Ok(response);
                                     }
 
-                                    // Path is valid, within root, and exists. Serve it using the canonical path.
-                                    debug!(file_path = %canon_file_to_serve.display(), "Attempting to serve canonical static file");
+                                    debug!(file_path = %canon_file_to_serve.display(), "Attempting to serve canonical static file (index.html)");
                                     match TokioFile::open(&canon_file_to_serve).await {
                                         Ok(file) => {
                                             let stream = FramedRead::new(file, BytesCodec::new());
-                                            let body = Body::wrap_stream(
-                                                stream.map_ok(|bytes| bytes.freeze()),
-                                            );
-                                            let mime_type = mime_guess::from_path( // Use canonical path for mime type
-                                                &canon_file_to_serve,
-                                            )
-                                            .first_or_octet_stream();
-
+                                            let body = Body::wrap_stream(stream.map_ok(|bytes| bytes.freeze()));
+                                            let mime_type = mime_guess::from_path(&canon_file_to_serve).first_or_octet_stream();
                                             match Response::builder()
                                                 .status(StatusCode::OK)
-                                                .header(
-                                                    hyper::header::CONTENT_TYPE,
-                                                    mime_type.as_ref(),
-                                                )
+                                                .header(hyper::header::CONTENT_TYPE, mime_type.as_ref())
                                                 .body(body)
                                             {
                                                 Ok(res) => {
-                                                    info!(path = %req_path, "Successfully served static file");
+                                                    info!(path = %req_path, "Successfully served static file (index.html)");
                                                     return Ok(res);
                                                 }
                                                 Err(e) => {
-                                                    error!(path = %req_path, error = %e, "Error building response for static file");
-                                                    let mut response = Response::new(Body::from(
-                                                        "500 Internal Server Error",
-                                                    ));
-                                                    *response.status_mut() =
-                                                        StatusCode::INTERNAL_SERVER_ERROR;
+                                                    error!(path = %req_path, error = %e, "Error building response for static file (index.html)");
+                                                    let mut response = Response::new(Body::from("500 Internal Server Error"));
+                                                    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
                                                     return Ok(response);
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            error!(canonical_path = %canon_file_to_serve.display(), error = %e, "Error opening canonical static file (permissions issue?)");
-                                            let mut response = Response::new(Body::from(
-                                                "500 Internal Server Error: Could not open file",
-                                            ));
-                                            *response.status_mut() =
-                                                StatusCode::INTERNAL_SERVER_ERROR;
+                                            error!(canonical_path = %canon_file_to_serve.display(), error = %e, "Error opening canonical static file (index.html, permissions issue?)");
+                                            let mut response = Response::new(Body::from("500 Internal Server Error: Could not open file"));
+                                            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
                                             return Ok(response);
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    // file_path_to_serve.canonicalize() failed. This means the path does not exist or is invalid.
-                                    // This could be a path traversal attempt or just a 404.
-                                    // Check if the path contains path traversal patterns like ".." before returning 404
-                                    if req_path.contains("..") {
-                                        warn!(
-                                            path = %req_path,
-                                            original_path = %file_path_to_serve.display(),
-                                            error = %e,
-                                            "Potential path traversal attempt detected"
-                                        );
-                                        let mut response = Response::new(Body::from("403 Forbidden"));
-                                        *response.status_mut() = StatusCode::FORBIDDEN;
-                                        return Ok(response);
-                                    } else {
-                                        // Regular not found case. jsonrpc_handler handles /.well-known/agent.json separately if needed.
-                                        warn!(
-                                            path = %req_path,
-                                            original_path = %file_path_to_serve.display(),
-                                            error = %e,
-                                            "Static file not found (target path canonicalization failed)"
-                                        );
-                                        let mut response = Response::new(Body::from(format!(
-                                            "404 Not Found: {}",
-                                            req_path
-                                        )));
-                                        *response.status_mut() = StatusCode::NOT_FOUND;
-                                        return Ok(response);
-                                    }
+                                    warn!(path = %req_path, original_path = %file_path_to_serve.display(), error = %e, "Static file index.html not found or error during canonicalization");
+                                    let mut response = Response::new(Body::from(format!("404 Not Found: {}", req_path)));
+                                    *response.status_mut() = StatusCode::NOT_FOUND;
+                                    return Ok(response);
                                 }
                             }
                         } else {
-                            debug!("Static file serving not configured (no static_files_root). Passing to A2A handler.");
+                            // It's a GET request for a path other than "/" or "/index.html" (e.g., "/style.css")
+                            // and static_files_root IS configured. We must block this.
+                            warn!(path = %req_path, "Access to non-index static file denied.");
+                            let mut response = Response::new(Body::from(format!("403 Forbidden: Access to {} is not allowed", req_path)));
+                            *response.status_mut() = StatusCode::FORBIDDEN;
+                            return Ok(response);
                         }
+                    } else {
+                        // static_files_root is NOT configured.
+                        // It's a GET request for something other than /.well-known/agent.json.
+                        // Since no static files are configured, any such GET should be a 404.
+                        warn!(path = %req_path, "Static file serving not configured, GET request denied.");
+                        let mut response = Response::new(Body::from(format!("404 Not Found: {}", req_path)));
+                        *response.status_mut() = StatusCode::NOT_FOUND;
+                        return Ok(response);
                     }
-
-                    // For non-GET requests, or GET requests not handled by static serving, pass to JSON-RPC handler.
-                    debug!(method = %req_method, path = %req_path, "Passing request to A2A JSON-RPC handler");
-                    jsonrpc_handler(
-                        req,
-                        task_service_req,
-                        streaming_service_req,
-                        notification_service_req,
-                    )
-                    .await
                 }
             }))
         }
