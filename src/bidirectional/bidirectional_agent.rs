@@ -221,6 +221,9 @@ pub struct BidirectionalAgent {
 
     // Rolling memory for outgoing requests and responses
     pub rolling_memory: RollingMemory,
+
+    // Root path for serving static files
+    pub static_files_root: Option<PathBuf>,
 }
 
 impl BidirectionalAgent {
@@ -407,6 +410,10 @@ impl BidirectionalAgent {
             .map(PathBuf::from);
         trace!(?agent_directory_path, "Agent directory path stored.");
 
+        // Resolve static files path
+        let static_files_root = config.server.static_files_path.as_ref().map(PathBuf::from);
+        trace!(?static_files_root, "Static files root path configured.");
+
         debug!("Constructing BidirectionalAgent struct.");
         let agent = Self {
             task_service,
@@ -449,6 +456,9 @@ impl BidirectionalAgent {
 
             // Initialize rolling memory with default settings
             rolling_memory: RollingMemory::new(),
+
+            // Initialize static files root
+            static_files_root,
         };
 
         // REMOVED periodic agent directory saving logic

@@ -32,6 +32,8 @@ pub struct ServerConfig {
     pub agent_id: String,
     // Optional name for the agent card, defaults to agent_id if not set
     pub agent_name: Option<String>,
+    #[serde(default = "default_static_files_path")]
+    pub static_files_path: Option<String>, // New field for static files path
 }
 
 /// Client configuration section
@@ -180,6 +182,10 @@ fn default_gemini_api_endpoint() -> String {
     "https://generativelanguage.googleapis.com/v1beta/models".to_string()
 }
 
+fn default_static_files_path() -> Option<String> {
+    Some("public".to_string())
+}
+
 // --- Default Implementations ---
 
 impl Default for ServerConfig {
@@ -189,6 +195,7 @@ impl Default for ServerConfig {
             bind_address: default_bind_address(),
             agent_id: default_agent_id(),
             agent_name: None, // Initialize the optional agent_name field
+            static_files_path: default_static_files_path(),
         }
     }
 }

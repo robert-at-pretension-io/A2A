@@ -13,3 +13,4 @@ mod router_tests;
 mod session_tests;
 mod task_rejection_tests;
 mod task_service_tests;
+pub mod server_static_files_test;

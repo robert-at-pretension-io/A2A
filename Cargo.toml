@@ -73,6 +73,7 @@ fs2 = "0.4.3"
 indicatif = "0.17.11"
 jsonwebtoken = "8.3.0" # For push notifications
 mime = "0.3.17" # For content negotiation
+mime_guess = "2.0.4" # For guessing MIME types of static files
 tracing = "0.1.37" # For improved logging
 tracing-appender = "0.2" # For logging to files
 async-stream = "0.3.5" # For SSE streaming
@@ -88,6 +89,7 @@ sha2 = "0.10"
 tempfile = "3.10" # Already present in main dependencies, but good practice for test-only utils
 mockito = "1.2" # Already present in main dependencies
 tokio-test = "0.4" # For blocking on async calls in tests if needed
+reqwest = { version = "0.11", features = ["json", "blocking", "rustls-tls"], default-features = false } # For making test HTTP requests
 
 [[bin]]
 name = "bidirectional-agent"

@@ -1,8 +1,20 @@
 use crate::bidirectional::bidirectional_agent::BidirectionalAgent;
-use crate::server::run_server as server_run_server;
+use crate::server::handlers::jsonrpc_handler;
+// server_run_server is no longer used directly by this new run_server
+// use crate::server::run_server as server_run_server; 
 use crate::types::{
     AgentCapabilities, AgentCard, Message, Part, Role, Task, TaskState, TaskStatus, TextPart,
 };
+use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use mime_guess;
+use std::convert::Infallible;
+use std::net::SocketAddr;
+// PathBuf is likely already imported, but ensure it is.
+// use std::path::PathBuf;
+use tokio::fs::File as TokioFile;
+use tokio_util::codec::{BytesCodec, FramedRead};
+use futures_util::TryStreamExt;
 use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -452,43 +464,149 @@ pub fn extract_text_from_task(agent: &BidirectionalAgent, task: &Task) -> String
 /// Run the agent server
 #[instrument(skip(agent), fields(agent_id = %agent.agent_id, port = %agent.port, bind_address = %agent.bind_address))]
 pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
-    info!(
-        "Starting agent server on {}:{}",
-        agent.bind_address, agent.port
-    );
+    let addr = SocketAddr::new(agent.bind_address.parse()?, agent.port);
+    info!("🚀 Server starting on http://{}", addr);
 
-    // Create an agent card for the server to use
-    debug!("Creating agent card for server.");
-    let agent_card = serde_json::to_value(agent.create_agent_card())?;
+    let task_service_arc = agent.task_service.clone();
+    let streaming_service_arc = agent.streaming_service.clone();
+    let notification_service_arc = agent.notification_service.clone();
+    let static_files_root_arc = agent.static_files_root.clone();
+    // agent_card is created per request by jsonrpc_handler if needed for /.well-known/agent.json
 
-    // Create a cancellation token for clean shutdown
-    let token = CancellationToken::new();
+    let make_svc = make_service_fn(move |_conn| {
+        let task_service = task_service_arc.clone();
+        let streaming_service = streaming_service_arc.clone();
+        let notification_service = notification_service_arc.clone();
+        let static_files_root = static_files_root_arc.clone();
 
-    // Run the server and wait for it to complete
-    match server_run_server(
-        agent.port,
-        &agent.bind_address,
-        agent.task_service.clone(),
-        agent.streaming_service.clone(),
-        agent.notification_service.clone(),
-        token.clone(),
-        Some(agent_card),
-    )
-    .await
-    {
-        Ok(handle) => {
-            info!("Server started successfully, waiting for completion.");
-            match handle.await {
-                Ok(()) => info!("Server shut down gracefully."),
-                Err(e) => error!("Server thread join error: {}", e),
-            }
-            Ok(())
+        async move {
+            Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
+                let task_service_req = task_service.clone();
+                let streaming_service_req = streaming_service.clone();
+                let notification_service_req = notification_service.clone();
+                let static_files_root_req = static_files_root.clone();
+
+                async move {
+                    let req_path = req.uri().path().to_string();
+                    let req_method = req.method().clone();
+                    debug!(method = %req_method, path = %req_path, "Incoming HTTP request");
+
+                    if req_method == Method::GET {
+                        if let Some(base_path) = static_files_root_req {
+                            let mut file_path_to_serve = base_path.clone(); // Clone base_path
+
+                            if req_path == "/" || req_path == "/index.html" {
+                                file_path_to_serve.push("index.html");
+                            } else {
+                                // For other GET requests, try to serve them if they exist in static_files_root
+                                // This allows serving CSS, JS, images etc. if index.html references them.
+                                // Remove leading '/' from req_path for joining
+                                let relative_path = req_path.strip_prefix('/').unwrap_or(&req_path);
+                                file_path_to_serve.push(relative_path);
+                            }
+                            
+                            // Security: Ensure the path doesn't escape the base_path (e.g., via ../)
+                            // Canonicalize both paths and check if file_path_to_serve starts with base_path
+                            match (file_path_to_serve.canonicalize(), base_path.canonicalize()) {
+                                (Ok(canon_file_path), Ok(canon_base_path)) => {
+                                    if !canon_file_path.starts_with(canon_base_path) {
+                                        warn!(requested_path = %file_path_to_serve.display(), "Attempt to access path outside static root");
+                                        let mut response = Response::new(Body::from("403 Forbidden"));
+                                        *response.status_mut() = StatusCode::FORBIDDEN;
+                                        return Ok(response);
+                                    }
+                                }
+                                _ => { // Failed to canonicalize, e.g. path doesn't exist or other FS error
+                                    // Let it fall through to TokioFile::open to get a 404 or other IO error
+                                    debug!("Path canonicalization failed for static file check ({:?} / {:?}), proceeding with open attempt.", file_path_to_serve, base_path);
+                                }
+                            }
+
+
+                            debug!(file_path = %file_path_to_serve.display(), "Attempting to serve static file");
+                            match TokioFile::open(&file_path_to_serve).await {
+                                Ok(file) => {
+                                    let stream = FramedRead::new(file, BytesCodec::new());
+                                    let body = Body::wrap_stream(stream.map_ok(|bytes| bytes.freeze()));
+                                    let mime_type = mime_guess::from_path(&file_path_to_serve)
+                                        .first_or_octet_stream();
+
+                                    match Response::builder()
+                                        .status(StatusCode::OK)
+                                        .header(hyper::header::CONTENT_TYPE, mime_type.as_ref())
+                                        .body(body)
+                                    {
+                                        Ok(res) => {
+                                            info!(path = %req_path, "Successfully served static file");
+                                            return Ok(res);
+                                        }
+                                        Err(e) => {
+                                            error!(path = %req_path, error = %e, "Error building response for static file");
+                                            let mut response = Response::new(Body::from("500 Internal Server Error"));
+                                            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                                            return Ok(response);
+                                        }
+                                    }
+                                }
+                                Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                    // If index.html was requested but not found, or any other static file.
+                                    // For API paths (like /.well-known/agent.json), they will also hit this if static_files_root is configured
+                                    // but the file doesn't exist. jsonrpc_handler handles /.well-known/agent.json specifically.
+                                    // So, if it's not index.html, we should probably let jsonrpc_handler try.
+                                    if req_path == "/" || req_path == "/index.html" {
+                                        warn!(path = %req_path, file_path = %file_path_to_serve.display(), "Static file not found");
+                                        let mut response = Response::new(Body::from(format!("404 Not Found: {}", req_path)));
+                                        *response.status_mut() = StatusCode::NOT_FOUND;
+                                        return Ok(response);
+                                    } else {
+                                        // For other GET paths, let jsonrpc_handler decide (e.g. for /.well-known/agent.json)
+                                        debug!(path = %req_path, "Static file not found, passing to A2A handler for potential API GET endpoint.");
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(path = %req_path, file_path = %file_path_to_serve.display(), error = %e, "Error opening static file");
+                                    let mut response = Response::new(Body::from("500 Internal Server Error"));
+                                    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                                    return Ok(response);
+                                }
+                            }
+                        } else {
+                            debug!("Static file serving not configured (no static_files_root). Passing to A2A handler.");
+                        }
+                    }
+
+                    // For non-GET requests, or GET requests not handled by static serving, pass to JSON-RPC handler.
+                    debug!(method = %req_method, path = %req_path, "Passing request to A2A JSON-RPC handler");
+                    jsonrpc_handler(
+                        req,
+                        task_service_req,
+                        streaming_service_req,
+                        notification_service_req,
+                    )
+                    .await
+                }
+            }))
         }
-        Err(e) => {
-            error!("Failed to start server: {}", e);
-            Err(anyhow!("Failed to start server: {}", e))
-        }
+    });
+
+    let server = Server::bind(&addr).serve(make_svc);
+    info!("A2A Agent server (and static file server if configured) listening on http://{}", addr);
+
+    // Setup graceful shutdown for the Hyper server
+    let token = CancellationToken::new(); // Used for bidirectional_agent's own server_run_server
+                                          // For this hyper server, we'll use a signal handler
+    let graceful = server.with_graceful_shutdown(async {
+        tokio::signal::ctrl_c().await.expect("failed to install CTRL+C signal handler");
+        info!("CTRL+C received, shutting down server...");
+        token.cancel(); // If this token is used by other parts
+    });
+
+    if let Err(e) = graceful.await {
+        error!(error = %e, "Server error");
+        return Err(e.into());
     }
+    info!("Server shut down gracefully.");
+    Ok(())
 }
 
 /// Send a task to a remote agent

@@ -10,6 +10,9 @@ port = 8080
 bind_address = "0.0.0.0"
 # Agent ID (default: randomly generated UUID with prefix)
 agent_id = "bidirectional-agent"
+# Optional path to serve static files from (e.g., index.html for a UI)
+# Default is "public"
+# static_files_path = "public"
 
 # Client configuration
 [client]
