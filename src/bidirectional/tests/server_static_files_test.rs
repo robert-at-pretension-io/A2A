@@ -47,6 +47,7 @@ async fn start_test_server(config: BidirectionalAgentConfig) -> (String, JoinHan
 async fn test_serve_index_html_root_path() {
     let mut config = BidirectionalAgentConfig::default();
     config.mode.repl = false; // Ensure not in REPL mode for server to run
+    config.registry.registry_only_mode = true; // Use placeholder LLM
 
     let (server_url, server_handle, static_dir) = start_test_server(config).await;
 
@@ -55,15 +56,15 @@ async fn test_serve_index_html_root_path() {
     let mut file = File::create(&index_path).unwrap();
     file.write_all(b"<h1>Hello Test World</h1>").unwrap();
 
-    let client = reqwest::blocking::Client::new();
-    let res = client.get(&server_url).send().unwrap();
+    let client = reqwest::Client::new();
+    let res = client.get(&server_url).send().await.unwrap();
 
     assert_eq!(res.status(), reqwest::StatusCode::OK);
     assert_eq!(
         res.headers().get(reqwest::header::CONTENT_TYPE).unwrap(),
         "text/html"
     );
-    assert_eq!(res.text().unwrap(), "<h1>Hello Test World</h1>");
+    assert_eq!(res.text().await.unwrap(), "<h1>Hello Test World</h1>");
 
     server_handle.abort(); 
 }
@@ -72,6 +73,7 @@ async fn test_serve_index_html_root_path() {
 async fn test_serve_index_html_explicit_path() {
     let mut config = BidirectionalAgentConfig::default();
     config.mode.repl = false;
+    config.registry.registry_only_mode = true; // Use placeholder LLM
 
     let (server_url, server_handle, static_dir) = start_test_server(config).await;
 
@@ -79,10 +81,11 @@ async fn test_serve_index_html_explicit_path() {
     let mut file = File::create(&index_path).unwrap();
     file.write_all(b"<h1>Explicit Path Test</h1>").unwrap();
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let res = client
         .get(format!("{}/index.html", server_url))
         .send()
+        .await
         .unwrap();
 
     assert_eq!(res.status(), reqwest::StatusCode::OK);
@@ -90,7 +93,7 @@ async fn test_serve_index_html_explicit_path() {
         res.headers().get(reqwest::header::CONTENT_TYPE).unwrap(),
         "text/html"
     );
-    assert_eq!(res.text().unwrap(), "<h1>Explicit Path Test</h1>");
+    assert_eq!(res.text().await.unwrap(), "<h1>Explicit Path Test</h1>");
     server_handle.abort();
 }
 
@@ -99,15 +102,17 @@ async fn test_serve_static_file_not_found_for_index() {
     // This test specifically checks 404 for index.html if it's missing
     let mut config = BidirectionalAgentConfig::default();
     config.mode.repl = false;
+    config.registry.registry_only_mode = true; // Use placeholder LLM
 
     // static_dir will be created, but we won't put index.html in it
     let (server_url, server_handle, _static_dir) = start_test_server(config).await;
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     // Request root, expecting index.html, which doesn't exist
     let res = client
         .get(&server_url) 
         .send()
+        .await
         .unwrap();
 
     assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
@@ -121,20 +126,22 @@ async fn test_get_non_existent_static_file_falls_to_api_error() {
     // falls through to the jsonrpc_handler and results in a JSON-RPC error.
     let mut config = BidirectionalAgentConfig::default();
     config.mode.repl = false;
+    config.registry.registry_only_mode = true; // Use placeholder LLM
 
     let (server_url, server_handle, _static_dir) = start_test_server(config).await;
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let res = client
         .get(format!("{}/nonexistent.css", server_url))
         .send()
+        .await
         .unwrap();
     
     assert_eq!(res.status(), reqwest::StatusCode::OK); // jsonrpc_handler returns 200 OK for its errors
     let content_type = res.headers().get(reqwest::header::CONTENT_TYPE).unwrap().to_str().unwrap();
     assert!(content_type.starts_with("application/json")); 
     
-    let body: serde_json::Value = res.json().unwrap();
+    let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["jsonrpc"], "2.0");
     assert!(body["error"].is_object());
     // Expecting a parse error because GET to an API endpoint without a JSON body is invalid for JSON-RPC
@@ -153,7 +160,7 @@ async fn test_a2a_post_request_still_works() {
 
     let (server_url, server_handle, _static_dir) = start_test_server(config).await;
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new(); // Use async client
     let a2a_payload = serde_json::json!({
         "jsonrpc": "2.0",
         "id": "test-123",
@@ -167,10 +174,10 @@ async fn test_a2a_post_request_still_works() {
         }
     });
 
-    let res = client.post(&server_url).json(&a2a_payload).send().unwrap();
+    let res = client.post(&server_url).json(&a2a_payload).send().await.unwrap(); // Use .await
 
     assert_eq!(res.status(), reqwest::StatusCode::OK);
-    let body: serde_json::Value = res.json().unwrap();
+    let body: serde_json::Value = res.json().await.unwrap(); // Use .await
     assert_eq!(body["jsonrpc"], "2.0");
     assert_eq!(body["id"], "test-123");
     
@@ -195,6 +202,7 @@ async fn test_a2a_post_request_still_works() {
 async fn test_serve_other_static_file() {
     let mut config = BidirectionalAgentConfig::default();
     config.mode.repl = false;
+    config.registry.registry_only_mode = true; // Use placeholder LLM
 
     let (server_url, server_handle, static_dir) = start_test_server(config).await;
 
@@ -204,10 +212,11 @@ async fn test_serve_other_static_file() {
     let mut file = File::create(&css_path).unwrap();
     file.write_all(b"body { color: blue; }").unwrap();
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let res = client
         .get(format!("{}/style.css", server_url))
         .send()
+        .await
         .unwrap();
 
     assert_eq!(res.status(), reqwest::StatusCode::OK);
@@ -215,7 +224,7 @@ async fn test_serve_other_static_file() {
         res.headers().get(reqwest::header::CONTENT_TYPE).unwrap(),
         "text/css" 
     );
-    assert_eq!(res.text().unwrap(), "body { color: blue; }");
+    assert_eq!(res.text().await.unwrap(), "body { color: blue; }");
     server_handle.abort();
 }
 
@@ -223,6 +232,7 @@ async fn test_serve_other_static_file() {
 async fn test_path_traversal_prevention() {
     let mut config = BidirectionalAgentConfig::default();
     config.mode.repl = false;
+    config.registry.registry_only_mode = true; // Use placeholder LLM
 
     let (server_url, server_handle, static_dir) = start_test_server(config).await;
 
@@ -240,13 +250,14 @@ async fn test_path_traversal_prevention() {
     // A direct relative path is hard. Let's try a common pattern.
     // The canonicalization check should prevent this.
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     // This path is unlikely to resolve correctly to an existing file outside the root
     // due to canonicalization of `static_dir` itself.
     // The test is more about ensuring `../` doesn't grant access.
     let res = client
         .get(format!("{}/../../../../../../../../../../etc/passwd", server_url)) // A common traversal attempt
         .send()
+        .await
         .unwrap();
 
     // Expect 403 Forbidden if canonicalization detects traversal,
