@@ -140,16 +140,12 @@ async fn test_get_non_existent_static_file_falls_to_api_error() {
         .await
         .unwrap();
     
-    assert_eq!(res.status(), reqwest::StatusCode::OK); // jsonrpc_handler returns 200 OK for its errors
-    let content_type = res.headers().get(reqwest::header::CONTENT_TYPE).unwrap().to_str().unwrap();
-    assert!(content_type.starts_with("application/json")); 
-    
-    let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["jsonrpc"], "2.0");
-    assert!(body["error"].is_object());
-    // Expecting a parse error because GET to an API endpoint without a JSON body is invalid for JSON-RPC
-    assert_eq!(body["error"]["code"], -32700); 
-    assert!(body["error"]["message"].as_str().unwrap().contains("Parse error: Invalid JSON"));
+    // With the improved static file handling, a non-existent static file should now return 404 directly.
+    assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
+    // Optionally, check the body content if it's relevant for a 404 page.
+    // For example:
+    // let body_text = res.text().await.unwrap();
+    // assert!(body_text.contains("404 Not Found"));
 
     server_handle.abort();
 }
