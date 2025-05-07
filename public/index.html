@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A2A Agent Registry</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        .container {
+            width: 80%;
+            margin: auto;
+            overflow: hidden;
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        header {
+            background: #333;
+            color: #fff;
+            padding: 1rem 0;
+            text-align: center;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+        }
+        section {
+            padding: 20px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+        }
+        section:last-child {
+            border-bottom: none;
+        }
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #333;
+            padding-bottom: 5px;
+        }
+        p, ul {
+            margin-bottom: 15px;
+        }
+        ul {
+            list-style: disc;
+            padding-left: 20px;
+        }
+        code {
+            background-color: #eee;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+        pre {
+            background-color: #eee;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .controls label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .controls input[type="text"] {
+            width: calc(100% - 22px);
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .controls button {
+            display: inline-block;
+            background: #333;
+            color: #fff;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .controls button:hover {
+            background: #555;
+        }
+        #resultsArea {
+            margin-top: 20px;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>A2A Agent Registry</h1>
+    </header>
+
+    <div class="container">
+        <section id="introduction">
+            <h2>Introduction</h2>
+            <p>The Agent Registry is a critical component of the Agent-to-Agent (A2A) ecosystem. It enables agent discovery, cataloging, and interoperability by functioning as a directory of available A2A agents, their capabilities, and connection information.</p>
+        </section>
+
+        <section id="importance">
+            <h2>Why an Agent Registry is Essential</h2>
+            <p>In a distributed system of AI agents, several challenges emerge:</p>
+            <ul>
+                <li><strong>Discovery Challenge:</strong> How do agents find other agents that can provide specific services?</li>
+                <li><strong>Capability Awareness:</strong> How does an agent know what another agent can do?</li>
+                <li><strong>Protocol Compatibility:</strong> How can agents ensure they're communicating using compatible protocols?</li>
+                <li><strong>Network Topology:</strong> How can we maintain a dynamic map of the growing agent ecosystem?</li>
+            </ul>
+            <p>The Agent Registry addresses these by providing a centralized directory, capability cataloging, dynamic updates, and more, forming the connective tissue for a collaborative agent network.</p>
+        </section>
+
+        <section id="how-to-use">
+            <h2>Using the Registry</h2>
+            <p>The registry primarily serves two functions:</p>
+            <ul>
+                <li><strong>Agent Registration:</strong> When messages containing potential agent URLs are processed by the registry, it extracts these URLs, normalizes them, attempts to fetch the agent's "AgentCard" (a summary of its capabilities), and stores this information.</li>
+                <li><strong>Agent Lookup:</strong> Users or other agents can query the registry to find out which agents are known. Sending a non-URL message (like "list agents") to the registry's A2A task endpoint typically triggers this lookup. The registry then returns a list of known agents and their details.</li>
+            </ul>
+        </section>
+
+        <section id="discover-agents">
+            <h2>Discover Registered Agents</h2>
+            <p>Enter the A2A endpoint URL of an Agent Registry server and click the button to list registered agents. The registry should be configured to respond to a "list agents" message on its task endpoint.</p>
+            <div class="controls">
+                <label for="registryUrl">Agent Registry A2A Endpoint URL:</label>
+                <input type="text" id="registryUrl" value="http://localhost:8085/">
+                <button id="listAgentsBtn">List Registered Agents</button>
+            </div>
+            <div id="resultsArea">
+                <h3>Results:</h3>
+                <pre id="agentListOutput">No agents listed yet. Click the button above.</pre>
+            </div>
+        </section>
+
+        <section id="ecosystem-role">
+            <h2>Role in the A2A Ecosystem</h2>
+            <ul>
+                <li><strong>Enabling Agent Networks:</strong> Transforms individual agents into a collaborative network.</li>
+                <li><strong>Facilitating Specialization:</strong> Makes it easy to discover specialized agents.</li>
+                <li><strong>Supporting Runtime Adaptation:</strong> Allows the network to adapt as agents join or update.</li>
+                <li><strong>Creating Network Effects:</strong> Increases in value as more agents register.</li>
+            </ul>
+        </section>
+    </div>
+
+    <script>
+        document.getElementById('listAgentsBtn').addEventListener('click', async function() {
+            const registryUrl = document.getElementById('registryUrl').value.trim();
+            const outputArea = document.getElementById('agentListOutput');
+            outputArea.textContent = 'Fetching agent list...';
+            outputArea.classList.remove('error');
+
+            if (!registryUrl) {
+                outputArea.textContent = 'Error: Agent Registry URL cannot be empty.';
+                outputArea.classList.add('error');
+                return;
+            }
+
+            // Generate unique IDs for JSON-RPC request and A2A Task
+            const requestId = `html-client-${Date.now()}`;
+            const taskId = `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+            const requestPayload = {
+                jsonrpc: "2.0",
+                id: requestId,
+                method: "tasks/send",
+                params: {
+                    id: taskId, // A2A Task ID
+                    message: {
+                        role: "user",
+                        parts: [{
+                            type: "text",
+                            text: "list agents" // The message to trigger agent listing
+                        }]
+                    }
+                }
+            };
+
+            try {
+                const response = await fetch(registryUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(requestPayload)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP error ${response.status}: ${response.statusText}. Server response: ${errorText}`);
+                }
+
+                const jsonResponse = await response.json();
+
+                if (jsonResponse.error) {
+                    outputArea.textContent = `Error from registry: ${jsonResponse.error.message} (Code: ${jsonResponse.error.code})`;
+                    if (jsonResponse.error.data) {
+                        outputArea.textContent += `\nData: ${JSON.stringify(jsonResponse.error.data, null, 2)}`;
+                    }
+                    outputArea.classList.add('error');
+                } else if (jsonResponse.result && jsonResponse.result.status && jsonResponse.result.status.message) {
+                    const agentMessage = jsonResponse.result.status.message;
+                    if (agentMessage.parts && agentMessage.parts.length > 0 && agentMessage.parts[0].type === 'text') {
+                        outputArea.textContent = agentMessage.parts[0].text;
+                    } else {
+                        outputArea.textContent = 'Registry returned a response, but agent list format is unexpected.\n\nFull Task Result:\n' + JSON.stringify(jsonResponse.result, null, 2);
+                    }
+                } else if (jsonResponse.result && jsonResponse.result.artifacts && jsonResponse.result.artifacts.length > 0) {
+                    const artifact = jsonResponse.result.artifacts[0];
+                     if (artifact.parts && artifact.parts.length > 0 && artifact.parts[0].type === 'text') {
+                        outputArea.textContent = artifact.parts[0].text;
+                    } else {
+                        outputArea.textContent = 'Registry returned an artifact, but agent list format is unexpected.\n\nFull Task Result:\n' + JSON.stringify(jsonResponse.result, null, 2);
+                    }
+                }
+                else {
+                    outputArea.textContent = 'Received an unexpected response structure from the registry.\n\nFull Response:\n' + JSON.stringify(jsonResponse, null, 2);
+                }
+
+            } catch (error) {
+                outputArea.textContent = `Error fetching agent list: ${error.message}`;
+                outputArea.classList.add('error');
+                console.error('Fetch error:', error);
+            }
+        });
+    </script>
+</body>
+</html>
