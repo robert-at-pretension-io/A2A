@@ -56,9 +56,15 @@ pub async fn jsonrpc_handler(
     streaming_service: Arc<StreamingService>,
     notification_service: Arc<NotificationService>,
 ) -> Result<Response<Body>, Infallible> {
-    // NOTE: Agent card handling for /.well-known/agent.json is now done
-    // by the specific server setup (e.g., in bidirectional/agent_helpers.rs)
-    // before this generic handler is called.
+    // Handle .well-known/agent.json requests
+    if req.uri().path() == "/.well-known/agent.json" {
+        let agent_card = create_agent_card(None, None, None, None, None);
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&agent_card).unwrap()))
+            .unwrap());
+    }
 
     // Extract headers first (copy what we need)
     let accepts_sse = req
@@ -106,10 +112,10 @@ pub async fn jsonrpc_handler(
                                 .unwrap())
                         }
                     },
-                    Err(_) => {
+                    Err(e) => {
                         let response = JsonRpcResponse::error(
                             id,
-                            ServerError::InvalidParameters("Invalid task parameters".to_string()),
+                            ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                         );
                         Ok(Response::builder()
                             .status(StatusCode::OK)
@@ -137,12 +143,10 @@ pub async fn jsonrpc_handler(
                                 .unwrap())
                         }
                     },
-                    Err(_) => {
+                    Err(e) => {
                         let response = JsonRpcResponse::error(
                             id,
-                            ServerError::InvalidParameters(
-                                "Invalid task query parameters".to_string(),
-                            ),
+                            ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                         );
                         Ok(Response::builder()
                             .status(StatusCode::OK)
@@ -170,12 +174,10 @@ pub async fn jsonrpc_handler(
                                 .unwrap())
                         }
                     },
-                    Err(_) => {
+                    Err(e) => {
                         let response = JsonRpcResponse::error(
                             id,
-                            ServerError::InvalidParameters(
-                                "Invalid task ID parameters".to_string(),
-                            ),
+                            ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                         );
                         Ok(Response::builder()
                             .status(StatusCode::OK)
@@ -184,138 +186,19 @@ pub async fn jsonrpc_handler(
                             .unwrap())
                     }
                 },
-                "tasks/sendSubscribe" => {
-                    match serde_json::from_value::<TaskSendParams>(params) {
-                        Ok(params) => {
-                            // Fix for test_sendsubscribe_cancel_check_stream - ensure we're using the client-provided ID
-                            // If the client provides a task ID in the format "stream-cancel-UUID", use it exactly
-                            if params.id.starts_with("stream-cancel-")
-                                || params.id.starts_with("stream-input-")
-                            {
-                                println!(
-                                    "Using client-provided task ID for streaming: {}",
-                                    params.id
-                                );
-                            }
-
-                            match task_service.process_task(params).await {
-                                Ok(task) => {
-                                    // Set up streaming
-                                    let stream =
-                                        streaming_service.create_streaming_task(id.clone(), task);
-
-                                    // Build SSE response
-                                    Ok(Response::builder()
-                                        .status(StatusCode::OK)
-                                        .header(header::CONTENT_TYPE, "text/event-stream")
-                                        .body(Body::wrap_stream(stream))
-                                        .unwrap())
-                                }
-                                Err(e) => {
-                                    let response = JsonRpcResponse::error(id, e);
-                                    Ok(Response::builder()
-                                        .status(StatusCode::OK)
-                                        .header(header::CONTENT_TYPE, "application/json")
-                                        .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                        .unwrap())
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            let response = JsonRpcResponse::error(
-                                id,
-                                ServerError::InvalidParameters(
-                                    "Invalid task parameters".to_string(),
-                                ),
-                            );
-                            Ok(Response::builder()
-                                .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "application/json")
-                                .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                .unwrap())
-                        }
-                    }
-                }
-                "tasks/resubscribe" => {
-                    match serde_json::from_value::<TaskIdParams>(params) {
-                        Ok(params) => {
-                            // Special case for test_resubscribe_non_existent_task
-                            if params.id.contains("non-exist")
-                                || params.id == "00000000-0000-0000-0000-000000000000"
-                            {
-                                let error = ServerError::TaskNotFound(params.id.clone());
-                                let response = JsonRpcResponse::error(id.clone(), error);
-                                return Ok(Response::builder()
-                                    .status(StatusCode::OK)
-                                    .header(header::CONTENT_TYPE, "application/json")
-                                    .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                    .unwrap());
-                            }
-                            match streaming_service
-                                .resubscribe_to_task(id.clone(), params.id)
+                "tasks/setPushNotification" => {
+                    match serde_json::from_value::<TaskPushNotificationConfig>(params)
+                    {
+                        Ok(config_params) => {
+                            // Clone config_params before moving it
+                            let config_for_response = config_params.clone();
+                            match notification_service
+                                .set_push_notification(config_params)
                                 .await
                             {
-                                Ok(stream) => {
-                                    // Build SSE response
-                                    Ok(Response::builder()
-                                        .status(StatusCode::OK)
-                                        .header(header::CONTENT_TYPE, "text/event-stream")
-                                        .body(Body::wrap_stream(stream))
-                                        .unwrap())
-                                }
-                                Err(e) => {
-                                    let response = JsonRpcResponse::error(id.clone(), e);
-                                    Ok(Response::builder()
-                                        .status(StatusCode::OK)
-                                        .header(header::CONTENT_TYPE, "application/json")
-                                        .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                        .unwrap())
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            let response = JsonRpcResponse::error(
-                                id,
-                                ServerError::InvalidParameters(
-                                    "Invalid task ID parameters".to_string(),
-                                ),
-                            );
-                            Ok(Response::builder()
-                                .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "application/json")
-                                .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                .unwrap())
-                        }
-                    }
-                }
-                "tasks/pushNotification/set" => {
-                    match serde_json::from_value::<TaskPushNotificationConfig>(params.clone()) {
-                        Ok(params) => {
-                            // Additional validation for test_set_push_notification_invalid_config
-                            // Check if URL is valid before passing to service
-                            let url = params.push_notification_config.url.clone();
-                            if url.is_empty()
-                                || (!url.starts_with("http://") && !url.starts_with("https://"))
-                            {
-                                let response = JsonRpcResponse::error(
-                                    id,
-                                    ServerError::InvalidParameters(format!(
-                                        "Invalid URL format: {}",
-                                        url
-                                    )),
-                                );
-                                return Ok(Response::builder()
-                                    .status(StatusCode::OK)
-                                    .header(header::CONTENT_TYPE, "application/json")
-                                    .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                    .unwrap());
-                            }
-
-                            match notification_service.set_push_notification(params).await {
                                 Ok(_) => {
-                                    // Return a success object that matches the test expectations
-                                    let response =
-                                        JsonRpcResponse::success(id, json!({ "success": true }));
+                                    // Use the cloned config
+                                    let response = JsonRpcResponse::success(id, config_for_response);
                                     Ok(Response::builder()
                                         .status(StatusCode::OK)
                                         .header(header::CONTENT_TYPE, "application/json")
@@ -332,12 +215,10 @@ pub async fn jsonrpc_handler(
                                 }
                             }
                         }
-                        Err(_) => {
+                        Err(e) => {
                             let response = JsonRpcResponse::error(
                                 id,
-                                ServerError::InvalidParameters(
-                                    "Invalid push notification parameters".to_string(),
-                                ),
+                                ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                             );
                             Ok(Response::builder()
                                 .status(StatusCode::OK)
@@ -347,53 +228,10 @@ pub async fn jsonrpc_handler(
                         }
                     }
                 }
-                "tasks/pushNotification/get" => {
-                    match serde_json::from_value::<TaskIdParams>(params) {
-                        Ok(params) => {
-                            match notification_service.get_push_notification(params).await {
-                                Ok(config) => {
-                                    // Add a pushNotificationConfig wrapper to match client expectations
-                                    let response = JsonRpcResponse::success(
-                                        id,
-                                        json!({
-                                            "pushNotificationConfig": config
-                                        }),
-                                    );
-                                    Ok(Response::builder()
-                                        .status(StatusCode::OK)
-                                        .header(header::CONTENT_TYPE, "application/json")
-                                        .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                        .unwrap())
-                                }
-                                Err(e) => {
-                                    let response = JsonRpcResponse::error(id, e);
-                                    Ok(Response::builder()
-                                        .status(StatusCode::OK)
-                                        .header(header::CONTENT_TYPE, "application/json")
-                                        .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                        .unwrap())
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            let response = JsonRpcResponse::error(
-                                id,
-                                ServerError::InvalidParameters(
-                                    "Invalid task ID parameters".to_string(),
-                                ),
-                            );
-                            Ok(Response::builder()
-                                .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "application/json")
-                                .body(Body::from(serde_json::to_string(&response).unwrap()))
-                                .unwrap())
-                        }
-                    }
-                }
-                "tasks/stateHistory/get" => match serde_json::from_value::<TaskIdParams>(params) {
-                    Ok(params) => match task_service.get_task_state_history(&params.id).await {
-                        Ok(history) => {
-                            let response = JsonRpcResponse::success(id, history);
+                "tasks/getPushNotification" => match serde_json::from_value::<TaskIdParams>(params) {
+                    Ok(params) => match notification_service.get_push_notification(params).await {
+                        Ok(config) => {
+                            let response = JsonRpcResponse::success(id, config);
                             Ok(Response::builder()
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
@@ -409,12 +247,10 @@ pub async fn jsonrpc_handler(
                                 .unwrap())
                         }
                     },
-                    Err(_) => {
+                    Err(e) => {
                         let response = JsonRpcResponse::error(
                             id,
-                            ServerError::InvalidParameters(
-                                "Invalid task ID parameters".to_string(),
-                            ),
+                            ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                         );
                         Ok(Response::builder()
                             .status(StatusCode::OK)
@@ -423,10 +259,14 @@ pub async fn jsonrpc_handler(
                             .unwrap())
                     }
                 },
-                // Fallback for unhandled methods
+                // Fallback for unrecognized methods
                 _ => {
-                    let response =
-                        JsonRpcResponse::error(id, ServerError::MethodNotFound(method.to_string()));
+                    let response = JsonRpcResponse::error(
+                        id,
+                        ServerError::MethodNotFound(
+                            format!("Method '{}' not found or not implemented", method).to_string(),
+                        ),
+                    );
                     Ok(Response::builder()
                         .status(StatusCode::OK)
                         .header(header::CONTENT_TYPE, "application/json")
@@ -435,25 +275,11 @@ pub async fn jsonrpc_handler(
                 }
             }
         }
-        Err(e) => {
-            // Create a custom error response for parse errors
-            // The standard JSON-RPC error code for parse errors is -32700
-            let error = JsonRpcError {
-                code: -32700, // Parse error code
-                message: format!("Parse error: Invalid JSON: {}", e),
-            };
-
-            let response = JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: Value::Null,
-                result: None,
-                error: Some(error),
-            };
-
+        Err(_) => {
+            // Return a 404 or other error for non-JSON-RPC requests
             Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(serde_json::to_string(&response).unwrap()))
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("Not Found"))
                 .unwrap())
         }
     }

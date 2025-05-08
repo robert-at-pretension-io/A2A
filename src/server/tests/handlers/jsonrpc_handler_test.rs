@@ -1968,11 +1968,11 @@ async fn test_agent_card_endpoint() {
     assert!(json["name"].is_string());
     assert!(json["capabilities"].is_object());
     assert!(json["capabilities"]["streaming"].as_bool().unwrap());
-    assert!(json["capabilities"]["push_notifications"]
+    assert!(json["capabilities"]["pushNotifications"]
         .as_bool()
         .unwrap());
-    assert!(!json["default_input_modes"].as_array().unwrap().is_empty());
-    assert!(!json["default_output_modes"].as_array().unwrap().is_empty());
+    assert!(!json["defaultInputModes"].as_array().unwrap().is_empty());
+    assert!(!json["defaultOutputModes"].as_array().unwrap().is_empty());
 }
 
 // Test 1. tasks/send Invalid Message: Send a task request with an invalid message structure

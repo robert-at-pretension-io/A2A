@@ -171,12 +171,12 @@ pub fn create_agent_card(
         "authentication": null,
         "capabilities": {
             "streaming": true,
-            "push_notifications": true,
-            "state_transition_history": true
+            "pushNotifications": true,
+            "stateTransitionHistory": true
         },
-        "default_input_modes": ["text"],
-        "default_output_modes": ["text"],
-        "documentation_url": null,
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "documentationUrl": null,
         "version": agent_version,
         "url": agent_url,
         "skills": agent_skills
@@ -187,8 +187,8 @@ pub fn create_agent_card(
     if let Some(capabilities) = card.get_mut("capabilities") {
         if let Some(obj) = capabilities.as_object_mut() {
             obj.insert("streaming".to_string(), json!(true));
-            obj.insert("push_notifications".to_string(), json!(true));
-            obj.insert("state_transition_history".to_string(), json!(true));
+            obj.insert("pushNotifications".to_string(), json!(true));
+            obj.insert("stateTransitionHistory".to_string(), json!(true));
         }
     }
     

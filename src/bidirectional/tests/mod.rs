@@ -1,5 +1,7 @@
 // Test modules for bidirectional agent
 mod agent_tests;
+mod agent_card_tests; // New test module for comprehensive agent card testing
+mod toml_agent_card_test; // New test module for TOML configuration of agent cards
 mod artifact_tests;
 mod config_tests;
 mod input_required_remote_tests; // New test module for InputRequired remote task handling

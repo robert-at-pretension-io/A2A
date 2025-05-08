@@ -467,17 +467,21 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
     let addr = SocketAddr::new(agent.bind_address.parse()?, agent.port);
     info!("🚀 Server starting on http://{}", addr);
 
+    // Clone all required information from the agent before the async closure
     let task_service_arc = agent.task_service.clone();
     let streaming_service_arc = agent.streaming_service.clone();
     let notification_service_arc = agent.notification_service.clone();
     let static_files_root_arc = agent.static_files_root.clone();
-    // agent_card is created per request by jsonrpc_handler if needed for /.well-known/agent.json
+    
+    // Create agent card ahead of time to avoid capturing &agent in 'static
+    let agent_card = create_agent_card(agent);
 
     let make_svc = make_service_fn(move |_conn| {
         let task_service = task_service_arc.clone();
         let streaming_service = streaming_service_arc.clone();
         let notification_service = notification_service_arc.clone();
         let static_files_root = static_files_root_arc.clone();
+        let agent_card_struct = agent_card.clone(); // Clone the pre-created agent card
 
         async move {
             Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
@@ -485,8 +489,7 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                 let streaming_service_req = streaming_service.clone();
                 let notification_service_req = notification_service.clone();
                 let static_files_root_req = static_files_root.clone();
-                // Clone agent details needed for the card
-                let agent_card_struct = agent.create_agent_card(); // Use the agent's own method
+                let agent_card_req = agent_card_struct.clone(); // Use the cloned card, not a reference to agent
 
                 async move {
                     let req_path = req.uri().path().to_string();
@@ -497,7 +500,7 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                     // Serve the agent's specific card if requested
                     if req_method == Method::GET && req_path == "/.well-known/agent.json" {
                         debug!("Serving agent card for /.well-known/agent.json");
-                        match serde_json::to_string(&agent_card_struct) {
+                        match serde_json::to_string(&agent_card_req) {
                             Ok(json_body) => {
                                 return Ok(Response::builder()
                                     .status(StatusCode::OK)
@@ -518,11 +521,15 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                     // --- Static File Handling (index.html only) ---
                     // Try to serve static index.html if configured and requested.
                     if req_method == Method::GET { // Only handle GET for static files
-                        if let Some(base_path) = static_files_root_req {
-                            if req_path == "/" || req_path == "/index.html" {
-                                let mut file_path_to_serve = base_path.clone();
-
-                                // Check for path traversal attempts before any path manipulation
+                        // Handle static file request paths (/ or /index.html or any other path)
+                        // If the request is for / or /index.html, serve from static files if configured
+                        // Otherwise, for static routes we should return 404 if not enabled, or 403 for non-index routes
+                        let is_index_path = req_path == "/" || req_path == "/index.html";
+                        
+                        if is_index_path {
+                            // This is a request for / or /index.html
+                            if let Some(base_path) = static_files_root_req {
+                                // Static files are enabled, check for traversal
                                 if req_path.contains("..") || req_path.to_lowercase().contains("%2e%2e") {
                                     warn!(path = %req_path, "Path traversal attempt detected in request path.");
                                     let mut response = Response::new(Body::from("403 Forbidden"));
@@ -530,6 +537,7 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                                     return Ok(response);
                                 }
 
+                                let mut file_path_to_serve = base_path.clone();
                                 file_path_to_serve.push("index.html");
 
                                 let canon_base_path = match base_path.canonicalize() {
@@ -580,29 +588,46 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                                                 }
                                             }
                                             Err(e) => {
-                                                error!(canonical_path = %canon_file_to_serve.display(), error = %e, "Error opening canonical static file (index.html, permissions issue?)");
-                                                let mut response = Response::new(Body::from("500 Internal Server Error: Could not open file"));
-                                                *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                                                warn!(canonical_path = %canon_file_to_serve.display(), error = %e, "Error opening canonical static file (index.html, permissions issue?)");
+                                                // File not found, return 404
+                                                let mut response = Response::new(Body::from("404 Not Found: index.html not found"));
+                                                *response.status_mut() = StatusCode::NOT_FOUND;
                                                 return Ok(response);
                                             }
                                         }
                                     }
                                     Err(e) => {
                                         warn!(path = %req_path, original_path = %file_path_to_serve.display(), error = %e, "Static file index.html not found or error during canonicalization");
-                                        // Fall through to A2A handler or 404 below
+                                        // Return 404 explicitly for missing index.html
+                                        let mut response = Response::new(Body::from("404 Not Found: index.html not found"));
+                                        *response.status_mut() = StatusCode::NOT_FOUND;
+                                        return Ok(response);
                                     }
                                 }
                             } else {
-                                // It's a GET request for a path other than "/" or "/index.html" (e.g., "/style.css")
-                                // and static_files_root IS configured. We must block this.
+                                // Static files are disabled but this is a static file request
+                                // Return 404 explicitly for disabled static files
+                                debug!(path = %req_path, "Static files disabled but received index request. Returning 404.");
+                                let mut response = Response::new(Body::from("404 Not Found: Static files are disabled"));
+                                *response.status_mut() = StatusCode::NOT_FOUND;
+                                return Ok(response);
+                            }
+                        } else {
+                            // This is not an index path (e.g. /style.css or anything else)
+                            if let Some(_) = static_files_root_req {
+                                // Static files enabled, but we only serve index.html
                                 warn!(path = %req_path, "Access to non-index static file denied.");
                                 let mut response = Response::new(Body::from(format!("403 Forbidden: Access to {} is not allowed", req_path)));
                                 *response.status_mut() = StatusCode::FORBIDDEN;
                                 return Ok(response);
+                            } else {
+                                // Static files disabled, return 404
+                                debug!(path = %req_path, "Static files disabled. Returning 404 for GET request.");
+                                let mut response = Response::new(Body::from("404 Not Found: Static files are disabled"));
+                                *response.status_mut() = StatusCode::NOT_FOUND;
+                                return Ok(response);
                             }
                         }
-                        // If static_files_root is None, or if it's a GET for a non-index path,
-                        // we fall through to the A2A handler or 404 logic.
                     }
 
 
@@ -727,7 +752,14 @@ pub async fn get_remote_agent_card(agent: &mut BidirectionalAgent) -> Result<Age
 pub fn create_agent_card(agent: &BidirectionalAgent) -> AgentCard {
     debug!(agent_id = %agent.agent_id, "Creating agent card.");
 
-    let url = format!("http://{}:{}", agent.bind_address, agent.port);
+    // Format URL with proper IPv6 handling
+    let url = if agent.bind_address.contains(':') && !agent.bind_address.starts_with('[') {
+        // IPv6 address needs square brackets
+        format!("http://[{}]:{}", agent.bind_address, agent.port)
+    } else {
+        // IPv4 address or already formatted IPv6
+        format!("http://{}:{}", agent.bind_address, agent.port)
+    };
     
     // For consistent testing, create the agent card manually
     // This ensures that all capabilities are properly set
@@ -745,29 +777,8 @@ pub fn create_agent_card(agent: &BidirectionalAgent) -> AgentCard {
         skills: vec![],
         default_input_modes: vec!["text".to_string()],
         default_output_modes: vec!["text".to_string()],
-        // Fields that must be provided but we don't care about
         authentication: None,
         documentation_url: None,
         provider: None,
     };
-    
-    // The following code is no longer used but kept for reference
-    /*
-    // Use the common create_agent_card function from server module
-    let card_json = crate::server::create_agent_card(
-        Some(&agent.agent_name),
-        Some(&format!("Bidirectional A2A Agent (ID: {})", agent.agent_id)),
-        Some(&url),
-        Some(crate::bidirectional::bidirectional_agent::AGENT_VERSION),
-        None // Use default skills
-    );
-    
-    // Convert the JSON Value back to an AgentCard
-    match serde_json::from_value(card_json) {
-        Ok(card) => card,
-        Err(e) => {
-            // If there's an error, fall back to manual creation
-            error!(error = %e, "Failed to convert agent card from JSON. Using manual fallback.");
-    */
-    // Rest of the implementation has been moved above
 }
