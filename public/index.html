@@ -3,115 +3,268 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>A2A Agent Registry</title>
+    <title>A2A Agent Nexus</title> <!-- Changed Title -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400..900&family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --primary-color: #00e5ff; /* Bright cyan */
+            --secondary-color: #9e00ff; /* Purple */
+            --background-color: #12121f; /* Dark blue/purple */
+            --card-background: rgba(255, 255, 255, 0.05);
+            --text-color: #e0e0e0;
+            --header-color: #ffffff;
+            --border-color: rgba(0, 229, 255, 0.3);
+            --code-background: #1e1e2f;
+            --code-text: #c0c0ff;
+            --button-background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
+            --button-text: #12121f;
+            --input-background: rgba(255, 255, 255, 0.1);
+            --input-border: var(--border-color);
+            --error-color: #ff4d4d;
+        }
+
         body {
-            font-family: system-ui, -apple-system, sans-serif;
-            line-height: 1.6;
+            font-family: 'Roboto', sans-serif;
+            line-height: 1.7;
             margin: 0;
             padding: 0;
-            background-color: #f8f9fa;
-            color: #333;
-            max-width: 800px;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            max-width: 900px; /* Slightly wider */
             margin: 0 auto;
-            padding: 20px;
+            padding: 30px 20px;
+            background-image: radial-gradient(circle at top left, rgba(0, 229, 255, 0.1), transparent 40%),
+                              radial-gradient(circle at bottom right, rgba(158, 0, 255, 0.1), transparent 40%);
+            background-attachment: fixed;
         }
         header {
-            margin-bottom: 30px;
+            margin-bottom: 40px;
             text-align: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 20px;
         }
         header h1 {
-            margin: 0;
-            font-size: 2.2rem;
+            font-family: 'Orbitron', sans-serif;
+            margin: 0 0 10px 0;
+            font-size: 2.8rem; /* Larger */
+            font-weight: 700;
+            color: var(--header-color);
+            letter-spacing: 1px;
+            text-shadow: 0 0 5px var(--primary-color), 0 0 10px var(--secondary-color);
         }
         .badge {
             display: inline-block;
-            padding: 3px 8px;
-            border-radius: 16px;
-            background-color: #0066cc;
-            color: white;
-            font-size: 12px;
+            padding: 4px 12px;
+            border-radius: 4px;
+            background: var(--primary-color);
+            color: var(--background-color);
+            font-size: 11px;
             font-weight: bold;
             margin-right: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         .card {
-            background: white;
-            border-radius: 8px;
-            padding: 25px;
-            margin-bottom: 25px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            background: var(--card-background);
+            border-radius: 12px; /* More rounded */
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(5px); /* Frosted glass effect */
         }
         h2 {
             margin-top: 0;
-            font-size: 1.4rem;
+            margin-bottom: 15px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.6rem;
+            color: var(--primary-color);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
         }
         .controls {
-            margin: 20px 0;
+            margin: 25px 0;
+            display: flex; /* Align input and button */
+            gap: 10px;
+            align-items: center;
         }
         input[type="text"] {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            flex-grow: 1; /* Take available space */
+            padding: 12px 15px;
+            border: 1px solid var(--input-border);
+            border-radius: 6px;
             box-sizing: border-box;
+            background-color: var(--input-background);
+            color: var(--text-color);
+            font-size: 1rem;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.5);
         }
         button {
-            background: #0066cc;
-            color: #fff;
-            padding: 10px 15px;
+            background: var(--button-background);
+            color: var(--button-text);
+            padding: 12px 20px;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
             font-size: 1rem;
+            font-weight: bold;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            white-space: nowrap; /* Prevent button text wrapping */
         }
         button:hover {
-            background: #0055aa;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 229, 255, 0.4);
         }
         pre {
-            background-color: #f1f3f5;
-            padding: 15px;
-            border-radius: 4px;
+            background-color: var(--code-background);
+            padding: 20px;
+            border-radius: 8px;
             overflow-x: auto;
             white-space: pre-wrap;
             word-wrap: break-word;
+            border: 1px solid var(--border-color);
+            color: var(--code-text);
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
         }
         .error {
-            color: red;
+            color: var(--error-color);
+            font-weight: bold;
         }
         .api-examples {
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 25px;
         }
         .example h3 {
             margin-top: 0;
             margin-bottom: 10px;
-            font-size: 1.1rem;
-            color: #0066cc;
+            font-size: 1.2rem;
+            color: var(--primary-color);
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 500;
         }
         .example p {
             margin-top: 0;
             margin-bottom: 10px;
         }
-        .code {
-            background-color: #1e1e1e;
-            color: #dcdcdc;
+        .code { /* Style for inline code examples */
+            background-color: var(--code-background);
+            color: var(--code-text);
             padding: 15px;
-            border-radius: 4px;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 13px;
+            border-radius: 8px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            border: 1px solid var(--border-color);
         }
         ul {
-            padding-left: 20px;
+            padding-left: 25px;
             margin-bottom: 15px;
+            list-style: none; /* Remove default bullets */
         }
         li {
-            margin-bottom: 8px;
+            margin-bottom: 10px;
+            position: relative;
+            padding-left: 20px; /* Space for custom bullet */
+        }
+        li::before { /* Custom bullet */
+            content: '»';
+            position: absolute;
+            left: 0;
+            color: var(--primary-color);
+            font-weight: bold;
         }
     </style>
 </head>
 <body>
+    <header>
+        <h1>A2A Agent Nexus</h1> <!-- Changed Title -->
+        <p><span class="badge">INTER-AGENT COMMS</span> The Discovery Hub for Autonomous AI Systems</p> <!-- Changed tagline -->
+    </header>
+
+    <div class="card">
+        <h2>Nexus Overview</h2> <!-- Changed Header -->
+        <p>Welcome to the Agent Nexus, the central registry facilitating seamless discovery and interaction within the Agent-to-Agent (A2A) network. This hub catalogs autonomous agents, enabling sophisticated machine-to-machine collaboration.</p> <!-- Changed text -->
+    </div>
+
+    <div class="card">
+        <h2>Agent Interaction Protocols</h2> <!-- Changed Header -->
+        <div class="api-examples">
+            <div class="example">
+                <h3>1. Agent Registration Signal</h3> <!-- Changed Header -->
+                <p>Broadcast your agent's presence and endpoint URL to the Nexus:</p> <!-- Changed text -->
+                <pre class="code">POST repository-agent.com
+{
+  "jsonrpc": "2.0",
+  "id": "sig-reg-1f4d",
+  "method": "tasks/send",
+  "params": {
+    "id": "task-reg-b7a9",
+    "message": {
+      "role": "user",
+      "parts": [{
+        "type": "text",
+        "text": "Register agent endpoint: https://my-agent.stellar-network.ai/a2a"
+      }]
+    }
+  }
+}</pre>
+            </div>
+            <div class="example">
+                <h3>2. Network Agent Query</h3> <!-- Changed Header -->
+                <p>Request a manifest of all currently registered agents within the Nexus:</p> <!-- Changed text -->
+                <pre class="code">POST repository-agent.com
+{
+  "jsonrpc": "2.0",
+  "id": "query-agents-3c9a",
+  "method": "tasks/send",
+  "params": {
+    "id": "task-list-e4f1",
+    "message": {
+      "role": "user",
+      "parts": [{
+        "type": "text",
+        "text": "list agents"
+      }]
+    }
+  }
+}</pre>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Nexus Query Interface</h2> <!-- Changed Header -->
+        <p>Enter the Nexus URL to retrieve the current agent manifest:</p> <!-- Changed text -->
+        <div class="controls">
+            <input type="text" id="registryUrl" value="http://repository-agent.com/" placeholder="Nexus Endpoint URL"> <!-- Changed placeholder -->
+            <button id="listAgentsBtn">Query Agents</button> <!-- Changed button text -->
+        </div>
+        <pre id="agentListOutput">Agent manifest pending query...</pre> <!-- Changed placeholder text -->
+    </div>
+
+    <div class="card">
+        <h2>Core Mechanics</h2> <!-- Changed Header -->
+        <p>The Nexus dynamically:</p> <!-- Changed text -->
+        <ul>
+            <li><strong>Identifies & Validates</strong> agent endpoint URLs from incoming signals.</li> <!-- Changed text -->
+            <li><strong>Retrieves & Caches</strong> detailed AgentCards via A2A protocol.</li> <!-- Changed text -->
+            <li><strong>Catalogs Capabilities</strong> for intelligent agent discovery.</li> <!-- Changed text -->
+            <li><strong>Serves Manifests</strong> detailing registered agents upon request.</li> <!-- Changed text -->
+        </ul>
+        <p>This fosters a dynamic, self-organizing network of specialized AI collaborators.</p> <!-- Changed text -->
+    </div>
+
+    <script>
+        document.getElementById('listAgentsBtn').addEventListener('click', async function() {
     <header>
         <h1>A2A Agent Registry</h1>
         <p><span class="badge">MACHINE-TO-MACHINE</span> A service for AI agents to find other AI agents</p>
