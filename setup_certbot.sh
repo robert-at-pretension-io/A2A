@@ -102,8 +102,18 @@ EOF
     fi
     
     # Set permissions for certbot certificates
-    # This allows the a2a user to read the certificates
+    # Create certbot group if it doesn't exist
+    if ! getent group certbot &>/dev/null; then
+      groupadd -r certbot
+      echo "Created certbot group."
+    fi
+    
+    # Add a2a user to certbot group
     usermod -a -G certbot a2a
+    
+    # Set group ownership and permissions
+    chgrp -R certbot /etc/letsencrypt/live
+    chgrp -R certbot /etc/letsencrypt/archive
     chmod -R g+rx /etc/letsencrypt/live
     chmod -R g+rx /etc/letsencrypt/archive
     

@@ -37,9 +37,15 @@ pub fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig
     let cert_file = File::open(cert_path)
         .map_err(|e| anyhow!("Failed to open certificate file: {}", e))?;
     let cert_reader = BufReader::new(cert_file);
-    let cert_chain = certs(cert_reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| anyhow!("Failed to parse certificate: {}", e))?;
+    let mut cert_chain = Vec::new();
+    
+    // Read certificates one by one from the PEM file
+    for cert_result in certs(cert_reader) {
+        match cert_result {
+            Ok(cert) => cert_chain.push(cert),
+            Err(e) => return Err(anyhow!("Failed to parse certificate: {}", e)),
+        }
+    }
     
     if cert_chain.is_empty() {
         return Err(anyhow!("No certificates found in provided certificate file"));
@@ -49,9 +55,15 @@ pub fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig
     let key_file = File::open(key_path)
         .map_err(|e| anyhow!("Failed to open private key file: {}", e))?;
     let key_reader = BufReader::new(key_file);
-    let mut keys = pkcs8_private_keys(key_reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| anyhow!("Failed to parse private key: {}", e))?;
+    let mut keys = Vec::new();
+    
+    // Read private keys one by one from the PEM file
+    for key_result in pkcs8_private_keys(key_reader) {
+        match key_result {
+            Ok(key) => keys.push(key),
+            Err(e) => return Err(anyhow!("Failed to parse private key: {}", e)),
+        }
+    }
     
     if keys.is_empty() {
         return Err(anyhow!("No private keys found in provided key file"));
