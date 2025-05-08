@@ -692,8 +692,16 @@ impl BidirectionalAgent {
     /// Run the agent server
     #[instrument(skip(self), fields(agent_id = %self.agent_id, port = %self.port, bind_address = %self.bind_address))]
     pub async fn run(&self) -> Result<()> {
-        // Use the run_server function from agent_helpers.rs
-        agent_helpers::run_server(self).await
+        // Check if we should use HTTPS or HTTP
+        if let Ok(domain) = std::env::var("CERTBOT_DOMAIN") {
+            // If CERTBOT_DOMAIN is set, try to use HTTPS with that domain's certificates
+            info!("CERTBOT_DOMAIN environment variable found: {}. Attempting to use HTTPS.", domain);
+            super::https_support::run_server_with_https(self, &domain).await
+        } else {
+            // Default to HTTP
+            info!("No CERTBOT_DOMAIN environment variable found. Using HTTP.");
+            agent_helpers::run_server(self).await
+        }
     }
 
     /// Send a task to a remote agent using the A2A client, ensuring session consistency.

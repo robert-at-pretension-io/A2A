@@ -67,7 +67,10 @@ env_logger = { version = "0.11" }
 anyhow = { version = "1.0" }
 thiserror = { version = "1.0" }
 toml = "0.8"
-tokio-util = { version = "0.7", features = ["rt"] } # Required for CancellationToken in sync module
+tokio-util = { version = "0.7", features = ["rt", "codec", "io"] } # Required for CancellationToken and BytesCodec
+tokio-rustls = "0.23"
+rustls = "0.20"
+rustls-pemfile = "1.0"
 rustyline = "15.0.0"
 fs2 = "0.4.3"
 indicatif = "0.17.11"

@@ -102,6 +102,11 @@ RUSTFLAGS="-A warnings" cargo build
 cargo test client::streaming::tests
 ```
 
+## HTTPS Support
+
+The A2A Test Suite now includes HTTPS support using TLS certificates from Certbot. 
+See [README_HTTPS.md](README_HTTPS.md) for complete setup instructions.
+
 ## Documentation
 
 - [Client Documentation](src/client/README.md)

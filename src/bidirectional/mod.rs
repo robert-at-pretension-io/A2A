@@ -2,6 +2,7 @@ pub mod agent_helpers;
 pub mod agent_registry;
 pub mod bidirectional_agent;
 pub mod config;
+pub mod https_support;
 pub mod llm_client;
 pub mod registry_router;
 pub mod repl;
