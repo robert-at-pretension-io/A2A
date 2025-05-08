@@ -3,7 +3,7 @@
 
 # Server configuration
 [server]
-port = 8085
+port = 80
 bind_address = "0.0.0.0"
 agent_id = "agent-registry"
 agent_name = "Agent Registry"
