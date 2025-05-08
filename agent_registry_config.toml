@@ -22,7 +22,7 @@ repl = true
 # Auto-start server
 auto_listen = true
 # Log file for REPL interactions
-repl_log_file = "logs/agent_registry.log"
+repl_log_file = "logs/agent_registry_test.log"
 
 # Tool configuration (not used in registry-only mode, but required)
 [tools]
