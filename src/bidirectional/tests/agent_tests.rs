@@ -50,9 +50,10 @@ fn test_agent_card_creation() {
         assert_eq!(card.version, "1.0.0");
         assert_eq!(card.url, "http://127.0.0.1:9090");
         assert!(card.description.unwrap().contains("Bidirectional"));
-        assert!(card.capabilities.push_notifications);
-        assert!(card.capabilities.state_transition_history);
-        assert!(card.capabilities.streaming); // Streaming is now supported
+        // Using the server module's create_agent_card function, all capabilities are set to true
+        assert!(card.capabilities.push_notifications, "push_notifications capability should be true");
+        assert!(card.capabilities.state_transition_history, "state_transition_history capability should be true");
+        assert!(card.capabilities.streaming, "streaming capability should be true");
         assert_eq!(card.default_input_modes, vec!["text".to_string()]);
         assert_eq!(card.default_output_modes, vec!["text".to_string()]);
     }

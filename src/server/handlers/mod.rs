@@ -58,11 +58,13 @@ pub async fn jsonrpc_handler(
 ) -> Result<Response<Body>, Infallible> {
     // Check if this is a request for agent card
     if req.uri().path() == "/.well-known/agent.json" {
+        // Create agent card with default values
+        let agent_card = create_agent_card(None, None, None, None, None);
         return Ok(Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                serde_json::to_string(&create_agent_card()).unwrap(),
+                serde_json::to_string(&agent_card).unwrap(),
             ))
             .unwrap());
     }

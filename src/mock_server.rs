@@ -231,6 +231,9 @@ fn create_task_storage() -> TaskStorage {
 // Removed create_batch_storage function
 // Removed create_file_storage function
 
+// Import the server module's create_agent_card function
+use crate::server::create_agent_card as server_create_agent_card;
+
 // Create agent card for the mock server
 fn create_agent_card() -> AgentCard {
     create_agent_card_with_auth(true)
@@ -242,18 +245,14 @@ fn create_agent_card_with_auth(require_auth: bool) -> AgentCard {
         id: "test-skill-1".to_string(),
         name: "Echo".to_string(),
         description: Some("Echoes back any message sent".to_string()),
-        tags: None,
+        tags: Some(vec!["echo".to_string(), "text_manipulation".to_string()]),
         examples: None,
-        input_modes: None,
-        output_modes: None,
+        input_modes: Some(vec!["text".to_string()]),
+        output_modes: Some(vec!["text".to_string()]),
     };
-
-    let capabilities = AgentCapabilities {
-        streaming: true,
-        push_notifications: true,
-        state_transition_history: true,
-    };
-
+    
+    let skills_json = serde_json::to_value(vec![skill.clone()]).unwrap();
+    
     // Configure authentication based on the require_auth parameter
     let authentication = if require_auth {
         // For authentication error tests, use strict auth schemes
@@ -276,20 +275,27 @@ fn create_agent_card_with_auth(require_auth: bool) -> AgentCard {
     } else {
         None
     };
-
-    AgentCard {
-        name: "Mock A2A Server".to_string(),
-        description: Some("A mock server for testing A2A protocol clients".to_string()),
-        url: "http://localhost:8080".to_string(),
-        provider: None,
-        version: "0.1.0".to_string(),
-        documentation_url: None,
-        capabilities,
-        authentication,
-        default_input_modes: vec!["text/plain".to_string()],
-        default_output_modes: vec!["text/plain".to_string()],
-        skills: vec![skill],
-    }
+    
+    // Determine the port from the environment or thread name
+    let port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "8080".to_string());
+    let url = format!("http://localhost:{}", port);
+    
+    // Use the server module's create_agent_card function with our custom values
+    let card_json = server_create_agent_card(
+        Some("Mock A2A Server"),
+        Some("A mock server for testing A2A protocol clients"),
+        Some(&url),
+        Some("0.1.0"),
+        Some(skills_json)
+    );
+    
+    // Convert the JSON Value back to an AgentCard
+    let mut agent_card: AgentCard = serde_json::from_value(card_json).unwrap();
+    
+    // Override authentication with our custom value
+    agent_card.authentication = authentication;
+    
+    agent_card
 }
 
 // Helper function to create standard error responses using A2aError

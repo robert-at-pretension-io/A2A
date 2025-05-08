@@ -706,13 +706,15 @@ pub async fn get_remote_agent_card(agent: &mut BidirectionalAgent) -> Result<Age
 }
 
 /// Create an agent card for this agent instance
-
 pub fn create_agent_card(agent: &BidirectionalAgent) -> AgentCard {
     debug!(agent_id = %agent.agent_id, "Creating agent card.");
 
     let url = format!("http://{}:{}", agent.bind_address, agent.port);
-
-    AgentCard {
+    
+    // For consistent testing, create the agent card manually
+    // This ensures that all capabilities are properly set
+    debug!("Creating agent card with manual construction.");
+    return AgentCard {
         name: agent.agent_name.clone(),
         description: Some(format!("Bidirectional A2A Agent (ID: {})", agent.agent_id)),
         url,
@@ -729,5 +731,25 @@ pub fn create_agent_card(agent: &BidirectionalAgent) -> AgentCard {
         authentication: None,
         documentation_url: None,
         provider: None,
-    }
+    };
+    
+    // The following code is no longer used but kept for reference
+    /*
+    // Use the common create_agent_card function from server module
+    let card_json = crate::server::create_agent_card(
+        Some(&agent.agent_name),
+        Some(&format!("Bidirectional A2A Agent (ID: {})", agent.agent_id)),
+        Some(&url),
+        Some(crate::bidirectional::bidirectional_agent::AGENT_VERSION),
+        None // Use default skills
+    );
+    
+    // Convert the JSON Value back to an AgentCard
+    match serde_json::from_value(card_json) {
+        Ok(card) => card,
+        Err(e) => {
+            // If there's an error, fall back to manual creation
+            error!(error = %e, "Failed to convert agent card from JSON. Using manual fallback.");
+    */
+    // Rest of the implementation has been moved above
 }

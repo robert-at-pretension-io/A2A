@@ -344,11 +344,19 @@ pub async fn run_repl(agent: &mut BidirectionalAgent) -> Result<()> {
                         let streaming_service = agent.streaming_service.clone();
                         let notification_service = agent.notification_service.clone();
                         let bind_address = agent.bind_address.clone();
-                        let agent_card = serde_json::to_value(agent.create_agent_card())
-                            .unwrap_or_else(|e| {
-                                warn!("Failed to serialize agent card: {}", e);
-                                serde_json::json!({})
-                            });
+                        // Create agent card using the URL with the port
+                        let url = format!("http://{}:{}", agent.bind_address, port);
+                        let agent_card = serde_json::to_value(crate::server::create_agent_card(
+                            Some(&agent.agent_name),
+                            Some(&format!("Bidirectional A2A Agent (ID: {})", agent.agent_id)),
+                            Some(&url),
+                            Some(crate::bidirectional::bidirectional_agent::AGENT_VERSION),
+                            None // Use default skills
+                        ))
+                        .unwrap_or_else(|e| {
+                            warn!("Failed to serialize agent card: {}", e);
+                            serde_json::json!({})
+                        });
 
                         // Create a channel to communicate server start status back to REPL
                         let (tx, rx) = tokio::sync::oneshot::channel();

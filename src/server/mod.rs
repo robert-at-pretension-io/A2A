@@ -101,14 +101,72 @@ pub async fn run_server(
     Ok(handle)
 }
 
-/// Creates and returns the agent card for this server
-// TODO: This should likely move or accept config to generate dynamic URL/skills
-pub fn create_agent_card() -> serde_json::Value {
-    // Using a serde_json::Value instead of the typed AgentCard
-    // to ensure all required fields are present and properly formatted
-    json!({
-        "name": "A2A Test Suite Reference Server",
-        "description": "A reference implementation of the A2A protocol for testing",
+/// Creates and returns the agent card for this server with dynamic configuration
+/// 
+/// # Parameters
+/// 
+/// * `name` - Optional name for the agent (defaults to "A2A Test Suite Reference Server")
+/// * `description` - Optional description for the agent
+/// * `url` - Optional URL where the agent is hosted (defaults to "http://localhost:8081")
+/// * `version` - Optional version string (defaults to "1.0.0")
+/// * `skills` - Optional array of skill objects to include in the agent card
+/// 
+/// # Example (not run in doctests)
+/// 
+/// ```ignore
+/// let skills = serde_json::json!([
+///     {
+///         "id": "translate",
+///         "name": "Translate",
+///         "description": "Translates text between languages",
+///         "tags": ["translation", "language"],
+///         "input_modes": ["text"],
+///         "output_modes": ["text"]
+///     }
+/// ]);
+/// 
+/// // Import the function first
+/// use a2a_test_suite::server::create_agent_card;
+/// 
+/// let card = create_agent_card(
+///     Some("Translator Agent"),
+///     Some("An agent that can translate text between languages"),
+///     Some("https://translator.example.com"),
+///     Some("2.0.0"),
+///     Some(skills)
+/// );
+/// ```
+pub fn create_agent_card(
+    name: Option<&str>,
+    description: Option<&str>,
+    url: Option<&str>,
+    version: Option<&str>,
+    skills: Option<serde_json::Value>,
+) -> serde_json::Value {
+    // Set default values or use provided ones
+    let agent_name = name.unwrap_or("A2A Test Suite Reference Server");
+    let agent_description = description.unwrap_or("A reference implementation of the A2A protocol for testing");
+    let agent_url = url.unwrap_or("http://localhost:8081");
+    let agent_version = version.unwrap_or("1.0.0");
+    
+    // Default skills if none provided
+    let agent_skills = skills.unwrap_or_else(|| {
+        json!([
+            {
+                "id": "echo",
+                "name": "Echo",
+                "description": "Echoes back the input text",
+                "tags": ["echo", "text_manipulation"],
+                "input_modes": ["text"],
+                "output_modes": ["text"]
+            }
+        ])
+    });
+    
+    // Using a serde_json::Value to ensure all required fields are present and properly formatted
+    let mut card = json!({
+        "name": agent_name,
+        "description": agent_description,
         "provider": null,
         "authentication": null,
         "capabilities": {
@@ -119,17 +177,20 @@ pub fn create_agent_card() -> serde_json::Value {
         "default_input_modes": ["text"],
         "default_output_modes": ["text"],
         "documentation_url": null,
-        "version": "1.0.0",
-        "url": "http://localhost:8081",
-        "skills": [
-            {
-                "id": "echo",
-                "name": "Echo",
-                "description": "Echoes back the input text",
-                "tags": ["echo", "text_manipulation"],
-                "input_modes": ["text"],
-                "output_modes": ["text"]
-            }
-        ]
-    })
+        "version": agent_version,
+        "url": agent_url,
+        "skills": agent_skills
+    });
+    
+    // Debug capabilities - this shouldn't be necessary but helps troubleshoot
+    // Ensure all capabilities are explicitly set to true
+    if let Some(capabilities) = card.get_mut("capabilities") {
+        if let Some(obj) = capabilities.as_object_mut() {
+            obj.insert("streaming".to_string(), json!(true));
+            obj.insert("push_notifications".to_string(), json!(true));
+            obj.insert("state_transition_history".to_string(), json!(true));
+        }
+    }
+    
+    card
 }

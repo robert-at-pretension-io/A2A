@@ -185,8 +185,14 @@ fn main() {
                 let shutdown_token = tokio_util::sync::CancellationToken::new();
 
                 // Start the server
-                // Create agent card for the server
-                let agent_card = Some(server::create_agent_card());
+                // Create agent card for the server with default values
+                let agent_card = Some(server::create_agent_card(
+                    Some("A2A Test Suite Reference Server"),
+                    Some("A reference implementation of the A2A protocol for testing"),
+                    Some(&format!("http://{}:{}", bind_address, *port)),
+                    Some("1.0.0"),
+                    None
+                ));
 
                 server::run_server(
                     *port,
