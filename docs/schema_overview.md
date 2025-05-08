@@ -1,4 +1,12 @@
-Okay, here are succinct representations of the objects defined in the Rust code, focusing on their structure and purpose.
+# A2A Protocol Schema Overview
+
+> Related Documentation:
+> - [Project Overview](../README.md)
+> - [A2A Developer Guide](A2A_dev_docs.md)
+> - [Client Implementation](../src/client/README.md)
+> - [Bidirectional Agent](../src/bidirectional/README.md)
+
+This document provides a technical overview of the objects defined in the A2A protocol schema, focusing on their structure and purpose.
 
 **Fundamental Building Blocks:**
 

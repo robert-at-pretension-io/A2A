@@ -1,5 +1,10 @@
 # Bidirectional Agent Tests
 
+> Related Documentation:
+> - [Project Overview](../../../README.md)
+> - [Bidirectional Agent](../README.md)
+> - [Bidirectional Agent Quickstart](../../../README_BIDIRECTIONAL.md)
+
 This directory contains tests for the bidirectional A2A agent implementation. The tests are organized into several modules, each focusing on a specific aspect of the agent's functionality.
 
 ## Test Modules

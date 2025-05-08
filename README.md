@@ -22,6 +22,7 @@ This test suite provides tools to validate implementations against the official 
 - **Mock Server**: A reference A2A server implementation for testing clients.
 - **Client Implementation**: A compliant A2A client implementation.
 - **Bidirectional Agent**: An agent implementation capable of acting as both an A2A client and server, facilitating testing of agent-to-agent interactions.
+- **Agent Registry**: A specialized agent that maintains a directory of other agents.
 
 ## Usage
 
@@ -77,17 +78,20 @@ cargo run -- client stream-task --url "http://localhost:8080" --message "Stream 
 - **Structured Data**: Exchange JSON data within message parts according to the schema.
 - **Push Notifications**: Basic support for configuring and retrieving push notification settings (`tasks/pushNotification/set`, `tasks/pushNotification/get`).
 - **Bidirectional Operation**: Includes an agent that can act as both client and server, enabling testing of peer-to-peer agent interactions using the official methods.
+- **Rolling Memory**: The bidirectional agent includes a rolling memory feature that maintains history of interactions for context.
 - **Comprehensive Testing**: Includes schema validation, property-based testing, and integration tests specifically for the official protocol features listed above.
 
 ## Bidirectional Agent Architecture
 
 The bidirectional agent implementation demonstrates how an agent can function as both a client and a server within the A2A protocol. Key aspects include:
 
-1.  **Agent Discovery**: Discovering other agents via their `agent.json` card and caching their information.
-2.  **Client Role**: Acting as a client to send tasks to other agents.
-3.  **Server Role**: Acting as a server to receive and process tasks from other agents.
-4.  **Delegated Task Management**: Basic mechanisms for tracking tasks delegated to other agents (associating local task IDs with remote ones).
-5.  **Agent Registry**: A specialized bidirectional agent that can operate in registry-only mode to maintain a directory of other agents, storing their URLs and agent cards.
+1. **Agent Discovery**: Discovering other agents via their `agent.json` card and caching their information.
+2. **Client Role**: Acting as a client to send tasks to other agents.
+3. **Server Role**: Acting as a server to receive and process tasks from other agents.
+4. **Delegated Task Management**: Basic mechanisms for tracking tasks delegated to other agents (associating local task IDs with remote ones).
+5. **Agent Registry**: A specialized bidirectional agent that can operate in registry-only mode to maintain a directory of other agents, storing their URLs and agent cards.
+
+For detailed usage instructions, see [Bidirectional Agent README](bidirectional_agent_readme.md).
 
 ## Development
 
@@ -105,13 +109,30 @@ cargo test client::streaming::tests
 ## HTTPS Support
 
 The A2A Test Suite now includes HTTPS support using TLS certificates from Certbot. 
-See [README_HTTPS.md](README_HTTPS.md) for complete setup instructions.
+See [HTTPS Setup Guide](README_HTTPS.md) for complete setup instructions.
 
 ## Documentation
 
-- [Client Documentation](src/client/README.md)
-- [Bidirectional Agent Documentation](src/bidirectional/README.md)
-- [Schema Overview](docs/schema_overview.md)
+### Core Documentation
+- [Client Library Documentation](src/client/README.md) - Detailed guide on using the A2A client implementation
+- [Bidirectional Agent Documentation](src/bidirectional/README.md) - In-depth overview of the bidirectional agent architecture
+- [Bidirectional Agent Tests](src/bidirectional/tests/README.md) - Guide to the test suite for the bidirectional agent
+- [Schema Overview](docs/schema_overview.md) - Technical description of the A2A protocol schema
+
+### Features and Components
+- [Agent Registry](docs/agent_registry.md) - Documentation for the agent registry component
+- [Rolling Memory](docs/rolling_memory.md) - Explanation of the rolling memory feature for context retention
+- [A2A Protocol Developer Guide](docs/A2A_dev_docs.md) - Comprehensive technical overview of the A2A protocol
+
+### Implementation and Tools
+- [LLM Configuration](docs/llm_configuration.md) - Guide to configuring LLM integration with Claude and Gemini
+- [Cargo Typify Documentation](docs/cargo_typify.md) - Information on generating Rust types from JSON schema
+- [Mockito Library Documentation](docs/mockito_rust_lib.md) - Guide to the HTTP mocking library used in tests
+
+### Quickstart Guides
+- [Bidirectional Agent Quickstart](README_BIDIRECTIONAL.md) - Instructions for running the bidirectional agent
+- [HTTPS Setup Guide](README_HTTPS.md) - Guide to setting up HTTPS with Certbot
+- [Development Guidelines](CLAUDE.md) - Guidelines for development and code organization
 
 ## LLM API Key Configuration
 
@@ -133,6 +154,15 @@ Notes:
 
 For more detailed configuration options, see [LLM Configuration](docs/llm_configuration.md).
 
+## Convenience Scripts
+
+The repository includes several convenience scripts to help you get started:
+
+- `run_agent.bat` - Windows script for running the bidirectional agent
+- `run_remember_agent_demo.sh` - Demo for the agent with rolling memory
+- `run_three_agents.sh` - Script to run three interconnected agents for testing
+- `run_two_agents_debug.sh` - Script to run two agents in debug mode
+
 ## Project Status
 
-This project provides a test suite focused on the standard A2A protocol. The core client, server, validator, and property testing components implement the official specification. The bidirectional agent demonstrates how to combine client and server roles for agent-to-agent communication, including agent discovery and basic management of delegated tasks. Non-standard extensions (like file handling, batching, skills) have been removed to maintain focus on protocol compliance testing.
+This project provides a test suite focused on the standard A2A protocol. The core client, server, validator, and property testing components implement the official specification. The bidirectional agent demonstrates how to combine client and server roles for agent-to-agent communication, including agent discovery and basic management of delegated tasks with rolling memory for context retention.

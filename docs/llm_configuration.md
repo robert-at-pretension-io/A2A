@@ -1,5 +1,10 @@
 # LLM Configuration Guide
 
+> Related Documentation:
+> - [Project Overview](../README.md)
+> - [Bidirectional Agent](../src/bidirectional/README.md)
+> - [Bidirectional Agent Quickstart](../README_BIDIRECTIONAL.md)
+
 This document provides information about the Large Language Model (LLM) configuration in the A2A Test Suite.
 
 ## Overview

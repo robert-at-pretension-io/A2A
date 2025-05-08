@@ -1,8 +1,11 @@
 # A2A Client
 
-This is a client implementation for the Agent-to-Agent (A2A) protocol, allowing applications to communicate with any A2A-compatible agent.
+> Related Documentation:
+> - [Project Overview](../../README.md)
+> - [Schema Overview](../../docs/schema_overview.md)
+> - [A2A Developer Guide](../../docs/A2A_dev_docs.md)
 
-For the complete protocol specification, see the [A2A Schema Overview](../docs/schema_overview.md).
+This is a client implementation for the Agent-to-Agent (A2A) protocol, allowing applications to communicate with any A2A-compatible agent.
 
 ## Features
 

@@ -1,4 +1,12 @@
-# Bidirectional A2A Agent Module
+# Bidirectional A2A Agent
+
+> Related Documentation:
+> - [Quick Start Guide](../../README_BIDIRECTIONAL.md)
+> - [Test Documentation](tests/README.md)
+> - [Rolling Memory](../../docs/rolling_memory.md)
+> - [Agent Registry](../../docs/agent_registry.md)
+> - [LLM Configuration](../../docs/llm_configuration.md)
+> - [HTTPS Setup](../../README_HTTPS.md) Module
 
 This module implements a bidirectional Agent-to-Agent (A2A) implementation that functions as both a server and a client in the A2A ecosystem. It demonstrates how agents can discover, communicate with, and delegate tasks to each other within the A2A protocol.
 

@@ -1,5 +1,11 @@
 # Agent Registry for A2A Protocol
 
+> Related Documentation:
+> - [Project Overview](../README.md)
+> - [Bidirectional Agent](../src/bidirectional/README.md)
+> - [Schema Overview](schema_overview.md)
+> - [A2A Developer Guide](A2A_dev_docs.md)
+
 ## Introduction
 
 The Agent Registry is a critical component of the Agent-to-Agent (A2A) ecosystem that enables agent discovery, cataloging, and interoperability. It functions as a centralized or distributed directory of available A2A agents, their capabilities, and connection information. This document provides an in-depth explanation of the Agent Registry implementation, its architecture, features, and the crucial role it plays in facilitating agent communication in the A2A protocol.

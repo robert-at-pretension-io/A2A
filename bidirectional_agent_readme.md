@@ -1,5 +1,13 @@
 # Bidirectional A2A Agent
 
+> Related Documentation:
+> - [Project Overview](README.md)
+> - [Bidirectional Agent Documentation](src/bidirectional/README.md)
+> - [Bidirectional Agent Quickstart](README_BIDIRECTIONAL.md)
+> - [HTTPS Setup](README_HTTPS.md)
+> - [LLM Configuration](docs/llm_configuration.md)
+> - [Rolling Memory](docs/rolling_memory.md)
+
 This is a bidirectional A2A (Agent-to-Agent) implementation that can function as both a server and a client in the A2A ecosystem. It includes the following features:
 
 - **A2A Server**: Hosts an A2A-compliant server that can receive and process tasks
