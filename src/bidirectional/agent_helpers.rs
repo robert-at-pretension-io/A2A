@@ -485,18 +485,133 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
                 let streaming_service_req = streaming_service.clone();
                 let notification_service_req = notification_service.clone();
                 let static_files_root_req = static_files_root.clone();
+                // Clone agent details needed for the card
+                let agent_card_struct = agent.create_agent_card(); // Use the agent's own method
 
                 async move {
                     let req_path = req.uri().path().to_string();
                     let req_method = req.method().clone();
                     info!(method = %req_method, path = %req_path, "Incoming HTTP request");
 
-                    // 1. Handle A2A protocol requests (POST, or GET for .well-known/agent.json)
-                    //    These are passed to the jsonrpc_handler.
-                    if req_method != Method::GET || req_path == "/.well-known/agent.json" {
-                        debug!(method = %req_method, path = %req_path, "Passing request to A2A JSON-RPC handler");
-                        return jsonrpc_handler(
-                            req,
+                    // --- Agent Card Handling ---
+                    // Serve the agent's specific card if requested
+                    if req_method == Method::GET && req_path == "/.well-known/agent.json" {
+                        debug!("Serving agent card for /.well-known/agent.json");
+                        match serde_json::to_string(&agent_card_struct) {
+                            Ok(json_body) => {
+                                return Ok(Response::builder()
+                                    .status(StatusCode::OK)
+                                    .header(hyper::header::CONTENT_TYPE, "application/json")
+                                    .body(Body::from(json_body))
+                                    .unwrap());
+                            }
+                            Err(e) => {
+                                error!(error = %e, "Failed to serialize agent card");
+                                return Ok(Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(Body::from("Internal Server Error: Failed to serialize agent card"))
+                                    .unwrap());
+                            }
+                        }
+                    }
+
+                    // --- Static File Handling (index.html only) ---
+                    // Try to serve static index.html if configured and requested.
+                    if req_method == Method::GET { // Only handle GET for static files
+                        if let Some(base_path) = static_files_root_req {
+                            if req_path == "/" || req_path == "/index.html" {
+                                let mut file_path_to_serve = base_path.clone();
+
+                                // Check for path traversal attempts before any path manipulation
+                                if req_path.contains("..") || req_path.to_lowercase().contains("%2e%2e") {
+                                    warn!(path = %req_path, "Path traversal attempt detected in request path.");
+                                    let mut response = Response::new(Body::from("403 Forbidden"));
+                                    *response.status_mut() = StatusCode::FORBIDDEN;
+                                    return Ok(response);
+                                }
+
+                                file_path_to_serve.push("index.html");
+
+                                let canon_base_path = match base_path.canonicalize() {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        error!(path = %base_path.display(), error = %e, "Failed to canonicalize static base path. Check server configuration.");
+                                        let mut response = Response::new(Body::from("500 Internal Server Error: Invalid static path configuration"));
+                                        *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                                        return Ok(response);
+                                    }
+                                };
+
+                                match file_path_to_serve.canonicalize() {
+                                    Ok(canon_file_to_serve) => {
+                                        if !canon_file_to_serve.starts_with(&canon_base_path) {
+                                            warn!(
+                                                requested_path = %file_path_to_serve.display(),
+                                                canonical_requested = %canon_file_to_serve.display(),
+                                                canonical_base = %canon_base_path.display(),
+                                                "Path traversal attempt detected."
+                                            );
+                                            let mut response = Response::new(Body::from("403 Forbidden"));
+                                            *response.status_mut() = StatusCode::FORBIDDEN;
+                                            return Ok(response);
+                                        }
+
+                                        debug!(file_path = %canon_file_to_serve.display(), "Attempting to serve canonical static file (index.html)");
+                                        match TokioFile::open(&canon_file_to_serve).await {
+                                            Ok(file) => {
+                                                let stream = FramedRead::new(file, BytesCodec::new());
+                                                let body = Body::wrap_stream(stream.map_ok(|bytes| bytes.freeze()));
+                                                let mime_type = mime_guess::from_path(&canon_file_to_serve).first_or_octet_stream();
+                                                match Response::builder()
+                                                    .status(StatusCode::OK)
+                                                    .header(hyper::header::CONTENT_TYPE, mime_type.as_ref())
+                                                    .body(body)
+                                                {
+                                                    Ok(res) => {
+                                                        info!(path = %req_path, "Successfully served static file (index.html)");
+                                                        return Ok(res);
+                                                    }
+                                                    Err(e) => {
+                                                        error!(path = %req_path, error = %e, "Error building response for static file (index.html)");
+                                                        let mut response = Response::new(Body::from("500 Internal Server Error"));
+                                                        *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                                                        return Ok(response);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!(canonical_path = %canon_file_to_serve.display(), error = %e, "Error opening canonical static file (index.html, permissions issue?)");
+                                                let mut response = Response::new(Body::from("500 Internal Server Error: Could not open file"));
+                                                *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                                                return Ok(response);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(path = %req_path, original_path = %file_path_to_serve.display(), error = %e, "Static file index.html not found or error during canonicalization");
+                                        // Fall through to A2A handler or 404 below
+                                    }
+                                }
+                            } else {
+                                // It's a GET request for a path other than "/" or "/index.html" (e.g., "/style.css")
+                                // and static_files_root IS configured. We must block this.
+                                warn!(path = %req_path, "Access to non-index static file denied.");
+                                let mut response = Response::new(Body::from(format!("403 Forbidden: Access to {} is not allowed", req_path)));
+                                *response.status_mut() = StatusCode::FORBIDDEN;
+                                return Ok(response);
+                            }
+                        }
+                        // If static_files_root is None, or if it's a GET for a non-index path,
+                        // we fall through to the A2A handler or 404 logic.
+                    }
+
+
+                    // --- A2A JSON-RPC Handling ---
+                    // If it wasn't an agent card request or a handled static file request,
+                    // pass it to the generic JSON-RPC handler.
+                    debug!(method = %req_method, path = %req_path, "Passing request to A2A JSON-RPC handler");
+                    jsonrpc_handler(
+                        req,
                             task_service_req,
                             streaming_service_req,
                             notification_service_req,

@@ -56,18 +56,9 @@ pub async fn jsonrpc_handler(
     streaming_service: Arc<StreamingService>,
     notification_service: Arc<NotificationService>,
 ) -> Result<Response<Body>, Infallible> {
-    // Check if this is a request for agent card
-    if req.uri().path() == "/.well-known/agent.json" {
-        // Create agent card with default values
-        let agent_card = create_agent_card(None, None, None, None, None);
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                serde_json::to_string(&agent_card).unwrap(),
-            ))
-            .unwrap());
-    }
+    // NOTE: Agent card handling for /.well-known/agent.json is now done
+    // by the specific server setup (e.g., in bidirectional/agent_helpers.rs)
+    // before this generic handler is called.
 
     // Extract headers first (copy what we need)
     let accepts_sse = req
