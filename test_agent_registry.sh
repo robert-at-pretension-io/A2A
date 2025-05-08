@@ -109,7 +109,7 @@ echo "Starting agent server in background with config: $CONFIG_FILE..."
 # Update config to use the test log file
 sed -i.bak "s|repl_log_file = \".*\"|repl_log_file = \"$LOG_FILE\"|" "$CONFIG_FILE"
 
-"$AGENT_BINARY" "$CONFIG_FILE" &
+"$AGENT_BINARY" "$CONFIG_FILE" < /dev/null &
 AGENT_PID=$!
 echo "Agent server started with PID: $AGENT_PID"
 
