@@ -1090,30 +1090,8 @@ pub async fn main() -> Result<()> {
 
     // Determine final mode (logic remains similar, but logging works now)
     debug!("Determining final execution mode.");
-    if config.mode.message.is_none()
-        && config.mode.remote_task.is_none()
-        && !config.mode.get_agent_card
-        && !config.mode.repl
-    {
-        // No specific mode set in config or args, default to REPL
-        if args.len() <= 1 {
-            debug!("No arguments provided and no mode set in config. Defaulting to REPL mode."); // Changed to debug
-            config.mode.repl = true;
-        } else {
-            // Args were provided, but didn't set a mode (e.g., just a config file path)
-            debug!("Arguments provided but no specific action mode requested. Defaulting to REPL mode."); // Changed to debug
-            config.mode.repl = true;
-        }
-    } else if args.len() <= 1
-        && !config.mode.repl
-        && config.mode.message.is_none()
-        && config.mode.remote_task.is_none()
-        && !config.mode.get_agent_card
-    {
-        // Handles case where only a config file was specified, and it didn't set any mode
-        debug!("Config file loaded but no specific mode set. Defaulting to REPL mode."); // Changed to debug
-        config.mode.repl = true;
-    }
+    // REMOVED the logic block that defaulted config.mode.repl = true
+    // The config loaded from the file (or the initial default) will be used directly.
     debug!(?config.mode, "Final execution mode determined.");
 
     // --- Execute based on mode ---
