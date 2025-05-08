@@ -2,6 +2,7 @@ use crate::bidirectional::bidirectional_agent::BidirectionalAgent;
 use crate::bidirectional::config::BidirectionalAgentConfig;
 use std::fs::{self, File};
 use std::io::Write;
+use crate::types::AgentCard; // For deserializing agent card
 use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use tempfile::tempdir;
@@ -9,7 +10,10 @@ use tokio::task::JoinHandle;
 use tracing::info;
 use tempfile::TempDir; // Import TempDir
 
-async fn start_test_server(config: BidirectionalAgentConfig) -> (String, JoinHandle<Result<(), anyhow::Error>>, TempDir) {
+async fn start_test_server(
+    config: BidirectionalAgentConfig,
+    enable_static_files: bool,
+) -> (String, JoinHandle<Result<(), anyhow::Error>>, Option<TempDir>) {
     // Find an available port
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
     let addr = listener.local_addr().expect("Failed to get local address");
@@ -20,11 +24,17 @@ async fn start_test_server(config: BidirectionalAgentConfig) -> (String, JoinHan
     effective_config.server.port = port;
     effective_config.server.bind_address = "127.0.0.1".to_string();
     
-    // Ensure static_files_path is set for tests that need it
-    let temp_static_dir = tempdir().unwrap();
-    let static_files_path = temp_static_dir.path().to_path_buf();
-    effective_config.server.static_files_path = Some(static_files_path.to_str().unwrap().to_string());
+    let temp_dir_holder: Option<TempDir>;
 
+    if enable_static_files {
+        let temp_static_dir = tempdir().unwrap();
+        let static_files_path = temp_static_dir.path().to_path_buf();
+        effective_config.server.static_files_path = Some(static_files_path.to_str().unwrap().to_string());
+        temp_dir_holder = Some(temp_static_dir);
+    } else {
+        effective_config.server.static_files_path = None;
+        temp_dir_holder = None;
+    }
 
     let agent = BidirectionalAgent::new(effective_config.clone()).expect("Failed to create agent for test");
     
@@ -39,8 +49,7 @@ async fn start_test_server(config: BidirectionalAgentConfig) -> (String, JoinHan
     // Give the server a moment to start. In a real scenario, you might use a more robust check.
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-
-    (server_url, server_handle, temp_static_dir) // Return the TempDir object
+    (server_url, server_handle, temp_dir_holder)
 }
 
 
@@ -50,8 +59,9 @@ async fn test_serve_index_html_root_path() {
     config.mode.repl = false; // Ensure not in REPL mode for server to run
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, temp_dir) = start_test_server(config).await;
-    let static_dir = temp_dir.path(); // Get Path from TempDir
+    let (server_url, server_handle, temp_dir_option) = start_test_server(config, true).await;
+    let temp_dir = temp_dir_option.expect("Temp directory should be created when static files are enabled");
+    let static_dir = temp_dir.path();
 
     // Create a dummy index.html
     let index_path = static_dir.join("index.html");
@@ -77,7 +87,8 @@ async fn test_serve_index_html_explicit_path() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, temp_dir) = start_test_server(config).await;
+    let (server_url, server_handle, temp_dir_option) = start_test_server(config, true).await;
+    let temp_dir = temp_dir_option.expect("Temp directory should be created when static files are enabled");
     let static_dir = temp_dir.path();
 
     let index_path = static_dir.join("index.html");
@@ -108,7 +119,7 @@ async fn test_serve_static_file_not_found_for_index() {
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
     // temp_dir will be created, but we won't put index.html in it
-    let (server_url, server_handle, _temp_dir) = start_test_server(config).await;
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, true).await;
 
     let client = reqwest::Client::new();
     // Request root, expecting index.html, which doesn't exist
@@ -131,7 +142,7 @@ async fn test_get_non_existent_static_file_falls_to_api_error() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, _temp_dir) = start_test_server(config).await;
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, true).await;
 
     let client = reqwest::Client::new();
     let res = client
@@ -158,7 +169,7 @@ async fn test_a2a_post_request_still_works() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; 
 
-    let (server_url, server_handle, _temp_dir) = start_test_server(config).await;
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, true).await;
 
     let client = reqwest::Client::new(); // Use async client
     let a2a_payload = serde_json::json!({
@@ -204,12 +215,12 @@ async fn test_serve_other_static_file() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, temp_dir) = start_test_server(config).await;
+    let (server_url, server_handle, temp_dir_option) = start_test_server(config, true).await;
+    let temp_dir = temp_dir_option.expect("Temp directory should be created when static files are enabled");
     let static_dir = temp_dir.path();
 
     // Create a dummy style.css
     let css_path = static_dir.join("style.css");
-    // fs::create_dir_all(static_dir.join("css")).unwrap_or_default(); // Not needed if style.css is at root of static_dir
     let mut file = File::create(&css_path).expect("Failed to create test style.css");
     file.write_all(b"body { color: blue; }").unwrap();
 
@@ -237,8 +248,7 @@ async fn test_path_traversal_prevention() {
     config.mode.repl = false;
     config.registry.registry_only_mode = true; // Use placeholder LLM
 
-    let (server_url, server_handle, _temp_dir) = start_test_server(config).await;
-    // let static_dir = temp_dir.path(); // Not directly used for creating the secret file
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, true).await;
 
     // Create a dummy file in a *separate* temporary directory
     let secret_temp_dir = tempdir().unwrap();
@@ -293,9 +303,133 @@ async fn test_path_traversal_prevention() {
     // Then `canon_file_path.starts_with(canon_base_path)` (`/etc/passwd`.starts_with(`/tmp/somerandomdir`)) is false.
     // This should lead to a 403.
 
-    // For now, just assert that the access was denied (either 404 or 403)
-    // This test's purpose is to ensure path traversal doesn't succeed in accessing files outside the root
-    assert!(status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND);
+    // This test's purpose is to ensure path traversal doesn't succeed in accessing files outside the root.
+    // The specific path traversal attempt `/%2e%2e/...` should be caught by the initial check
+    // `req_path.to_lowercase().contains("%2e%2e")` in `agent_helpers.rs`, resulting in a 403.
+    assert_eq!(status, reqwest::StatusCode::FORBIDDEN);
+    
+    server_handle.abort();
+}
+
+// --- Tests for Static Files Disabled ---
+
+#[tokio::test]
+async fn test_get_root_when_static_disabled_returns_404() {
+    let mut config = BidirectionalAgentConfig::default();
+    config.mode.repl = false;
+    config.registry.registry_only_mode = true;
+
+    // Start server with static files disabled
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, false).await;
+
+    let client = reqwest::Client::new();
+    let res = client.get(&server_url).send().await.unwrap();
+
+    assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
+    server_handle.abort();
+}
+
+#[tokio::test]
+async fn test_get_index_html_when_static_disabled_returns_404() {
+    let mut config = BidirectionalAgentConfig::default();
+    config.mode.repl = false;
+    config.registry.registry_only_mode = true;
+
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, false).await;
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(format!("{}/index.html", server_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
+    server_handle.abort();
+}
+
+#[tokio::test]
+async fn test_get_other_file_when_static_disabled_returns_404() {
+    let mut config = BidirectionalAgentConfig::default();
+    config.mode.repl = false;
+    config.registry.registry_only_mode = true;
+
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, false).await;
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(format!("{}/style.css", server_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
+    server_handle.abort();
+}
+
+#[tokio::test]
+async fn test_get_agent_json_when_static_disabled_works() {
+    let mut config = BidirectionalAgentConfig::default();
+    config.mode.repl = false;
+    config.registry.registry_only_mode = true; // Even in registry_only_mode, agent.json should be served
+
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, false).await;
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(format!("{}/.well-known/agent.json", server_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        res.headers().get(reqwest::header::CONTENT_TYPE).unwrap(),
+        "application/json"
+    );
+    // Try to parse as AgentCard to ensure it's valid
+    let card: Result<AgentCard, _> = res.json().await;
+    assert!(card.is_ok(), "Response should be a valid AgentCard. Error: {:?}", card.err());
+    
+    // Verify some basic fields if the card was parsed
+    if let Ok(parsed_card) = card {
+        assert!(!parsed_card.name.is_empty());
+        assert!(!parsed_card.url.is_empty());
+    }
+
+    server_handle.abort();
+}
+
+// --- Additional Tests for Static Files Enabled ---
+
+#[tokio::test]
+async fn test_get_agent_json_when_static_enabled_works() {
+    let mut config = BidirectionalAgentConfig::default();
+    config.mode.repl = false;
+    config.registry.registry_only_mode = true;
+
+    // Start server with static files enabled (even if no files are present)
+    let (server_url, server_handle, _temp_dir_option) = start_test_server(config, true).await;
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(format!("{}/.well-known/agent.json", server_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        res.headers().get(reqwest::header::CONTENT_TYPE).unwrap(),
+        "application/json"
+    );
+    let card: Result<AgentCard, _> = res.json().await;
+    assert!(card.is_ok(), "Response should be a valid AgentCard. Error: {:?}", card.err());
+
+    if let Ok(parsed_card) = card {
+        assert!(!parsed_card.name.is_empty());
+        assert!(!parsed_card.url.is_empty());
+    }
     
     server_handle.abort();
 }
