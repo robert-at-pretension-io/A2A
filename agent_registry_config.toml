@@ -18,7 +18,7 @@ registry_path = "data/agent_registry.json"
 # Mode configuration
 [mode]
 # Enable REPL by default
-repl = true
+repl = false
 # Auto-start server
 auto_listen = true
 # Log file for REPL interactions
