@@ -83,7 +83,7 @@ fi
 
 # Build the agent
 echo "Building bidirectional agent..."
-RUSTFLAGS="-A warnings" cargo build --bin bidirectional-agent || { echo "Build failed, exiting."; exit 1; }
+RUSTFLAGS="-A warnings" cargo build --quiet --bin bidirectional-agent  || { echo "Build failed, exiting."; exit 1; }
 
 # Directory where the a2a-test-suite is located
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
