@@ -36,44 +36,39 @@ pub fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig
     // Load certificate chain
     let cert_file = File::open(cert_path)
         .map_err(|e| anyhow!("Failed to open certificate file: {}", e))?;
-    let cert_reader = BufReader::new(cert_file);
-    let mut cert_chain = Vec::new();
+    let mut cert_reader = BufReader::new(cert_file);
+    let cert_data = certs(&mut cert_reader)
+        .map_err(|e| anyhow!("Failed to parse certificate: {}", e))?;
     
-    // Read certificates one by one from the PEM file
-    for cert_result in certs(cert_reader) {
-        match cert_result {
-            Ok(cert) => cert_chain.push(cert),
-            Err(e) => return Err(anyhow!("Failed to parse certificate: {}", e)),
-        }
-    }
-    
-    if cert_chain.is_empty() {
+    if cert_data.is_empty() {
         return Err(anyhow!("No certificates found in provided certificate file"));
     }
+    
+    // Convert to rustls Certificate objects
+    let cert_chain: Vec<rustls::Certificate> = cert_data
+        .into_iter()
+        .map(rustls::Certificate)
+        .collect();
     
     // Load private key
     let key_file = File::open(key_path)
         .map_err(|e| anyhow!("Failed to open private key file: {}", e))?;
-    let key_reader = BufReader::new(key_file);
-    let mut keys = Vec::new();
+    let mut key_reader = BufReader::new(key_file);
+    let mut key_data = pkcs8_private_keys(&mut key_reader)
+        .map_err(|e| anyhow!("Failed to parse private key: {}", e))?;
     
-    // Read private keys one by one from the PEM file
-    for key_result in pkcs8_private_keys(key_reader) {
-        match key_result {
-            Ok(key) => keys.push(key),
-            Err(e) => return Err(anyhow!("Failed to parse private key: {}", e)),
-        }
-    }
-    
-    if keys.is_empty() {
+    if key_data.is_empty() {
         return Err(anyhow!("No private keys found in provided key file"));
     }
+    
+    // Convert to rustls PrivateKey
+    let private_key = rustls::PrivateKey(key_data.remove(0));
     
     // Create TLS config
     let config = ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(cert_chain, keys.remove(0))
+        .with_single_cert(cert_chain, private_key)
         .map_err(|e| anyhow!("Failed to create TLS server config: {}", e))?;
     
     Ok(config)
@@ -251,7 +246,7 @@ impl hyper::server::accept::Accept for TlsHyperAcceptor {
     fn poll_accept(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<Self::Conn, Self::Error>> {
+    ) -> std::task::Poll<Option<Result<Self::Conn, Self::Error>>> {
         use std::future::Future;
         use std::pin::Pin;
         use std::task::{Context, Poll};
@@ -272,7 +267,10 @@ impl hyper::server::accept::Accept for TlsHyperAcceptor {
             Ok(tls_stream)
         });
         
-        // Poll the future
-        Pin::new(&mut fut).poll(cx)
+        // Poll the future and wrap in Some
+        match Pin::new(&mut fut).poll(cx) {
+            Poll::Ready(result) => Poll::Ready(Some(result)),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
