@@ -1094,6 +1094,10 @@ pub async fn main() -> Result<()> {
     // The config loaded from the file (or the initial default) will be used directly.
     debug!(?config.mode, "Final execution mode determined.");
 
+    // ADD EXTRA LOGGING HERE
+    info!(final_repl_mode = %config.mode.repl, "Checking final REPL mode before execution block.");
+    eprintln!("[PRE-LOG] Final config.mode.repl before execution: {}", config.mode.repl); // Use eprintln for visibility
+
     // --- Execute based on mode ---
     if config.mode.repl {
         info!("Starting agent in REPL mode."); // Keep info for mode start
@@ -1164,6 +1168,7 @@ pub async fn main() -> Result<()> {
     else {
         info!("Starting agent in default server mode (no REPL or specific action requested)."); // Keep info for mode start
         let agent = BidirectionalAgent::new(config)?; // Logs internally
+        info!("Starting agent in non-REPL mode (server or other action)."); // Add log here too
         agent.run().await // Logs internally
     }
 }
