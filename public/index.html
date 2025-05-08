@@ -6,102 +6,108 @@
     <title>A2A Agent Nexus</title> <!-- Changed Title -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@400;700&display=swap" rel="stylesheet"> <!-- Simplified weights -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Roboto:wght@400;700&display=swap" rel="stylesheet"> <!-- Only bold Orbitron -->
     <style>
         :root {
-            --primary-color: #00bcd4; /* Slightly softer cyan */
-            --secondary-color: #8e24aa; /* Slightly softer purple */
-            --background-color: #1a1a2e; /* Slightly lighter dark blue */
-            --card-background: rgba(255, 255, 255, 0.08); /* Slightly more opaque card */
-            --text-color: #f0f0f0; /* Brighter text */
+            --primary-color: #00acc1; /* Slightly darker cyan */
+            --secondary-color: #7b1fa2; /* Slightly darker purple */
+            --background-color: #1f1f30; /* Even lighter dark blue */
+            --card-background: rgba(255, 255, 255, 0.06); /* Slightly less opaque card */
+            --text-color: #f5f5f5; /* Even brighter text */
             --header-color: #ffffff;
-            --border-color: rgba(0, 188, 212, 0.4); /* Softer border */
-            --code-background: #2c2c3e; /* Lighter code background */
-            --code-text: #d0d0ff; /* Brighter code text */
+            --border-color: rgba(0, 172, 193, 0.35); /* Slightly less transparent border */
+            --code-background: #28283a; /* Slightly lighter code background */
+            --code-text: #e0e0ff; /* Brighter code text */
             --button-background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
-            --button-text: #ffffff; /* White button text for better contrast */
-            --input-background: rgba(255, 255, 255, 0.1);
+            --button-text: #ffffff;
+            --input-background: rgba(255, 255, 255, 0.08); /* Less transparent input */
             --input-border: var(--border-color);
-            --error-color: #ff6b6b; /* Softer red */
+            --error-color: #ef5350; /* Standard Material Design red */
         }
 
         body {
             font-family: 'Roboto', sans-serif;
-            font-size: 16px; /* Slightly larger base font size */
-            line-height: 1.7; /* Increased line height */
+            font-size: 16px;
+            font-weight: 400; /* Ensure base weight is normal */
+            line-height: 1.75; /* Even more line height */
             margin: 0;
             padding: 0;
             background-color: var(--background-color);
             color: var(--text-color);
-            max-width: 900px;
+            max-width: 850px; /* Slightly narrower for better line length */
             margin: 0 auto;
-            padding: 30px 20px;
-            /* Simplified background */
-            background-image: radial-gradient(circle at top left, rgba(0, 188, 212, 0.05), transparent 50%),
-                              radial-gradient(circle at bottom right, rgba(142, 36, 170, 0.05), transparent 50%);
+            padding: 40px 20px; /* More vertical padding */
+            /* Very subtle background gradient */
+            background-image: radial-gradient(circle at 10% 10%, rgba(0, 172, 193, 0.03), transparent 60%),
+                              radial-gradient(circle at 90% 90%, rgba(123, 31, 162, 0.03), transparent 60%);
             background-attachment: fixed;
         }
         header {
-            margin-bottom: 40px;
+            margin-bottom: 50px; /* More space after header */
             text-align: center;
             border-bottom: 1px solid var(--border-color);
-            padding-bottom: 20px;
+            padding-bottom: 25px; /* More padding */
         }
         header h1 {
             font-family: 'Orbitron', sans-serif;
-            margin: 0 0 10px 0;
-            font-size: 2.6rem; /* Slightly smaller */
-            font-weight: 700;
+            margin: 0 0 15px 0; /* More space below h1 */
+            font-size: 2.5rem; /* Slightly smaller */
+            font-weight: 700; /* Explicitly bold */
             color: var(--header-color);
-            letter-spacing: 0.5px; /* Reduced spacing */
-            text-shadow: none; /* Removed text shadow for legibility */
+            letter-spacing: 0.5px;
+            text-shadow: none;
         }
-        header p { /* Style the tagline */
+        header p {
              font-size: 1.1rem;
              color: var(--primary-color);
+             margin-top: 0; /* Ensure no extra top margin */
         }
         .badge {
             display: inline-block;
-            padding: 5px 12px; /* Slightly more padding */
+            padding: 5px 12px;
             border-radius: 4px;
             background: var(--primary-color);
-            color: var(--background-color); /* Keep dark text on light badge */
-            font-size: 12px; /* Slightly larger */
-            font-weight: bold;
+            color: var(--background-color);
+            font-size: 12px;
+            font-weight: 700; /* Bold */
             margin-right: 10px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.8px; /* More spacing */
         }
         .card {
             background: var(--card-background);
-            border-radius: 8px; /* Less rounded */
-            padding: 25px; /* Slightly less padding */
-            margin-bottom: 30px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); /* Softer shadow */
+            border-radius: 6px; /* Slightly less rounded */
+            padding: 30px; /* More padding */
+            margin-bottom: 35px; /* More space between cards */
+            box-shadow: 0 1px 5px rgba(0, 0, 0, 0.25); /* Subtle shadow */
             border: 1px solid var(--border-color);
-            backdrop-filter: none; /* Removed blur for legibility */
         }
         h2 {
             margin-top: 0;
-            margin-bottom: 20px; /* More space below h2 */
+            margin-bottom: 25px; /* More space below h2 */
             font-family: 'Orbitron', sans-serif;
-            font-size: 1.5rem; /* Slightly smaller */
+            font-size: 1.4rem; /* Slightly smaller */
             color: var(--primary-color);
             border-bottom: 1px solid var(--border-color);
-            padding-bottom: 10px;
-            font-weight: 400; /* Less bold */
+            padding-bottom: 12px; /* More padding */
+            font-weight: 700; /* Bold */
+            letter-spacing: 0.5px;
+        }
+        p {
+            margin-top: 0;
+            margin-bottom: 1.2em; /* More space below paragraphs */
         }
         .controls {
-            margin: 25px 0;
+            margin: 30px 0; /* More vertical margin */
             display: flex;
-            gap: 15px; /* More gap */
+            gap: 15px;
             align-items: center;
         }
         input[type="text"] {
             flex-grow: 1;
-            padding: 12px 15px;
+            padding: 14px 18px; /* More padding */
             border: 1px solid var(--input-border);
-            border-radius: 4px; /* Less rounded */
+            border-radius: 4px;
             box-sizing: border-box;
             background-color: var(--input-background);
             color: var(--text-color);
@@ -111,23 +117,23 @@
         input[type="text"]:focus {
             outline: none;
             border-color: var(--primary-color);
-            box-shadow: 0 0 5px rgba(0, 188, 212, 0.4); /* Softer focus shadow */
+            box-shadow: 0 0 6px rgba(0, 172, 193, 0.5); /* Adjusted focus shadow */
         }
         button {
             background: var(--button-background);
             color: var(--button-text);
-            padding: 12px 20px;
+            padding: 14px 22px; /* More padding */
             border: none;
-            border-radius: 4px; /* Less rounded */
+            border-radius: 4px;
             cursor: pointer;
             font-size: 1rem;
-            font-weight: bold;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            font-weight: 700; /* Bold */
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
             white-space: nowrap;
         }
         button:hover {
-            transform: translateY(-1px); /* Less movement */
-            box-shadow: 0 2px 6px rgba(0, 188, 212, 0.3); /* Softer hover shadow */
+            transform: translateY(-1px);
+            box-shadow: 0 3px 8px rgba(0, 172, 193, 0.35); /* Adjusted hover shadow */
         }
         pre { /* Style for output area */
             background-color: var(--code-background);
@@ -139,64 +145,68 @@
             border: 1px solid var(--border-color);
             color: var(--code-text);
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 0.95rem; /* Slightly smaller code font */
-            line-height: 1.6; /* More line spacing */
+            font-size: 0.95rem;
+            line-height: 1.65; /* Slightly more line spacing */
+            margin-top: 10px; /* Add space above pre */
         }
         .error {
             color: var(--error-color);
-            font-weight: bold;
-            border-left: 3px solid var(--error-color);
-            padding-left: 10px;
+            font-weight: 700; /* Bold */
+            border-left: 4px solid var(--error-color); /* Thicker border */
+            padding-left: 15px; /* More padding */
+            background-color: rgba(239, 83, 80, 0.1); /* Slight background tint */
         }
         .api-examples {
             display: flex;
             flex-direction: column;
-            gap: 30px; /* More gap */
+            gap: 35px; /* More gap */
         }
         .example h3 {
             margin-top: 0;
-            margin-bottom: 15px; /* More space */
-            font-size: 1.1rem; /* Slightly smaller */
+            margin-bottom: 15px;
+            font-size: 1.1rem;
             color: var(--primary-color);
-            font-family: 'Roboto', sans-serif; /* Use Roboto for example headers */
-            font-weight: 700;
+            font-family: 'Roboto', sans-serif;
+            font-weight: 700; /* Bold */
         }
         .example p {
             margin-top: 0;
-            margin-bottom: 10px;
-            color: #cccccc; /* Slightly dimmer paragraph text */
+            margin-bottom: 15px; /* More space */
+            color: #dddddd; /* Brighter paragraph text */
         }
         .code { /* Style for inline code examples */
             background-color: var(--code-background);
             color: var(--code-text);
-            padding: 15px;
+            padding: 18px; /* More padding */
             border-radius: 4px;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 0.9rem; /* Smaller inline code */
+            font-size: 0.9rem;
             border: 1px solid var(--border-color);
-            line-height: 1.5;
+            line-height: 1.6; /* More line spacing */
+            display: block; /* Ensure it takes full width */
+            margin-top: 5px; /* Space below paragraph */
         }
         ul {
-            padding-left: 0; /* Remove default padding */
-            margin-bottom: 15px;
+            padding-left: 0;
+            margin-bottom: 1.5em; /* More space below list */
             list-style: none;
         }
         li {
-            margin-bottom: 12px; /* More space */
+            margin-bottom: 14px; /* More space */
             position: relative;
-            padding-left: 25px; /* More space for icon */
+            padding-left: 30px; /* More space for icon */
         }
         li::before {
-            content: '⚙️'; /* Gear icon */
+            content: '⚙️';
             position: absolute;
             left: 0;
-            top: 2px; /* Align icon better */
+            top: 1px; /* Re-align icon */
             color: var(--primary-color);
-            font-size: 1.1rem;
+            font-size: 1.2rem; /* Slightly larger icon */
         }
-        li strong { /* Style the bold text in list items */
+        li strong {
             color: var(--header-color);
-            font-weight: 700;
+            font-weight: 700; /* Bold */
         }
     </style>
 </head>
