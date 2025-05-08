@@ -6,37 +6,39 @@
     <title>A2A Agent Nexus</title> <!-- Changed Title -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400..900&family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@400;700&display=swap" rel="stylesheet"> <!-- Simplified weights -->
     <style>
         :root {
-            --primary-color: #00e5ff; /* Bright cyan */
-            --secondary-color: #9e00ff; /* Purple */
-            --background-color: #12121f; /* Dark blue/purple */
-            --card-background: rgba(255, 255, 255, 0.05);
-            --text-color: #e0e0e0;
+            --primary-color: #00bcd4; /* Slightly softer cyan */
+            --secondary-color: #8e24aa; /* Slightly softer purple */
+            --background-color: #1a1a2e; /* Slightly lighter dark blue */
+            --card-background: rgba(255, 255, 255, 0.08); /* Slightly more opaque card */
+            --text-color: #f0f0f0; /* Brighter text */
             --header-color: #ffffff;
-            --border-color: rgba(0, 229, 255, 0.3);
-            --code-background: #1e1e2f;
-            --code-text: #c0c0ff;
+            --border-color: rgba(0, 188, 212, 0.4); /* Softer border */
+            --code-background: #2c2c3e; /* Lighter code background */
+            --code-text: #d0d0ff; /* Brighter code text */
             --button-background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
-            --button-text: #12121f;
+            --button-text: #ffffff; /* White button text for better contrast */
             --input-background: rgba(255, 255, 255, 0.1);
             --input-border: var(--border-color);
-            --error-color: #ff4d4d;
+            --error-color: #ff6b6b; /* Softer red */
         }
 
         body {
             font-family: 'Roboto', sans-serif;
-            line-height: 1.7;
+            font-size: 16px; /* Slightly larger base font size */
+            line-height: 1.7; /* Increased line height */
             margin: 0;
             padding: 0;
             background-color: var(--background-color);
             color: var(--text-color);
-            max-width: 900px; /* Slightly wider */
+            max-width: 900px;
             margin: 0 auto;
             padding: 30px 20px;
-            background-image: radial-gradient(circle at top left, rgba(0, 229, 255, 0.1), transparent 40%),
-                              radial-gradient(circle at bottom right, rgba(158, 0, 255, 0.1), transparent 40%);
+            /* Simplified background */
+            background-image: radial-gradient(circle at top left, rgba(0, 188, 212, 0.05), transparent 50%),
+                              radial-gradient(circle at bottom right, rgba(142, 36, 170, 0.05), transparent 50%);
             background-attachment: fixed;
         }
         header {
@@ -48,53 +50,58 @@
         header h1 {
             font-family: 'Orbitron', sans-serif;
             margin: 0 0 10px 0;
-            font-size: 2.8rem; /* Larger */
+            font-size: 2.6rem; /* Slightly smaller */
             font-weight: 700;
             color: var(--header-color);
-            letter-spacing: 1px;
-            text-shadow: 0 0 5px var(--primary-color), 0 0 10px var(--secondary-color);
+            letter-spacing: 0.5px; /* Reduced spacing */
+            text-shadow: none; /* Removed text shadow for legibility */
+        }
+        header p { /* Style the tagline */
+             font-size: 1.1rem;
+             color: var(--primary-color);
         }
         .badge {
             display: inline-block;
-            padding: 4px 12px;
+            padding: 5px 12px; /* Slightly more padding */
             border-radius: 4px;
             background: var(--primary-color);
-            color: var(--background-color);
-            font-size: 11px;
+            color: var(--background-color); /* Keep dark text on light badge */
+            font-size: 12px; /* Slightly larger */
             font-weight: bold;
-            margin-right: 8px;
+            margin-right: 10px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
         .card {
             background: var(--card-background);
-            border-radius: 12px; /* More rounded */
-            padding: 30px;
+            border-radius: 8px; /* Less rounded */
+            padding: 25px; /* Slightly less padding */
             margin-bottom: 30px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); /* Softer shadow */
             border: 1px solid var(--border-color);
-            backdrop-filter: blur(5px); /* Frosted glass effect */
+            backdrop-filter: none; /* Removed blur for legibility */
         }
         h2 {
             margin-top: 0;
-            margin-bottom: 15px;
+            margin-bottom: 20px; /* More space below h2 */
             font-family: 'Orbitron', sans-serif;
-            font-size: 1.6rem;
+            font-size: 1.5rem; /* Slightly smaller */
             color: var(--primary-color);
             border-bottom: 1px solid var(--border-color);
-            padding-bottom: 8px;
+            padding-bottom: 10px;
+            font-weight: 400; /* Less bold */
         }
         .controls {
             margin: 25px 0;
-            display: flex; /* Align input and button */
-            gap: 10px;
+            display: flex;
+            gap: 15px; /* More gap */
             align-items: center;
         }
         input[type="text"] {
-            flex-grow: 1; /* Take available space */
+            flex-grow: 1;
             padding: 12px 15px;
             border: 1px solid var(--input-border);
-            border-radius: 6px;
+            border-radius: 4px; /* Less rounded */
             box-sizing: border-box;
             background-color: var(--input-background);
             color: var(--text-color);
@@ -104,83 +111,92 @@
         input[type="text"]:focus {
             outline: none;
             border-color: var(--primary-color);
-            box-shadow: 0 0 8px rgba(0, 229, 255, 0.5);
+            box-shadow: 0 0 5px rgba(0, 188, 212, 0.4); /* Softer focus shadow */
         }
         button {
             background: var(--button-background);
             color: var(--button-text);
             padding: 12px 20px;
             border: none;
-            border-radius: 6px;
+            border-radius: 4px; /* Less rounded */
             cursor: pointer;
             font-size: 1rem;
             font-weight: bold;
             transition: transform 0.2s ease, box-shadow 0.2s ease;
-            white-space: nowrap; /* Prevent button text wrapping */
+            white-space: nowrap;
         }
         button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 10px rgba(0, 229, 255, 0.4);
+            transform: translateY(-1px); /* Less movement */
+            box-shadow: 0 2px 6px rgba(0, 188, 212, 0.3); /* Softer hover shadow */
         }
-        pre {
+        pre { /* Style for output area */
             background-color: var(--code-background);
             padding: 20px;
-            border-radius: 8px;
+            border-radius: 4px;
             overflow-x: auto;
             white-space: pre-wrap;
             word-wrap: break-word;
             border: 1px solid var(--border-color);
             color: var(--code-text);
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 14px;
-            line-height: 1.5;
+            font-size: 0.95rem; /* Slightly smaller code font */
+            line-height: 1.6; /* More line spacing */
         }
         .error {
             color: var(--error-color);
             font-weight: bold;
+            border-left: 3px solid var(--error-color);
+            padding-left: 10px;
         }
         .api-examples {
             display: flex;
             flex-direction: column;
-            gap: 25px;
+            gap: 30px; /* More gap */
         }
         .example h3 {
             margin-top: 0;
-            margin-bottom: 10px;
-            font-size: 1.2rem;
+            margin-bottom: 15px; /* More space */
+            font-size: 1.1rem; /* Slightly smaller */
             color: var(--primary-color);
-            font-family: 'Orbitron', sans-serif;
-            font-weight: 500;
+            font-family: 'Roboto', sans-serif; /* Use Roboto for example headers */
+            font-weight: 700;
         }
         .example p {
             margin-top: 0;
             margin-bottom: 10px;
+            color: #cccccc; /* Slightly dimmer paragraph text */
         }
         .code { /* Style for inline code examples */
             background-color: var(--code-background);
             color: var(--code-text);
             padding: 15px;
-            border-radius: 8px;
+            border-radius: 4px;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 14px;
+            font-size: 0.9rem; /* Smaller inline code */
             border: 1px solid var(--border-color);
+            line-height: 1.5;
         }
         ul {
-            padding-left: 25px;
+            padding-left: 0; /* Remove default padding */
             margin-bottom: 15px;
-            list-style: none; /* Remove default bullets */
+            list-style: none;
         }
         li {
-            margin-bottom: 10px;
+            margin-bottom: 12px; /* More space */
             position: relative;
-            padding-left: 20px; /* Space for custom bullet */
+            padding-left: 25px; /* More space for icon */
         }
-        li::before { /* Custom bullet */
-            content: '»';
+        li::before {
+            content: '⚙️'; /* Gear icon */
             position: absolute;
             left: 0;
+            top: 2px; /* Align icon better */
             color: var(--primary-color);
-            font-weight: bold;
+            font-size: 1.1rem;
+        }
+        li strong { /* Style the bold text in list items */
+            color: var(--header-color);
+            font-weight: 700;
         }
     </style>
 </head>
