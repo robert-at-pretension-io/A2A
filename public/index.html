@@ -213,6 +213,15 @@
             color: var(--header-color);
             font-weight: 700;
         }
+        a { /* Link styling */
+            color: var(--primary-color);
+            text-decoration: none; /* Remove underline */
+            transition: color 0.2s ease, text-decoration 0.2s ease;
+        }
+        a:hover {
+            color: var(--secondary-color); /* Change color on hover */
+            text-decoration: underline; /* Add underline on hover */
+        }
     </style>
 </head>
 <body>
