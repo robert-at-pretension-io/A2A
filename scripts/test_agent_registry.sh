@@ -61,7 +61,7 @@ send_a2a_request() {
 # --- Main Script ---
 
 echo "--- Building Agent ---"
-cargo build
+cargo build > /dev/null 2>&1 # Suppress build output
 if [ ! -f "$AGENT_BINARY" ]; then
     echo "ERROR: Agent binary not found at '$AGENT_BINARY'. Build failed."
     exit 1
@@ -105,17 +105,19 @@ echo "--- Testing Agent Registration ---"
 # 1. Register Agent 1
 RESPONSE1=$(send_a2a_request "Register Agent 1" "Register agent at $AGENT1_URL")
 echo "Response 1: $RESPONSE1"
-# Basic check: Ensure it's a valid JSON-RPC response with a result and contains the URL
+# Basic check: Ensure it's a valid JSON-RPC response with a result and the artifact text contains the URL
 echo "$RESPONSE1" | jq -e '.result.id' > /dev/null
-echo "$RESPONSE1" | jq -e '.result.status.message.parts[0].text | contains("'$AGENT1_URL'")' > /dev/null
-echo "Agent 1 registration request sent successfully (URL found in response)."
+# Check the artifact text, remove outer quotes if present, then check for URL containment
+echo "$RESPONSE1" | jq -e '.result.artifacts[0].parts[0].text | gsub("^\"|\"$"; "") | contains("'$AGENT1_URL'")' > /dev/null
+echo "Agent 1 registration request sent successfully (URL found in artifact response)."
 
 # 2. Register Agent 2
 RESPONSE2=$(send_a2a_request "Register Agent 2" "Add this agent: $AGENT2_URL")
 echo "Response 2: $RESPONSE2"
 echo "$RESPONSE2" | jq -e '.result.id' > /dev/null
-echo "$RESPONSE2" | jq -e '.result.status.message.parts[0].text | contains("'$AGENT2_URL'")' > /dev/null
-echo "Agent 2 registration request sent successfully (URL found in response)."
+# Check the artifact text, remove outer quotes if present, then check for URL containment
+echo "$RESPONSE2" | jq -e '.result.artifacts[0].parts[0].text | gsub("^\"|\"$"; "") | contains("'$AGENT2_URL'")' > /dev/null
+echo "Agent 2 registration request sent successfully (URL found in artifact response)."
 
 echo "--- Testing Agent Listing ---"
 
