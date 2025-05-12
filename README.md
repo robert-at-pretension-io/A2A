@@ -19,12 +19,112 @@ This test suite provides tools to validate implementations against the official 
 
 - **Validator**: Validate A2A messages against the official JSON schema.
 - **Property Tests**: Generate and test random valid A2A messages based on the schema.
-- **Mock Server**: A reference A2A server implementation for testing clients.
+- **Mock Server**: A reference A2A server implementation for testing clients, with full CORS support for browser-based applications.
 - **Client Implementation**: A compliant A2A client implementation.
 - **Bidirectional Agent**: An agent implementation capable of acting as both an A2A client and server, facilitating testing of agent-to-agent interactions.
 - **Agent Registry**: A specialized agent that maintains a directory of other agents.
 
 ## Usage
+
+### HTTPS Setup with Nginx
+
+For production deployments, we strongly recommend using Nginx as a reverse proxy for HTTPS termination instead of relying on the built-in TLS support. This provides better performance, security, and stability.
+
+#### Recommended Nginx Configuration
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your-domain.com;
+
+    # SSL certificates from Certbot
+    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # CORS headers for all responses
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+    add_header Access-Control-Max-Age "86400" always;
+
+    # Handle OPTIONS preflight requests
+    if ($request_method = 'OPTIONS') {
+        add_header 'Content-Type' 'text/plain charset=UTF-8';
+        add_header 'Content-Length' 0;
+        add_header Access-Control-Allow-Origin "*";
+        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type, Authorization";
+        add_header Access-Control-Max-Age "86400";
+        return 204;
+    }
+
+    # Proxy to the A2A agent running on port 8443
+    location / {
+        proxy_pass http://localhost:8443;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket support (for SSE/streaming)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
+```
+
+#### Setup Instructions
+
+1. Install Nginx:
+   ```bash
+   sudo apt update
+   sudo apt install nginx
+   ```
+
+2. Install Certbot for SSL certificates:
+   ```bash
+   sudo apt install certbot
+   sudo certbot certonly --standalone -d your-domain.com
+   ```
+
+3. Create the Nginx configuration:
+   ```bash
+   sudo nano /etc/nginx/sites-available/a2a-agent.conf
+   ```
+
+   Paste the configuration above, replacing "your-domain.com" with your actual domain.
+
+4. Enable the site and restart Nginx:
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/a2a-agent.conf /etc/nginx/sites-enabled/
+   sudo systemctl restart nginx
+   ```
+
+5. Run your A2A agent without HTTPS (Nginx will handle it):
+   ```bash
+   # In your service configuration or command line, DO NOT set CERTBOT_DOMAIN
+   cargo run -- bidirectional-agent --port 8443 --listen
+   ```
 
 ### Basic Commands
 

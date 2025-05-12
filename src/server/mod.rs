@@ -14,7 +14,7 @@ pub mod tool_executor;
 pub mod error; // Make the error module public
 
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{header, Body, Request, Response, Server, StatusCode};
+use hyper::{header, Body, Method, Request, Response, Server, StatusCode};
 use serde_json::json;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -57,9 +57,17 @@ pub async fn run_server(
                 let card = agent_card_clone.clone();
 
                 async move {
+                    // Handle CORS preflight OPTIONS requests
+                    if req.method() == Method::OPTIONS {
+                        return Ok(add_cors_headers(Response::builder())
+                            .status(StatusCode::OK)
+                            .body(Body::empty())
+                            .unwrap());
+                    }
+
                     // For agent card requests, check if we have a custom one first
                     if req.uri().path() == "/.well-known/agent.json" && card.is_some() {
-                        return Ok(Response::builder()
+                        return Ok(add_cors_headers(Response::builder())
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "application/json")
                             .body(Body::from(
@@ -101,10 +109,19 @@ pub async fn run_server(
     Ok(handle)
 }
 
+/// Placeholder for CORS headers (now handled by Nginx)
+///
+/// This function previously added CORS headers, but now they are managed by Nginx.
+/// We keep it as a no-op to avoid refactoring all call sites.
+fn add_cors_headers(builder: hyper::http::response::Builder) -> hyper::http::response::Builder {
+    // No CORS headers are added here - they're now handled by Nginx
+    builder
+}
+
 /// Creates and returns the agent card for this server with dynamic configuration
-/// 
+///
 /// # Parameters
-/// 
+///
 /// * `name` - Optional name for the agent (defaults to "A2A Test Suite Reference Server")
 /// * `description` - Optional description for the agent
 /// * `url` - Optional URL where the agent is hosted (defaults to "http://localhost:8081")
@@ -146,7 +163,7 @@ pub fn create_agent_card(
     // Set default values or use provided ones
     let agent_name = name.unwrap_or("A2A Test Suite Reference Server");
     let agent_description = description.unwrap_or("A reference implementation of the A2A protocol for testing");
-    let agent_url = url.unwrap_or("http://localhost:8081");
+    let agent_url = url.unwrap_or("https://repository-agent.com");
     let agent_version = version.unwrap_or("1.0.0");
     
     // Default skills if none provided

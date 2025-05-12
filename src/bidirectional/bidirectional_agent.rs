@@ -690,12 +690,17 @@ impl BidirectionalAgent {
     // REMOVED clone_for_logging function
 
     /// Run the agent server
+    ///
+    /// Note: Direct HTTPS support has been disabled in favor of using Nginx as a reverse proxy.
+    /// See README.md for details on the recommended HTTPS setup with Nginx.
     #[instrument(skip(self), fields(agent_id = %self.agent_id, port = %self.port, bind_address = %self.bind_address))]
     pub async fn run(&self) -> Result<()> {
         // Check if we should use HTTPS or HTTP
         if let Ok(domain) = std::env::var("CERTBOT_DOMAIN") {
-            // If CERTBOT_DOMAIN is set, try to use HTTPS with that domain's certificates
-            info!("CERTBOT_DOMAIN environment variable found: {}. Attempting to use HTTPS.", domain);
+            // Warning about CERTBOT_DOMAIN still being used
+            info!("CERTBOT_DOMAIN environment variable found: {}. However, direct HTTPS is disabled.", domain);
+            info!("For production deployments, use Nginx as a reverse proxy for HTTPS (see README.md).");
+            // Call the https_support module which now forwards to HTTP with informational messages
             super::https_support::run_server_with_https(self, &domain).await
         } else {
             // Default to HTTP

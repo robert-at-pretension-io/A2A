@@ -8,3 +8,5 @@ mod repositories;
 mod services;
 #[cfg(test)]
 mod tool_executor_tests;
+#[cfg(test)]
+mod cors_test;

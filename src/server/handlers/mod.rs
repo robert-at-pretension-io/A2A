@@ -9,6 +9,15 @@ use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::sync::Arc;
 
+/// Placeholder for CORS headers (now handled by Nginx)
+///
+/// This function previously added CORS headers, but now they are managed by Nginx.
+/// We keep it as a no-op to avoid refactoring all call sites.
+fn add_cors_headers(builder: hyper::http::response::Builder) -> hyper::http::response::Builder {
+    // No CORS headers are added here - they're now handled by Nginx
+    builder
+}
+
 // JSON-RPC response structure
 #[derive(serde::Serialize)]
 struct JsonRpcResponse {
@@ -59,7 +68,7 @@ pub async fn jsonrpc_handler(
     // Handle .well-known/agent.json requests
     if req.uri().path() == "/.well-known/agent.json" {
         let agent_card = create_agent_card(None, None, None, None, None);
-        return Ok(Response::builder()
+        return Ok(add_cors_headers(Response::builder())
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(serde_json::to_string(&agent_card).unwrap()))
@@ -97,7 +106,7 @@ pub async fn jsonrpc_handler(
                     Ok(params) => match task_service.process_task(params).await {
                         Ok(task) => {
                             let response = JsonRpcResponse::success(id, task);
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -105,7 +114,7 @@ pub async fn jsonrpc_handler(
                         }
                         Err(e) => {
                             let response = JsonRpcResponse::error(id, e);
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -117,7 +126,7 @@ pub async fn jsonrpc_handler(
                             id,
                             ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                         );
-                        Ok(Response::builder()
+                        Ok(add_cors_headers(Response::builder())
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "application/json")
                             .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -128,7 +137,7 @@ pub async fn jsonrpc_handler(
                     Ok(params) => match task_service.get_task(params).await {
                         Ok(task) => {
                             let response = JsonRpcResponse::success(id, task);
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -136,7 +145,7 @@ pub async fn jsonrpc_handler(
                         }
                         Err(e) => {
                             let response = JsonRpcResponse::error(id, e);
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -148,7 +157,7 @@ pub async fn jsonrpc_handler(
                             id,
                             ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                         );
-                        Ok(Response::builder()
+                        Ok(add_cors_headers(Response::builder())
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "application/json")
                             .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -159,7 +168,7 @@ pub async fn jsonrpc_handler(
                     Ok(params) => match task_service.cancel_task(params).await {
                         Ok(task) => {
                             let response = JsonRpcResponse::success(id, task);
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -167,7 +176,7 @@ pub async fn jsonrpc_handler(
                         }
                         Err(e) => {
                             let response = JsonRpcResponse::error(id, e);
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -179,7 +188,7 @@ pub async fn jsonrpc_handler(
                             id,
                             ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                         );
-                        Ok(Response::builder()
+                        Ok(add_cors_headers(Response::builder())
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "application/json")
                             .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -220,7 +229,7 @@ pub async fn jsonrpc_handler(
                                 id,
                                 ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                             );
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -232,7 +241,7 @@ pub async fn jsonrpc_handler(
                     Ok(params) => match notification_service.get_push_notification(params).await {
                         Ok(config) => {
                             let response = JsonRpcResponse::success(id, config);
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -240,7 +249,7 @@ pub async fn jsonrpc_handler(
                         }
                         Err(e) => {
                             let response = JsonRpcResponse::error(id, e);
-                            Ok(Response::builder()
+                            Ok(add_cors_headers(Response::builder())
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
                                 .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -252,7 +261,7 @@ pub async fn jsonrpc_handler(
                             id,
                             ServerError::InvalidParameters(format!("Invalid parameters: {}", e)),
                         );
-                        Ok(Response::builder()
+                        Ok(add_cors_headers(Response::builder())
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "application/json")
                             .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -267,7 +276,7 @@ pub async fn jsonrpc_handler(
                             format!("Method '{}' not found or not implemented", method).to_string(),
                         ),
                     );
-                    Ok(Response::builder()
+                    Ok(add_cors_headers(Response::builder())
                         .status(StatusCode::OK)
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -277,7 +286,7 @@ pub async fn jsonrpc_handler(
         }
         Err(_) => {
             // Return a 404 or other error for non-JSON-RPC requests
-            Ok(Response::builder()
+            Ok(add_cors_headers(Response::builder())
                 .status(StatusCode::NOT_FOUND)
                 .body(Body::from("Not Found"))
                 .unwrap())

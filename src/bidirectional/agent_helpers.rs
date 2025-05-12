@@ -465,14 +465,22 @@ pub fn extract_text_from_task(agent: &BidirectionalAgent, task: &Task) -> String
 #[instrument(skip(agent), fields(agent_id = %agent.agent_id, port = %agent.port, bind_address = %agent.bind_address))]
 pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
     let addr = SocketAddr::new(agent.bind_address.parse()?, agent.port);
-    info!("🚀 Server starting on http://{}", addr);
+
+    // Check if CERTBOT_DOMAIN is set to determine protocol (HTTPS or HTTP)
+    let protocol = if std::env::var("CERTBOT_DOMAIN").is_ok() {
+        "https"
+    } else {
+        "http"
+    };
+
+    info!("🚀 Server starting on {}://{}", protocol, addr);
 
     // Clone all required information from the agent before the async closure
     let task_service_arc = agent.task_service.clone();
     let streaming_service_arc = agent.streaming_service.clone();
     let notification_service_arc = agent.notification_service.clone();
     let static_files_root_arc = agent.static_files_root.clone();
-    
+
     // Create agent card ahead of time to avoid capturing &agent in 'static
     let agent_card = create_agent_card(agent);
 
@@ -648,7 +656,13 @@ pub async fn run_server(agent: &BidirectionalAgent) -> Result<()> {
     });
 
     let server = Server::bind(&addr).serve(make_svc);
-    info!("A2A Agent server (and static file server if configured) listening on http://{}", addr);
+    // Check if CERTBOT_DOMAIN is set to determine protocol (HTTPS or HTTP)
+    let protocol = if std::env::var("CERTBOT_DOMAIN").is_ok() {
+        "https"
+    } else {
+        "http"
+    };
+    info!("A2A Agent server (and static file server if configured) listening on {}://{}", protocol, addr);
 
     // Setup graceful shutdown for the Hyper server
     let token = CancellationToken::new(); // Used for bidirectional_agent's own server_run_server
@@ -752,15 +766,10 @@ pub async fn get_remote_agent_card(agent: &mut BidirectionalAgent) -> Result<Age
 pub fn create_agent_card(agent: &BidirectionalAgent) -> AgentCard {
     debug!(agent_id = %agent.agent_id, "Creating agent card.");
 
-    // Format URL with proper IPv6 handling
-    let url = if agent.bind_address.contains(':') && !agent.bind_address.starts_with('[') {
-        // IPv6 address needs square brackets
-        format!("http://[{}]:{}", agent.bind_address, agent.port)
-    } else {
-        // IPv4 address or already formatted IPv6
-        format!("http://{}:{}", agent.bind_address, agent.port)
-    };
-    
+    // Override URL to use fixed repository agent URL
+    let url = "https://repository-agent.com".to_string();
+    debug!("Using fixed repository agent URL: {}", url);
+
     // For consistent testing, create the agent card manually
     // This ensures that all capabilities are properly set
     debug!("Creating agent card with manual construction.");
